@@ -12,7 +12,8 @@
     *{margin:0;padding:0;box-sizing:border-box;}
     body{font-family:'Plus Jakarta Sans',sans-serif;background:#F8F6F3;}
     #root{min-height:100vh;}
-    #splash{position:fixed;inset:0;background:#F8F6F3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;z-index:9999;transition:opacity 0.4s;}
+    #splash{position:fixed;inset:0;background:#F8F6F3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px;z-index:9999;}
+    #splash-msg{font-size:13px;color:#999;letter-spacing:.03em;}
     .dots{display:flex;gap:8px;}
     .dot{width:8px;height:8px;border-radius:50%;background:#C84B31;animation:pulse 1.2s ease-in-out infinite;}
     .dot:nth-child(2){animation-delay:.2s;}
@@ -38,15 +39,59 @@
       <circle cx="895" cy="820" r="48" fill="#C84B31"/>
     </svg>
     <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+    <div id="splash-msg">Loading ShyftRota...</div>
   </div>
   <div id="root"></div>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
   <script>
-    var _warn = console.warn;
-    console.warn = function(m){if(typeof m==='string'&&m.indexOf('Babel')>-1)return;_warn.apply(console,arguments);};
+    // Suppress Babel warning
+    var _cw = console.warn;
+    console.warn = function(m){ if(typeof m==='string' && m.indexOf('Babel')>-1) return; _cw.apply(console,arguments); };
+    
+    function hideSplash() {
+      var s = document.getElementById('splash');
+      s.style.transition = 'opacity 0.4s';
+      s.style.opacity = '0';
+      setTimeout(function(){ s.style.display='none'; }, 400);
+    }
+
+    function loadScript(src, cb) {
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = cb;
+      s.onerror = function(){ 
+        document.getElementById('splash-msg').textContent = 'Load error. Check connection.';
+      };
+      document.head.appendChild(s);
+    }
+
+    // Load React → ReactDOM → Babel → App in sequence
+    loadScript('https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js', function() {
+      loadScript('https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js', function() {
+        document.getElementById('splash-msg').textContent = 'Preparing app...';
+        loadScript('https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js', function() {
+          document.getElementById('splash-msg').textContent = 'Starting up...';
+          // Fetch and compile the JSX
+          fetch('ShyftRota.jsx')
+            .then(function(r){ return r.text(); })
+            .then(function(code) {
+              try {
+                var compiled = Babel.transform(code, { presets: ['react'] }).code;
+                var script = document.createElement('script');
+                script.textContent = compiled;
+                document.head.appendChild(script);
+                hideSplash();
+              } catch(e) {
+                document.getElementById('splash-msg').textContent = 'Error: ' + e.message;
+                console.error(e);
+              }
+            })
+            .catch(function(e){
+              document.getElementById('splash-msg').textContent = 'Fetch error. Try refreshing.';
+            });
+        });
+      });
+    });
   </script>
-  <script type="text/babel" src="ShyftRota.jsx" data-presets="react"></script>
 </body>
 </html>
