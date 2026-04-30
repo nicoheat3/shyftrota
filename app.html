@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="ShyftRota">
+  <title>ShyftRota</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:'Plus Jakarta Sans',sans-serif;background:#F8F6F3;}
+    #root{min-height:100vh;}
+    #splash{position:fixed;inset:0;background:#F8F6F3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;z-index:9999;transition:opacity 0.4s;}
+    .dots{display:flex;gap:8px;}
+    .dot{width:8px;height:8px;border-radius:50%;background:#C84B31;animation:pulse 1.2s ease-in-out infinite;}
+    .dot:nth-child(2){animation-delay:.2s;}
+    .dot:nth-child(3){animation-delay:.4s;}
+    @keyframes pulse{0%,80%,100%{opacity:.3;transform:scale(.8);}40%{opacity:1;transform:scale(1);}}
+  </style>
+</head>
+<body>
+  <div id="splash">
+    <svg width="72" height="72" viewBox="0 0 1024 1024" style="border-radius:16px;">
+      <rect width="1024" height="1024" fill="#1A1714"/>
+      <rect x="175" y="185" width="170" height="36" rx="18" fill="#C84B31"/>
+      <rect x="175" y="272" width="320" height="90" rx="45" fill="white"/>
+      <rect x="405" y="272" width="90" height="190" fill="white"/>
+      <rect x="175" y="372" width="320" height="90" fill="white"/>
+      <rect x="175" y="462" width="90" height="93" fill="white"/>
+      <rect x="175" y="585" width="320" height="90" rx="45" fill="white"/>
+      <rect x="565" y="272" width="90" height="403" fill="white"/>
+      <rect x="565" y="272" width="310" height="90" fill="white"/>
+      <rect x="785" y="272" width="90" height="190" fill="white"/>
+      <rect x="565" y="372" width="230" height="90" fill="white"/>
+      <rect x="750" y="460" width="86" height="360" rx="43" fill="#C84B31" transform="rotate(20 793 640)"/>
+      <circle cx="895" cy="820" r="48" fill="#C84B31"/>
+    </svg>
+    <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+  </div>
+  <div id="root"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script>
+    var _warn = console.warn;
+    console.warn = function(m){if(typeof m==='string'&&m.indexOf('Babel')>-1)return;_warn.apply(console,arguments);};
+  </script>
+  <script type="text/babel" src="ShyftRota.jsx" data-presets="react"></script>
+</body>
+</html>

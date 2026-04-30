@@ -243,6 +243,7 @@ function getPunchStatus(punch, shiftDefs) {
 
 // Convert HH:MM to 12-hour format using device locale
 function to12(t) {
+  if (!t || typeof t !== "string" || !t.includes(":")) return t || "";
   if (!t) return "";
   var parts = t.split(":"); var h = parseInt(parts[0]); var m = parts[1];
   var ap = h >= 12 ? "PM" : "AM"; h = h % 12 || 12;
@@ -948,7 +949,7 @@ export default function App() {
  var [editShift, setEditShift] = useState(null); // object: {idx,id,label,start,end,color} or null
  var [addingShift, setAddingShift] = useState(false);
  var [newShift, setNewShift] = useState({ label:"", start:"09:00", end:"17:00", color:"Day 9-5" });
- var [newEmp, setNewEmp] = useState({ name:"", role:"", avail:[], max:40, email:"", pw:"", isAdmin:false, dept:"" });
+ var [newEmp, setNewEmp] = useState({ name:"", role:"", avail:[], max:40, shiftAvail:{}, email:"", pw:"", isAdmin:false, dept:"" });
  var [swapForm, setSwapForm] = useState({ toId:"", day:DAYS[0], shift:"", reason:"" });
  var [ptoType, setPtoType] = useState(PTO_TYPES[0]);
  var [ptoDate, setPtoDate] = useState(null);
@@ -1095,7 +1096,7 @@ export default function App() {
   if (!newEmp.pw.trim()) { showT("Password required","error"); return; }
   if (newEmp.pw.length < 8) { showT("Password must be at least 8 characters","error"); return; }
   if (accounts.find(function(a){ return a.email.toLowerCase()===emailClean; })) { showT("Email already exists","error"); return; }
-  var emp = { id:Date.now(), name:nameClean, role:newEmp.role||indRoles[0], avail:newEmp.avail, max:newEmp.max, dept:newEmp.dept||"" };
+  var emp = { id:Date.now(), name:nameClean, role:newEmp.role||indRoles[0], avail:newEmp.avail, shiftAvail:{}, max:newEmp.max, dept:newEmp.dept||"" };
   var acc = { id:"acc"+Date.now(), name:nameClean, email:emailClean, pw:hashPassword(newEmp.pw), role:newEmp.isAdmin?"admin":"employee", eid:emp.id };
   setEmps(function(p){ return p.concat([emp]); });
   setAccounts(function(p){ return p.concat([acc]); });
@@ -1636,7 +1637,7 @@ export default function App() {
  <td key={d} className={isPastWeek?"":"hv"} onClick={function(){if(!isPastWeek)setSelCell(isSel?null:{day:d,eid:emp.id});}} style={{ padding:"6px 4px", textAlign:"center", background:cellBg, position:"relative", transition:"background .1s" }}>
  {shift ? (
  <div style={{ display:"inline-flex", alignItems:"center", gap:3, padding:"3px 7px", borderRadius:20, fontSize:10, fontWeight:600, background:SC[shift].bg, color:SC[shift].text, border:"1px solid "+SC[shift].border, whiteSpace:"nowrap" }}>
- <span style={{ width:5, height:5, borderRadius:"50%", background:SC[shift].dot, display:"inline-block", flexShrink:0 }} />
+ <span style={{ width:5, height:5, borderRadius:"50%", background:(SC[shift]||SC["Day 9-5"]).dot, display:"inline-block", flexShrink:0 }} />
  {(function(){
  var ovKey = overrideKey(weekOff,d,emp.id);
  var ov = shiftOverrides[ovKey];
@@ -2401,7 +2402,7 @@ export default function App() {
                         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))", gap:8 }}>
                           {workingToday.map(function(e){
                             var shift = weekSched[todayDay][e.id];
-                            var sc    = SC[shift];
+                            var sc    = SC[shift] || SC["Day 9-5"];
                             var isMe  = e.id===user.eid;
                             return (
                               <div key={e.id} style={{ ...CARD, padding:14, border:"1px solid "+(isMe?dept.color:T.border), background:isMe?(dept.color+"0D"):T.surface }}>
@@ -3091,3 +3092,18 @@ export default function App() {
  </div>
  );
 }
+
+
+// ── Mount app ──────────────────────────────────────────────────
+(function() {
+  if (typeof ReactDOM !== "undefined" && document.getElementById("root")) {
+    var root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(React.createElement(App));
+    var splash = document.getElementById("splash");
+    if (splash) {
+      splash.style.opacity = "0";
+      splash.style.transition = "opacity 0.4s";
+      setTimeout(function(){ splash.style.display = "none"; }, 400);
+    }
+  }
+})();

@@ -252,7 +252,7 @@ footer{border-top:1px solid var(--border);padding:44px 56px;display:flex;justify
   </ul>
   <div class="nav-cta">
     <button class="btn-line" onclick="openModal('login')">Sign in</button>
-    <button class="btn-solid" onclick="openModal('signup')">Get started</button>
+    <button class="btn-solid" onclick="window.location.href='app.html'">Get started</button>
   </div>
 </nav>
 
@@ -585,10 +585,10 @@ var PRIVACY = `<h3 style="font-family:'Syne',sans-serif;font-size:22px;font-weig
 <p style="font-size:13px;color:var(--muted);line-height:1.75;margin-bottom:12px">ShyftRota currently does not use cookies. All session data is managed through your browser's local storage. We do not use tracking or advertising cookies of any kind.</p>
 
 <h4 style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;margin:20px 0 8px">Your Rights</h4>
-<p style="font-size:13px;color:var(--muted);line-height:1.75;margin-bottom:12px">You have the right to access, correct, or delete your personal data at any time. To exercise these rights, contact us at hello@shyftrota.com.</p>
+<p style="font-size:13px;color:var(--muted);line-height:1.75;margin-bottom:12px">You have the right to access, correct, or delete your personal data at any time. To exercise these rights, contact us at shyftrota@gmail.com.</p>
 
 <h4 style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;margin:20px 0 8px">Contact</h4>
-<p style="font-size:13px;color:var(--muted);line-height:1.75">For privacy questions, contact us at <a href="mailto:hello@shyftrota.com" style="color:var(--accent)">hello@shyftrota.com</a></p>`;
+<p style="font-size:13px;color:var(--muted);line-height:1.75">For privacy questions, contact us at <a href="mailto:shyftrota@gmail.com" style="color:var(--accent)">shyftrota@gmail.com</a></p>`;
 
 var TERMS = `<h3 style="font-family:'Syne',sans-serif;font-size:22px;font-weight:800;letter-spacing:-.03em;margin-bottom:6px">Terms of Service</h3>
 <p style="font-size:12px;color:var(--muted);margin-bottom:24px">Last updated: April 27, 2026</p>
@@ -605,7 +605,7 @@ var TERMS = `<h3 style="font-family:'Syne',sans-serif;font-size:22px;font-weight
 <p style="font-size:13px;color:var(--muted);line-height:1.75;margin-bottom:12px">You own your data. By using ShyftRota, you grant us a limited license to store and process your data solely to provide the service. We do not claim ownership of your employee records, schedules, or business data.</p>
 
 <h4 style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;margin:20px 0 8px">4. Accounts</h4>
-<p style="font-size:13px;color:var(--muted);line-height:1.75;margin-bottom:12px">You must provide accurate information when creating an account. You are responsible for maintaining the confidentiality of your password. Notify us immediately at hello@shyftrota.com if you suspect unauthorized access.</p>
+<p style="font-size:13px;color:var(--muted);line-height:1.75;margin-bottom:12px">You must provide accurate information when creating an account. You are responsible for maintaining the confidentiality of your password. Notify us immediately at shyftrota@gmail.com if you suspect unauthorized access.</p>
 
 <h4 style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;margin:20px 0 8px">5. Payments</h4>
 <p style="font-size:13px;color:var(--muted);line-height:1.75;margin-bottom:12px">Paid plans, when available, will be billed monthly. Pricing and billing details will be clearly disclosed before any charge is made. You may cancel at any time.</p>
@@ -626,7 +626,7 @@ var TERMS = `<h3 style="font-family:'Syne',sans-serif;font-size:22px;font-weight
 <p style="font-size:13px;color:var(--muted);line-height:1.75;margin-bottom:12px">We may update these terms from time to time. Continued use of ShyftRota after changes constitutes acceptance of the new terms.</p>
 
 <h4 style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;margin:20px 0 8px">11. Contact</h4>
-<p style="font-size:13px;color:var(--muted);line-height:1.75">Questions? Email us at <a href="mailto:hello@shyftrota.com" style="color:var(--accent)">hello@shyftrota.com</a></p>`;
+<p style="font-size:13px;color:var(--muted);line-height:1.75">Questions? Email us at <a href="mailto:shyftrota@gmail.com" style="color:var(--accent)">shyftrota@gmail.com</a></p>`;
 
 function openLegal(type) {
   document.getElementById('legal-content').innerHTML = type === 'privacy' ? PRIVACY : TERMS;
