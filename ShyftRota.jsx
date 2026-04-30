@@ -1,0 +1,3093 @@
+import { useState, useEffect, useRef } from "react";
+
+const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+// ── Security Utilities ────────────────────────────────
+// NOTE: localStorage-based. Phase 2 moves to Supabase Auth with JWT tokens.
+
+// ── 1. Password hashing (djb2 + salt) ────────────────
+function hashPassword(pw) {
+  var salt = "sr_2026_salt_x9k";
+  var str  = pw + salt;
+  var hash = 5381;
+  for (var i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) + str.charCodeAt(i);
+    hash = hash & hash;
+  }
+  return "h:" + Math.abs(hash).toString(36) + str.length.toString(36);
+}
+
+function checkPassword(pw, stored) {
+  if (stored && stored.startsWith("h:")) return hashPassword(pw) === stored;
+  return pw === stored;
+}
+
+// ── 2. Strong password validation ────────────────────
+function validatePassword(pw) {
+  if (!pw || pw.length < 8)          return "Password must be at least 8 characters.";
+  if (!/[A-Z]/.test(pw))             return "Must include at least one uppercase letter.";
+  if (!/[a-z]/.test(pw))             return "Must include at least one lowercase letter.";
+  if (!/[0-9]/.test(pw))             return "Must include at least one number.";
+  if (!/[^A-Za-z0-9]/.test(pw))      return "Must include at least one special character (!@#$%...).";
+  return null; // null = valid
+}
+
+// ── 3. Input sanitization ─────────────────────────────
+function sanitize(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/</g,  "&lt;")
+    .replace(/>/g,  "&gt;")
+    .replace(/"/g,  "&quot;")
+    .replace(/'/g,  "&#x27;")
+    .replace(/\//g, "&#x2F;")
+    .slice(0, 500);
+}
+
+// ── 4. Rate limiting with exponential backoff + lockout ──
+var _loginAttempts = {};
+var LOCKOUT_THRESHOLDS = [
+  { after:5,  lockMins:15  },
+  { after:10, lockMins:60  },
+  { after:20, lockMins:720 }, // 12 hours
+];
+function checkRateLimit(email) {
+  var now = Date.now();
+  var key = email.toLowerCase().trim();
+  var d   = _loginAttempts[key] || { count:0, lockedUntil:0 };
+  // Check if still locked
+  if (d.lockedUntil && now < d.lockedUntil) return false;
+  // Reset after lockout expires
+  if (d.lockedUntil && now >= d.lockedUntil) d = { count:0, lockedUntil:0 };
+  d.count++;
+  // Apply lockout thresholds
+  for (var i = LOCKOUT_THRESHOLDS.length - 1; i >= 0; i--) {
+    if (d.count >= LOCKOUT_THRESHOLDS[i].after) {
+      d.lockedUntil = now + LOCKOUT_THRESHOLDS[i].lockMins * 60 * 1000;
+      break;
+    }
+  }
+  _loginAttempts[key] = d;
+  return !d.lockedUntil || now >= d.lockedUntil;
+}
+
+function getRateLimitMinutes(email) {
+  var key = (email||"").toLowerCase().trim();
+  var d   = _loginAttempts[key];
+  if (!d || !d.lockedUntil) return 0;
+  return Math.max(0, Math.ceil((d.lockedUntil - Date.now()) / 60000));
+}
+
+function getLoginAttempts(email) {
+  var d = _loginAttempts[(email||"").toLowerCase().trim()];
+  return d ? d.count : 0;
+}
+
+// ── 5. Audit log ──────────────────────────────────────
+function writeAudit(action, detail, userId) {
+  try {
+    var log = JSON.parse(localStorage.getItem("sr_audit") || "[]");
+    log.push({ ts:Date.now(), action:action, detail:detail, uid:userId||"system" });
+    if (log.length > 500) log = log.slice(-500); // keep last 500 entries
+    localStorage.setItem("sr_audit", JSON.stringify(log));
+  } catch(e) {}
+}
+
+// ── 6. localStorage tamper detection ─────────────────
+function verifyStorageIntegrity() {
+  try {
+    var accounts = JSON.parse(localStorage.getItem("sr_acc") || "[]");
+    // Flag if any account suddenly has admin role that wasn't there before
+    var adminCount = accounts.filter(function(a){ return a.role==="admin"; }).length;
+    if (adminCount > 10) {
+      // Suspicious — too many admins, possible tampering
+      writeAudit("SECURITY_ALERT", "Unusual admin count detected: " + adminCount, "system");
+    }
+  } catch(e) {}
+}
+
+// Run integrity check on load
+try { verifyStorageIntegrity(); } catch(e) {}
+
+// ── 7. Session timeout: 8h inactivity ────────────────
+var _lastActivity = Date.now();
+function touchActivity() { _lastActivity = Date.now(); }
+function isSessionExpired() { return Date.now() - _lastActivity > 8 * 60 * 60 * 1000; }
+document.addEventListener("click",      touchActivity);
+document.addEventListener("keydown",    touchActivity);
+document.addEventListener("touchstart", touchActivity);
+const SHIFTS = ["Morning 6-2","Day 9-5","Evening 2-10","Night 10-6"];
+const ROLES = ["Nurse","Receptionist","Caregiver","Host/Hostess","Server","Supervisor"];
+const PTO_TYPES = ["Vacation","Sick Day","Personal","Unpaid Leave","Other"];
+const ATTEND = ["Absent","Running Late","Leaving Early","Other"];
+
+const INDUSTRIES = {
+ hospitality: { label:"Hospitality", roles:["Host/Hostess","Server","Bartender","Busser","Manager","Supervisor"], icon:"🏨" }, restaurant: { label:"Restaurant", roles:["Server","Cook","Dishwasher","Host","Bartender","Shift Lead","Manager"], icon:"🍽️" }, healthcare: { label:"Healthcare", roles:["Nurse","CNA","Receptionist","Caregiver","Doctor","Admin","Supervisor"], icon:"🏥" }, retail: { label:"Retail", roles:["Sales Associate","Cashier","Stock Clerk","Supervisor","Manager","Keyholder"], icon:"🛍️" }, general: { label:"General", roles:["Employee","Team Lead","Supervisor","Manager","Admin"], icon:"🏢" },
+};
+
+const PAYROLL_PROVIDERS = [
+  { id:"paychex",   label:"Paychex",       color:"#E85D04" },
+  { id:"adp",       label:"ADP",           color:"#D00000" },
+  { id:"gusto",     label:"Gusto",         color:"#25A244" },
+  { id:"toast",     label:"Toast Payroll", color:"#FF4C00" },
+  { id:"square",    label:"Square Payroll",color:"#000000" },
+  { id:"paylocity", label:"Paylocity",     color:"#0057B8" },
+  { id:"paycom",    label:"Paycom",        color:"#006BB6" },
+  { id:"kronos",    label:"UKG / Kronos",  color:"#6B21A8" },
+  { id:"rippling",  label:"Rippling",      color:"#FACC15" },
+  { id:"other",     label:"Other / Custom",color:"#6B7280" },
+];
+
+const SC = {
+ "Morning 6-2": { bg:"#FEF9C3", text:"#854D0E", border:"#FDE047", dot:"#EAB308" }, "Day 9-5": { bg:"#DBEAFE", text:"#1E40AF", border:"#BFDBFE", dot:"#3B82F6" }, "Evening 2-10": { bg:"#EDE9FE", text:"#5B21B6", border:"#DDD6FE", dot:"#2E2A26" }, "Night 10-6": { bg:"#F1F5F9", text:"#334155", border:"#CBD5E1", dot:"#64748B" },
+};
+
+const SEED_EMP = [
+  { id:1, name:"Amara Osei",       role:"Nurse",        avail:["Mon","Tue","Wed","Thu","Fri"], max:40, dept:"fd" },
+  { id:2, name:"Diego Vargas",     role:"Server",       avail:["Wed","Thu","Fri","Sat","Sun"], max:32, dept:"fb" },
+  { id:3, name:"Priya Nair",       role:"Receptionist", avail:["Mon","Tue","Thu","Fri"],       max:35, dept:"fd" },
+  { id:4, name:"Luca Moretti",     role:"Caregiver",    avail:["Mon","Wed","Fri","Sat"],       max:30, dept:"hk" },
+  { id:5, name:"Sophie Laurent",   role:"Host/Hostess", avail:["Tue","Wed","Thu","Sat","Sun"], max:28, dept:"fb" },
+  { id:6, name:"James Okafor",     role:"Supervisor",   avail:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], max:45, dept:"hk" },
+  { id:7, name:"Yuki Tanaka",      role:"Nurse",        avail:["Mon","Tue","Sat","Sun"],       max:36, dept:"fd" },
+  { id:8, name:"Fatima Al-Rashid", role:"Caregiver",    avail:["Tue","Thu","Fri","Sat"],       max:32, dept:"hk" },
+];
+const SEED_ACC = [
+ { id:"admin1", name:"Admin Manager", email:"admin@shyftrota.com", pw:"admin123", role:"admin", eid:null }, { id:"acc1", name:"Amara Osei", email:"amara@shyftrota.com", pw:"amara123", role:"employee", eid:1 }, { id:"acc2", name:"Diego Vargas", email:"diego@shyftrota.com", pw:"diego123", role:"employee", eid:2 }, { id:"acc3", name:"Priya Nair", email:"priya@shyftrota.com", pw:"priya123", role:"employee", eid:3 }, { id:"acc4", name:"Luca Moretti", email:"luca@shyftrota.com", pw:"luca123", role:"employee", eid:4 }, { id:"acc5", name:"Sophie Laurent", email:"sophie@shyftrota.com", pw:"sophie123", role:"employee", eid:5 }, { id:"acc6", name:"James Okafor", email:"james@shyftrota.com", pw:"james123", role:"employee", eid:6 }, { id:"acc7", name:"Yuki Tanaka", email:"yuki@shyftrota.com", pw:"yuki123", role:"employee", eid:7 }, { id:"acc8", name:"Fatima Al-Rashid", email:"fatima@shyftrota.com", pw:"fatima123", role:"employee", eid:8 },
+];
+const SEED_SCHED = {
+ Mon:{1:"Morning 6-2",3:"Day 9-5",6:"Evening 2-10"}, Tue:{2:"Day 9-5",5:"Evening 2-10",7:"Morning 6-2"}, Wed:{1:"Day 9-5",4:"Evening 2-10",6:"Morning 6-2"}, Thu:{3:"Morning 6-2",8:"Day 9-5",6:"Night 10-6"}, Fri:{1:"Evening 2-10",2:"Day 9-5",4:"Morning 6-2"}, Sat:{5:"Day 9-5",7:"Evening 2-10",8:"Morning 6-2"}, Sun:{2:"Night 10-6",5:"Day 9-5",6:"Evening 2-10"},
+};
+const SEED_SWAPS = [
+ { id:1, fromId:2, from:"Diego Vargas", toId:5, to:"Sophie Laurent", day:"Thu", shift:"Day 9-5", reason:"Family event", status:"pending" }, { id:2, fromId:7, from:"Yuki Tanaka", toId:1, to:"Amara Osei", day:"Sat", shift:"Evening 2-10", reason:"Medical appointment", status:"pending" },
+];
+const SEED_MSGS = [
+ { id:1, sid:"acc6", sname:"James Okafor", text:"Team briefing Monday 8am before shift!", ts:Date.now()-18000000 }, { id:2, sid:"acc1", sname:"Amara Osei", text:"Got it, thanks James!", ts:Date.now()-14400000 }, { id:3, sid:"acc2", sname:"Diego Vargas", text:"Can anyone cover my Friday evening?", ts:Date.now()-7200000 },
+];
+const SEED_SHIFTS = [
+ { id:"Morning 6-2", label:"Morning", start:"06:00", end:"14:00" }, { id:"Day 9-5", label:"Day", start:"09:00", end:"17:00" }, { id:"Evening 2-10", label:"Evening", start:"14:00", end:"22:00" }, { id:"Night 10-6", label:"Night", start:"22:00", end:"06:00" },
+];
+
+const SEED_DEPTS = [
+  { id:"fd",  name:"Front Desk",  color:"#1A1714", linked:["hk"] },
+  { id:"hk",  name:"Housekeeping",color:"#10B981", linked:["fd"] },
+  { id:"fb",  name:"Food & Beverage", color:"#F59E0B", linked:[] },
+];
+
+function ld(k, fb) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch(e) { return fb; } }
+function sv(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) {} }
+
+function getWeekStart(offset) {
+ var now = new Date();
+ var day = now.getDay();
+ var diff = day === 0 ? -6 : 1 - day;
+ var mon = new Date(now);
+ mon.setDate(now.getDate() + diff + (offset || 0) * 7);
+ mon.setHours(0, 0, 0, 0);
+ return mon;
+}
+
+function fmtWeekRange(offset) {
+ var s = getWeekStart(offset);
+ var e = new Date(s);
+ e.setDate(s.getDate() + 6);
+ var mo = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+ return mo[s.getMonth()] + " " + s.getDate() + " - " + mo[e.getMonth()] + " " + e.getDate() + ", " + e.getFullYear();
+}
+
+function getDayDate(dayIdx, weekOffset) {
+ var s = getWeekStart(weekOffset);
+ var d = new Date(s);
+ d.setDate(s.getDate() + dayIdx);
+ var mo = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+ return mo[d.getMonth()] + " " + d.getDate();
+}
+
+function getTZ() {
+ try { return new Date().toLocaleTimeString("en-us",{timeZoneName:"short"}).split(" ").pop(); } catch(e) { return ""; }
+}
+
+function initials(name) { return name.split(" ").map(function(n){ return n[0]; }).join("").toUpperCase(); }
+
+var AVATAR_PAL = ["#1A1714","#2E2A26","#EC4899","#F59E0B","#10B981","#3B82F6","#EF4444","#14B8A6","#F97316","#84CC16"];
+function avatarBg(id) { return AVATAR_PAL[String(id).charCodeAt(0) % AVATAR_PAL.length]; }
+
+function fmtAgo(ts) {
+ var diff = Date.now() - ts;
+ if (diff < 60000) return "just now";
+ if (diff < 3600000) return Math.floor(diff/60000) + "m ago";
+ if (diff < 86400000) return new Date(ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+ return new Date(ts).toLocaleDateString();
+}
+
+function getPunchStatus(punch, shiftDefs) {
+  if (punch.type === "lunch_out") return { label:"Lunch Out", bg:"#FEF9C3", color:"#854D0E", border:"#FDE047" };
+  if (punch.type === "lunch_in")  return { label:"Lunch In",  bg:"#DBEAFE", color:"#1E40AF", border:"#BFDBFE" };
+  if (punch.type === "out") return { label:"Out", bg:"#F1F5F9", color:"#334155", border:"#CBD5E1" };
+  // For clock-in: compare against scheduled shift start
+  if (punch.type === "in" && punch.shift) {
+    var def = shiftDefs.find(function(d){ return d.id === punch.shift; });
+    if (def) {
+      var parts = def.start.split(":").map(Number);
+      var scheduledMs = (parts[0] * 60 + parts[1]) * 60000;
+      var punchDate = new Date(punch.ts);
+      var punchMs   = (punchDate.getHours() * 60 + punchDate.getMinutes()) * 60000;
+      var diffMin   = (punchMs - scheduledMs) / 60000;
+      if (diffMin <= 5)  return { label:"On Time", bg:"#ECFDF5", color:"#065F46", border:"#6EE7B7" };
+      if (diffMin <= 15) return { label:"Late ("  +Math.round(diffMin)+"m)", bg:"#FFFBEB", color:"#92400E", border:"#FDE68A" };
+      return { label:"Very Late ("+Math.round(diffMin)+"m)", bg:"#FEF2F2", color:"#991B1B", border:"#FCA5A5" };
+    }
+  }
+  return { label:"In", bg:"#ECFDF5", color:"#065F46", border:"#6EE7B7" };
+}
+
+// Convert HH:MM to 12-hour format using device locale
+function to12(t) {
+  if (!t) return "";
+  var parts = t.split(":"); var h = parseInt(parts[0]); var m = parts[1];
+  var ap = h >= 12 ? "PM" : "AM"; h = h % 12 || 12;
+  return h + ":" + m + " " + ap;
+}
+
+// Get actual shift duration in hours from shiftDefs
+function shiftHours(shiftId, shiftDefs) {
+  var def = shiftDefs && shiftDefs.find(function(d){ return d.id===shiftId; });
+  if (!def) return 8;
+  var sp = def.start.split(":"); var ep = def.end.split(":");
+  var mins = (parseInt(ep[0])*60+parseInt(ep[1])) - (parseInt(sp[0])*60+parseInt(sp[1]));
+  if (mins <= 0) mins += 1440;
+  return Math.round(mins/60*10)/10;
+}
+// Sum actual hours for an employee across the week
+function weekHours(empId, weekSched, shiftDefs) {
+  var total = 0;
+  ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].forEach(function(d){
+    var sh = weekSched[d] && weekSched[d][empId];
+    if (sh) total += shiftHours(sh, shiftDefs);
+  });
+  return Math.round(total*10)/10;
+}
+
+// Returns "Label HH:MM-HH:MM" using live shiftDefs, falling back to shift name
+// Get custom time override key
+function overrideKey(weekOff, day, eid) { return weekOff+"_"+day+"_"+eid; }
+
+function getShiftLabel(shiftId, shiftDefs, full) {
+  if (!shiftId) return "";
+  var def = shiftDefs && shiftDefs.find(function(d){ return d.id===shiftId; });
+  if (!def) return shiftId;
+  if (full) return (def.label||shiftId) + " " + def.start + "-" + def.end;
+  return def.start + "-" + def.end;
+}
+
+function exportCSV(emps, sched) {
+ var rows = [["Employee","Role"].concat(DAYS).concat(["Total Hours"])];
+ emps.forEach(function(e) {
+ var row = [e.name, e.role];
+ var h = 0;
+ DAYS.forEach(function(d) { var s = (weekSched[d] && weekSched[d][e.id]) || ""; row.push(s); if(s) h+=8; });
+ row.push(h);
+ rows.push(row);
+ });
+ var csv = rows.map(function(r){ return r.map(function(v){ return '"'+String(v).replace(/"/g,'""')+'"'; }).join(","); }).join("\n");
+ var a = document.createElement("a");
+ a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+ a.download = "ShyftRota.csv";
+ a.click();
+}
+
+// Design tokens
+var T = {
+ bg:"#F8F6F3", surface:"#FFFFFF", border:"#E5E0D8", text:"#1A1714", muted:"#6B6460", faint:"#A09890", accent:"#C84B31", accentL:"#FDF0ED", accent2:"#1A1714", danger:"#EF4444", dangerL:"#FEF2F2", success:"#10B981", successL:"#ECFDF5", warning:"#F59E0B", warningL:"#FFFBEB",
+};
+var CARD = { background:T.surface, border:"1px solid "+T.border, borderRadius:12, padding:20, boxShadow:"0 1px 3px rgba(0,0,0,0.06)", boxSizing:"border-box", overflow:"hidden" };
+var INP = { width:"100%", background:T.surface, border:"1px solid "+T.border, borderRadius:8, padding:"9px 12px", color:T.text, fontSize:13, outline:"none", fontFamily:"inherit", boxSizing:"border-box" };
+var TINP = { width:"100%", background:T.surface, border:"1px solid "+T.border, borderRadius:8, padding:"8px 8px", color:T.text, fontSize:13, outline:"none", fontFamily:"inherit", textAlign:"center", fontWeight:600, boxSizing:"border-box", maxWidth:"100%" };
+var LBL = { fontSize:11, color:T.muted, display:"block", marginBottom:5, fontWeight:600, letterSpacing:"0.04em", textTransform:"uppercase" };
+var BTN = { background:T.accent, border:"none", borderRadius:8, padding:"8px 16px", color:"white", cursor:"pointer", fontSize:13, fontWeight:600, fontFamily:"inherit" };
+var GBTN = { background:"transparent", border:"1px solid "+T.border, borderRadius:8, padding:"8px 16px", color:T.muted, cursor:"pointer", fontSize:13, fontWeight:500, fontFamily:"inherit" };
+// Shorthand style snippets
+var PILL = { borderRadius:20 };
+var ROW = { display:"flex", alignItems:"center" };
+var F600 = { fontSize:13, fontWeight:600 };
+var F500 = { fontSize:12, color:T.muted };
+var F400 = { fontSize:11, color:T.faint };
+var BADGE = function(bg,color){ return { padding:"3px 9px", borderRadius:20, fontSize:12, fontWeight:600, background:bg, color:color }; };
+
+// ── Date Picker ──────────────────────────────────────
+function DatePicker({ value, onChange, rangeEnd, onRangeEnd, allowRange, onClose }) {
+ var today = new Date();
+ var initY = value ? parseInt(value.split("-")[0]) : today.getFullYear();
+ var initM = value ? parseInt(value.split("-")[1])-1 : today.getMonth();
+ var [vy, setVy] = useState(initY);
+ var [vm, setVm] = useState(initM);
+ var [hov, setHov] = useState(null);
+
+ var MNAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+ var YEARS = [];
+ for (var y = today.getFullYear()-1; y <= today.getFullYear()+3; y++) YEARS.push(y);
+
+ function daysInMonth(y,m) { return new Date(y, m+1, 0).getDate(); }
+ function firstDay(y,m) { return new Date(y, m, 1).getDay(); }
+
+ function toStr(d) {
+ return vy + "-" + String(vm+1).padStart(2,"0") + "-" + String(d).padStart(2,"0");
+ }
+
+ function isStart(d) { return value && toStr(d) === value; }
+ function isEnd(d) { return rangeEnd && toStr(d) === rangeEnd; }
+ function inRange(d) {
+ if (!allowRange || !value || !rangeEnd) return false;
+ var dt = toStr(d);
+ return dt > value && dt < rangeEnd;
+ }
+ function isHover(d) {
+ if (!allowRange || !value || rangeEnd || !hov) return false;
+ var dt = toStr(d);
+ return dt > value && dt <= hov;
+ }
+
+ function handleDay(d) {
+ var s = toStr(d);
+ if (!allowRange) { onChange(s); if (onClose) onClose(); return; }
+ if (!value || (value && rangeEnd)) { onChange(s); if (onRangeEnd) onRangeEnd(null); }
+ else if (s <= value) { onChange(s); if (onRangeEnd) onRangeEnd(null); }
+ else { if (onRangeEnd) onRangeEnd(s); }
+ }
+
+ function prevMonth() {
+ if (vm === 0) { setVy(vy-1); setVm(11); } else setVm(vm-1);
+ }
+ function nextMonth() {
+ if (vm === 11) { setVy(vy+1); setVm(0); } else setVm(vm+1);
+ }
+
+ var total = daysInMonth(vy, vm);
+ var start = firstDay(vy, vm);
+ var cells = [];
+ for (var i = 0; i < start; i++) cells.push(null);
+ for (var d = 1; d <= total; d++) cells.push(d);
+ while (cells.length % 7 !== 0) cells.push(null);
+
+ return (
+ <div style={{ position:"absolute", zIndex:500, background:T.surface, border:"1px solid "+T.border, borderRadius:12, boxShadow:"0 8px 24px rgba(0,0,0,0.12)", padding:16, minWidth:280, top:"100%", left:0, marginTop:4 }}>
+ <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+ <button onClick={prevMonth} style={{ ...GBTN, padding:"4px 10px", fontSize:16 }}>&#8249;</button>
+ <div style={{ display:"flex", gap:8 }}>
+ <select value={vm} onChange={function(e){setVm(Number(e.target.value));}} style={{ ...INP, width:"auto", padding:"4px 8px" }}>
+ {MNAMES.map(function(m,i){ return <option key={m} value={i}>{m}</option>; })}
+ </select>
+ <select value={vy} onChange={function(e){setVy(Number(e.target.value));}} style={{ ...INP, width:"auto", padding:"4px 8px" }}>
+ {YEARS.map(function(yr){ return <option key={yr}>{yr}</option>; })}
+ </select>
+ </div>
+ <button onClick={nextMonth} style={{ ...GBTN, padding:"4px 10px", fontSize:16 }}>&#8250;</button>
+ </div>
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:2, marginBottom:4 }}>
+ {["Su","Mo","Tu","We","Th","Fr","Sa"].map(function(dn){
+ return <div key={dn} style={{ textAlign:"center", fontSize:11, fontWeight:600, color:T.faint, padding:"4px 0" }}>{dn}</div>;
+ })}
+ </div>
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:2 }}>
+ {cells.map(function(d, idx) {
+ if (!d) return <div key={idx} />;
+ var active = isStart(d) || isEnd(d);
+ var inR = inRange(d);
+ var inH = isHover(d);
+ return (
+ <button key={idx} onClick={function(){handleDay(d);}}
+ onMouseEnter={function(){setHov(toStr(d));}} onMouseLeave={function(){setHov(null);}}
+ style={{ padding:"6px 0", border:"none", borderRadius:6, cursor:"pointer", fontSize:13, fontWeight:active?600:400, background:active?T.accent:(inR||inH)?T.accentL:"transparent", color:active?"white":(inR||inH)?T.accent:T.text }}>
+ {d}
+ </button>
+ );
+ })}
+ </div>
+ {allowRange && value && (
+ <div style={{ marginTop:10, fontSize:11, color:T.muted, borderTop:"1px solid "+T.border, paddingTop:8 }}>
+ {rangeEnd ? (value + " to " + rangeEnd) : ("From: " + value + " - pick end")}
+ <button onClick={function(){onChange(null); if(onRangeEnd) onRangeEnd(null);}} style={{ marginLeft:8, fontSize:11, color:T.danger, background:"none", border:"none", cursor:"pointer" }}>Clear</button>
+ </div>
+ )}
+ </div>
+ );
+}
+
+function DateInput({ label, value, onChange, rangeEnd, onRangeEnd, allowRange, placeholder }) {
+ var [open, setOpen] = useState(false);
+ var ref = useRef(null);
+
+ useEffect(function() {
+ function close(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+ document.addEventListener("mousedown", close);
+ return function() { document.removeEventListener("mousedown", close); };
+ }, []);
+
+ var display = value ? (rangeEnd ? (value + " to " + rangeEnd) : value) : "";
+
+ return (
+ <div ref={ref} style={{ position:"relative" }}>
+ {label && <label style={LBL}>{label}</label>}
+ <div onClick={function(){setOpen(function(o){return !o;});}} style={{ ...INP, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+ <span style={{ color:display ? T.text : T.faint }}>{display || placeholder || "Select date"}</span>
+ <span>📅</span>
+ </div>
+ {open && <DatePicker value={value} onChange={onChange} rangeEnd={rangeEnd} onRangeEnd={onRangeEnd} allowRange={allowRange} onClose={function(){setOpen(false);}} />}
+ </div>
+ );
+}
+
+// ── Toast ─────────────────────────────────────────────
+function Toast({ toast }) {
+ if (!toast) return null;
+ var styles = {
+ success: { bg:T.successL, border:"#6EE7B7", color:"#065F46", icon:"✓" }, error: { bg:T.dangerL, border:"#FCA5A5", color:"#991B1B", icon:"✕" }, info: { bg:T.accentL, border:"#F0A898", color:"#3730A3", icon:"i" }, };
+ var s = styles[toast.type] || styles.success;
+ return (
+ <div style={{ position:"fixed", top:16, right:16, zIndex:9999, display:"flex", alignItems:"center", gap:8, padding:"10px 16px", borderRadius:10, fontSize:13, fontWeight:500, background:s.bg, border:"1px solid "+s.border, color:s.color, boxShadow:"0 4px 12px rgba(0,0,0,0.12)", animation:"sIn .2s" }}>
+ <span style={{ fontWeight:700 }}>{s.icon}</span> {toast.msg}
+ </div>
+ );
+}
+
+// ── Confirm Modal ─────────────────────────────────────
+function Confirm({ show, title, body, onOk, onCancel }) {
+ if (!show) return null;
+ return (
+ <div style={{ position:"fixed", inset:0, background:"rgba(15,23,42,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+ <div style={{ ...CARD, maxWidth:360, width:"100%", textAlign:"center", animation:"fadeIn .2s" }}>
+ <div style={{ fontSize:36, marginBottom:12 }}>&#9888;</div>
+ <div style={{ fontWeight:700, fontSize:17, color:T.text, marginBottom:8 }}>{title}</div>
+ <div style={{ fontSize:13, color:T.muted, marginBottom:22, lineHeight:1.6 }}>{body}</div>
+ <div style={{ display:"flex", gap:8, justifyContent:"center" }}>
+ <button onClick={onOk} style={{ ...BTN, background:T.danger }}>Confirm</button>
+ <button onClick={onCancel} style={GBTN}>Cancel</button>
+ </div>
+ </div>
+ </div>
+ );
+}
+
+// ── Badge ─────────────────────────────────────────────
+function Badge({ status }) {
+ var map = { pending:{bg:"#FEF9C3",color:"#854D0E"}, approved:{bg:T.successL,color:"#065F46"}, rejected:{bg:T.dangerL,color:"#991B1B"} };
+ var s = map[status] || map.pending;
+ return <span style={{ padding:"2px 8px", borderRadius:20, fontSize:11, fontWeight:600, background:s.bg, color:s.color, textTransform:"capitalize" }}>{status}</span>;
+}
+
+// ── AI Chat ───────────────────────────────────────────
+// ── AI Usage limiter helpers ─────────────────────────
+var AI_DAILY_LIMIT = 10;
+function getAIUsage(uid) {
+  try {
+    var key = "sr_ai_" + uid;
+    var data = JSON.parse(localStorage.getItem(key) || "null");
+    var today = new Date().toDateString();
+    if (!data || data.date !== today) return { count:0, date:today };
+    return data;
+  } catch(e) { return { count:0, date:new Date().toDateString() }; }
+}
+function incAIUsage(uid) {
+  try {
+    var key  = "sr_ai_" + uid;
+    var data = getAIUsage(uid);
+    data.count++;
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch(e) {}
+}
+
+function AIChat({ emps, sched, user }) {
+  var [msgs, setMsgs] = useState([{ role:"assistant", text:"Hi " + user.name.split(" ")[0] + "! I can help with scheduling conflicts, coverage suggestions, and staffing decisions. What do you need?" }]);
+  var [input, setInput] = useState("");
+  var [loading, setLoading] = useState(false);
+  var [usage, setUsage] = useState(function(){ return getAIUsage(user.id); });
+  var ref = useRef(null);
+  useEffect(function(){ if(ref.current) ref.current.scrollIntoView({behavior:"smooth"}); }, [msgs]);
+
+  var remaining = AI_DAILY_LIMIT - usage.count;
+  var limitHit  = remaining <= 0;
+
+  function send() {
+    if (!input.trim() || loading || limitHit) return;
+    var msg = input.trim();
+    setInput("");
+    setLoading(true);
+    incAIUsage(user.id);
+    var newUsage = getAIUsage(user.id);
+    setUsage(newUsage);
+    setMsgs(function(p){ return p.concat([{role:"user",text:msg}]); });
+    var ctx = "You are an AI scheduling assistant for a hospitality/healthcare business. Employees: " + JSON.stringify(emps.map(function(e){return{name:e.name,role:e.role,avail:e.avail,max:e.max};})) + ". Be concise and practical.";
+    var history = msgs.slice(1).map(function(m){ return {role:m.role==="user"?"user":"assistant",content:m.text}; }).concat([{role:"user",content:msg}]);
+    fetch("https://api.anthropic.com/v1/messages", {
+      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:800,system:ctx,messages:history})
+    }).then(function(r){return r.json();}).then(function(data){
+      var reply = data.content ? data.content.map(function(b){return b.text||"";}).join("") : "Sorry, try again.";
+      setMsgs(function(p){return p.concat([{role:"assistant",text:reply}]);});
+      setLoading(false);
+    }).catch(function(){
+      setMsgs(function(p){return p.concat([{role:"assistant",text:"Something went wrong. Try again."}]);});
+      setLoading(false);
+    });
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", height:"100%", minHeight:380, ...CARD, padding:0, overflow:"hidden" }}>
+      <div style={{ padding:"12px 16px", borderBottom:"1px solid "+T.border, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+          <div style={{ width:28, height:28, borderRadius:8, background:"linear-gradient(135deg,#C84B31,#E05C40)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, color:"white" }}>&#10022;</div>
+          <div><div style={{ fontWeight:700, fontSize:13 }}>Schedule AI</div><div style={{ color:T.faint, fontSize:10 }}>Powered by Claude</div></div>
+        </div>
+        <div style={{ fontSize:11, fontWeight:600, padding:"3px 9px", borderRadius:20, background:remaining<=3?T.dangerL:T.accentL, color:remaining<=3?T.danger:T.accent, border:"1px solid "+(remaining<=3?"#FCA5A5":"#F5C5BB") }}>
+          {limitHit ? "Limit reached" : remaining + " / " + AI_DAILY_LIMIT + " left today"}
+        </div>
+      </div>
+      <div style={{ flex:1, overflowY:"auto", padding:13, display:"flex", flexDirection:"column", gap:9 }}>
+        {msgs.map(function(m,i){
+          return (
+            <div key={i} style={{ display:"flex", justifyContent:m.role==="user"?"flex-end":"flex-start" }}>
+              <div style={{ maxWidth:"82%", padding:"9px 13px", borderRadius:m.role==="user"?"14px 14px 4px 14px":"14px 14px 14px 4px", background:m.role==="user"?T.accent:T.bg, color:m.role==="user"?"white":T.text, fontSize:13, lineHeight:1.6, border:m.role==="assistant"?"1px solid "+T.border:"none", whiteSpace:"pre-wrap" }}>{m.text}</div>
+            </div>
+          );
+        })}
+        {loading && (
+          <div style={{ display:"flex" }}>
+            <div style={{ background:T.bg, border:"1px solid "+T.border, borderRadius:"14px 14px 14px 4px", padding:"9px 13px" }}>
+              <span style={{ display:"inline-flex", gap:4 }}>
+                {[0,1,2].map(function(i){ return <span key={i} style={{ width:5, height:5, borderRadius:"50%", background:T.accent, display:"inline-block", animation:"bounce 1s "+String(i*.2)+"s infinite" }} />; })}
+              </span>
+            </div>
+          </div>
+        )}
+        {limitHit && (
+          <div style={{ textAlign:"center", padding:"16px", background:T.dangerL, borderRadius:10, border:"1px solid #FCA5A5" }}>
+            <div style={{ fontSize:20, marginBottom:6 }}>&#128683;</div>
+            <div style={{ fontSize:13, fontWeight:600, color:T.danger }}>Daily limit reached</div>
+            <div style={{ fontSize:12, color:T.muted, marginTop:4 }}>You have used all {AI_DAILY_LIMIT} AI messages for today. Resets at midnight.</div>
+          </div>
+        )}
+        <div ref={ref} />
+      </div>
+      <div style={{ padding:"10px 14px", borderTop:"1px solid "+T.border, display:"flex", gap:7 }}>
+        <input value={input} onChange={function(e){setInput(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")send();}} placeholder={limitHit?"Daily limit reached — resets at midnight":"Ask about conflicts, coverage..."} disabled={limitHit} style={{ ...INP, fontSize:13, opacity:limitHit?0.5:1 }} />
+        <button onClick={send} disabled={loading || !input.trim() || limitHit} style={{ ...BTN, width:36, height:36, padding:0, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, opacity:(input.trim()&&!limitHit) ? 1 : 0.5 }}>&#8594;</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Team Chat ─────────────────────────────────────────
+function TeamChat({ user, accounts }) {
+  // channel = "general" or a user id for DMs
+  var [channel,  setChannel]  = useState("general");
+  var [groupMsgs,setGroupMsgs]= useState(function(){ return ld("sr_msgs", SEED_MSGS); });
+  var [dmStore,  setDmStore]  = useState(function(){ return ld("sr_dms", {}); });
+  var [input,    setInput]    = useState("");
+  var ref = useRef(null);
+
+  useEffect(function(){ sv("sr_msgs", groupMsgs); }, [groupMsgs]);
+  useEffect(function(){ sv("sr_dms",  dmStore);   }, [dmStore]);
+  useEffect(function(){ if(ref.current) ref.current.scrollIntoView({behavior:"smooth"}); }, [groupMsgs, dmStore, channel]);
+
+  var COLORS = ["#1A1714","#2E2A26","#EC4899","#F59E0B","#10B981","#3B82F6","#EF4444","#14B8A6"];
+  function colorFor(sid) { return COLORS[accounts.findIndex(function(a){return a.id===sid;}) % COLORS.length] || "#1A1714"; }
+
+  // DM key is always sorted so A->B and B->A use same thread
+  function dmKey(aid, bid) { return [aid, bid].sort().join("__"); }
+
+  var activeMsgs = channel === "general"
+    ? groupMsgs
+    : (dmStore[dmKey(user.id, channel)] || []);
+
+  // Unread counts — messages since last viewed
+  function unreadCount(uid) {
+    var key = dmKey(user.id, uid);
+    var thread = dmStore[key] || [];
+    var lastSeen = ld("sr_seen_"+key, 0);
+    return thread.filter(function(m){ return m.sid !== user.id && m.ts > lastSeen; }).length;
+  }
+
+  function markSeen() {
+    if (channel === "general") return;
+    var key = dmKey(user.id, channel);
+    try { localStorage.setItem("sr_seen_"+key, String(Date.now())); } catch(e){}
+  }
+
+  useEffect(function(){ markSeen(); }, [channel]);
+
+  function send() {
+    if (!input.trim()) return;
+    var msg = { id:Date.now(), sid:user.id, sname:user.name, text:sanitize(input.trim()), ts:Date.now() };
+    if (channel === "general") {
+      setGroupMsgs(function(p){ return p.concat([msg]); });
+    } else {
+      var key = dmKey(user.id, channel);
+      setDmStore(function(p){ var n={...p}; n[key]=(n[key]||[]).concat([msg]); return n; });
+    }
+    setInput("");
+  }
+
+  // People to DM: everyone except yourself
+  var people = accounts.filter(function(a){ return a.id !== user.id; });
+
+  // Channel display name
+  var chanLabel = channel === "general" ? "#team-general" : (function(){
+    var other = accounts.find(function(a){ return a.id === channel; });
+    return other ? other.name : "DM";
+  })();
+
+  var totalUnread = people.reduce(function(sum, p){ return sum + unreadCount(p.id); }, 0);
+
+  return (
+    <div style={{ display:"flex", height:500, ...CARD, padding:0, overflow:"hidden" }}>
+      {/* Sidebar */}
+      <div style={{ width:160, borderRight:"1px solid "+T.border, display:"flex", flexDirection:"column", background:T.bg, flexShrink:0 }}>
+        <div style={{ padding:"10px 12px", borderBottom:"1px solid "+T.border }}>
+          <div style={{ fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.05em" }}>Messages</div>
+        </div>
+        {/* Group channel */}
+        <button onClick={function(){setChannel("general");}} style={{ padding:"8px 12px", background:channel==="general"?T.accentL:"transparent", border:"none", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:7, borderLeft:"2px solid "+(channel==="general"?T.accent:"transparent") }}>
+          <span style={{ fontSize:14 }}>💬</span>
+          <span style={{ fontSize:12, fontWeight:channel==="general"?700:400, color:channel==="general"?T.accent:T.muted }}>team-general</span>
+        </button>
+        {/* Divider */}
+        <div style={{ padding:"8px 12px 4px", fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.05em" }}>Direct</div>
+        {/* DM list */}
+        <div style={{ flex:1, overflowY:"auto" }}>
+          {people.map(function(p){
+            var unread = unreadCount(p.id);
+            var isActive = channel === p.id;
+            return (
+              <button key={p.id} onClick={function(){setChannel(p.id);}} style={{ width:"100%", padding:"7px 12px", background:isActive?T.accentL:"transparent", border:"none", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:7, borderLeft:"2px solid "+(isActive?T.accent:"transparent") }}>
+                <div style={{ width:22, height:22, borderRadius:"50%", background:colorFor(p.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700, color:"white", flexShrink:0 }}>{p.name[0]}</div>
+                <span style={{ fontSize:11, fontWeight:isActive||unread>0?700:400, color:isActive?T.accent:T.text, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name.split(" ")[0]}</span>
+                {unread > 0 && <span style={{ background:T.danger, color:"white", borderRadius:20, fontSize:9, fontWeight:700, padding:"1px 5px", flexShrink:0 }}>{unread}</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Main chat area */}
+      <div style={{ flex:1, display:"flex", flexDirection:"column", minWidth:0 }}>
+        <div style={{ padding:"11px 14px", borderBottom:"1px solid "+T.border, display:"flex", alignItems:"center", gap:8 }}>
+          <div style={{ width:26, height:26, borderRadius:8, background:"linear-gradient(135deg,#10B981,#059669)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, color:"white" }}>💬</div>
+          <div><div style={{ fontWeight:700, fontSize:13 }}>{chanLabel}</div><div style={{ color:T.faint, fontSize:10 }}>{channel==="general"?accounts.length+" members":"Private message"}</div></div>
+        </div>
+        <div style={{ flex:1, overflowY:"auto", padding:13, display:"flex", flexDirection:"column", gap:2, background:T.bg }}>
+          {activeMsgs.length === 0 && (
+            <div style={{ textAlign:"center", color:T.faint, fontSize:13, marginTop:40 }}>
+              {channel === "general" ? "No messages yet — say hi! 👋" : "Start a conversation with " + chanLabel}
+            </div>
+          )}
+          {activeMsgs.map(function(m, i) {
+            var isMe = m.sid === user.id;
+            var prevSame = i > 0 && activeMsgs[i-1].sid === m.sid && m.ts - activeMsgs[i-1].ts < 120000;
+            return (
+              <div key={m.id} style={{ display:"flex", gap:8, marginTop:prevSame?2:12, alignItems:"flex-end", flexDirection:isMe?"row-reverse":"row" }}>
+                <div style={{ width:24, height:24, borderRadius:"50%", background:colorFor(m.sid), display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700, color:"white", flexShrink:0, visibility:prevSame?"hidden":"visible" }}>{m.sname[0]}</div>
+                <div style={{ display:"flex", flexDirection:"column", alignItems:isMe?"flex-end":"flex-start", maxWidth:"72%" }}>
+                  {!prevSame && <div style={{ fontSize:10, color:T.faint, marginBottom:3 }}>{isMe?"You":m.sname} · {fmtAgo(m.ts)}</div>}
+                  <div style={{ padding:"8px 12px", borderRadius:isMe?"13px 13px 4px 13px":"13px 13px 13px 4px", background:isMe?T.accent:T.surface, color:isMe?"white":T.text, fontSize:13, lineHeight:1.5, border:isMe?"none":"1px solid "+T.border, wordBreak:"break-word" }}>{m.text}</div>
+                </div>
+              </div>
+            );
+          })}
+          <div ref={ref} />
+        </div>
+        <div style={{ padding:"10px 14px", borderTop:"1px solid "+T.border, display:"flex", gap:7, background:T.surface }}>
+          <input value={input} onChange={function(e){setInput(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")send();}} placeholder={channel==="general"?"Message the team...":"Message "+chanLabel+"..."} style={{ ...INP, fontSize:13 }} />
+          <button onClick={send} disabled={!input.trim()} style={{ ...BTN, background:"#10B981", width:36, height:36, padding:0, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, opacity:input.trim()?1:0.5 }}>&#8593;</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ── ShyftRota Logo Mark ───────────────────────────────
+// Key insight: left vertical STOPS before the bottom bar so
+// the bottom-left pill of the S is visible → reads as S not 2
+function LogoMark({ size }) {
+  var s = size || 32;
+  var r = Math.round(s * 0.22);
+  return (
+    <svg width={s} height={s} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" style={{ borderRadius:r, display:"block", flexShrink:0 }}>
+      <rect width="1024" height="1024" fill="#1A1714"/>
+
+      {/* Accent bar top-left */}
+      <rect x="175" y="185" width="170" height="36" rx="18" fill="#C84B31"/>
+
+      {/* ── S ──
+          Key: gap between left-vertical (ends y=555) and bottom bar (starts y=585)
+               + rounded left ends on top and bottom bars = clearly S not 2 */}
+      {/* Top bar — rounded left pill visible */}
+      <rect x="175" y="272" width="320" height="90" rx="45" fill="white"/>
+      {/* Right vertical — bridges top bar down to middle */}
+      <rect x="405" y="272" width="90" height="190" fill="white"/>
+      {/* Middle bar */}
+      <rect x="175" y="372" width="320" height="90" fill="white"/>
+      {/* Left vertical — SHORT connector, stops well above bottom bar */}
+      <rect x="175" y="462" width="90" height="93" fill="white"/>
+      {/* Bottom bar — rounded left pill FULLY visible (gap above it) */}
+      <rect x="175" y="585" width="320" height="90" rx="45" fill="white"/>
+
+      {/* ── R ── */}
+      {/* Stem */}
+      <rect x="565" y="272" width="90" height="403" fill="white"/>
+      {/* Top bar */}
+      <rect x="565" y="272" width="310" height="90" fill="white"/>
+      {/* Right bowl vertical */}
+      <rect x="785" y="272" width="90" height="190" fill="white"/>
+      {/* Middle bar */}
+      <rect x="565" y="372" width="230" height="90" fill="white"/>
+
+      {/* Terracotta diagonal leg */}
+      <rect x="750" y="460" width="86" height="360" rx="43" fill="#C84B31" transform="rotate(20 793 640)"/>
+
+      {/* Bottom dot */}
+      <circle cx="895" cy="820" r="48" fill="#C84B31"/>
+    </svg>
+  );
+}
+
+// ── Welcome / Auth ────────────────────────────────────
+function Welcome({ onLogin, onSignup, accounts }) {
+ var [mode, setMode] = useState("home");
+ var [email, setEmail] = useState("");
+ var [pw, setPw] = useState("");
+ var [name, setName] = useState("");
+ var [ind, setInd] = useState("general");
+  var [payrollPick, setPayrollPick] = useState("paychex");
+ var [err, setErr] = useState("");
+
+ function doLogin() {
+  var emailClean = email.toLowerCase().trim();
+  if (!emailClean || !pw) { setErr("Email and password required."); return; }
+  if (!checkRateLimit(emailClean)) {
+   var mins = getRateLimitMinutes(emailClean);
+   setErr("Account temporarily locked. Try again in " + mins + " minute" + (mins===1?"":"s") + ".");
+   writeAudit("LOGIN_BLOCKED", emailClean, "system");
+   return;
+  }
+  var u = accounts.find(function(a){ return a.email.toLowerCase()===emailClean && checkPassword(pw, a.pw); });
+  if (u) {
+    writeAudit("LOGIN_SUCCESS", emailClean, u.id);
+    onLogin(u);
+  } else {
+    var attempts = getLoginAttempts(emailClean);
+    var warn = attempts >= 4 ? " (" + (LOCKOUT_THRESHOLDS[0].after - attempts) + " attempt" + (LOCKOUT_THRESHOLDS[0].after - attempts===1?"":"s") + " left before lockout)" : "";
+    setErr("Invalid email or password." + warn);
+    writeAudit("LOGIN_FAILED", emailClean, "system");
+  }
+ }
+ function doSignup() {
+ if (!name.trim() || !email.trim() || !pw.trim()) { setErr("All fields required."); return; }
+ var pwErr = validatePassword(pw);
+ if (pwErr) { setErr(pwErr); return; }
+ if (accounts.find(function(a){return a.email.toLowerCase()===email.toLowerCase().trim();})) { setErr("Email already in use."); return; }
+ onSignup({ name:name, email:email, pw:pw, industry:ind, payroll:payrollPick });
+ }
+
+ if (mode === "login") return (
+ <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#F8F6F3,#EDE8E0)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", padding:20 }}>
+ <div style={{ width:"100%", maxWidth:400 }}>
+ <button onClick={function(){setMode("home");setErr("");}} style={{ ...GBTN, marginBottom:20, fontSize:12 }}>&#8592; Back</button>
+ <div style={{ ...CARD, padding:28 }}>
+ <div style={{ textAlign:"center", marginBottom:22 }}>
+ <div style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:800, fontSize:22, color:T.text }}>Welcome back</div>
+ <div style={{ color:T.muted, fontSize:13, marginTop:4 }}>Sign in to ShyftRota</div>
+ </div>
+ <div style={{ marginBottom:13 }}><label style={LBL}>Email</label><input value={email} onChange={function(e){setEmail(e.target.value);setErr("");}} placeholder="you@company.com" style={INP} /></div>
+ <div style={{ marginBottom:18 }}><label style={LBL}>Password</label><input type="password" value={pw} onChange={function(e){setPw(e.target.value);setErr("");}} onKeyDown={function(e){if(e.key==="Enter")doLogin();}} placeholder="password" style={INP} /></div>
+ {err && <div style={{ background:T.dangerL, border:"1px solid #FCA5A5", borderRadius:8, padding:"9px 12px", color:"#991B1B", fontSize:13, marginBottom:13 }}>{err}</div>}
+ <button onClick={doLogin} style={{ ...BTN, width:"100%", padding:"11px", fontSize:14 }}>Sign in</button>
+ <div style={{ marginTop:18, background:T.bg, borderRadius:10, border:"1px solid "+T.border, padding:13 }}>
+ <div style={{ fontSize:10, color:T.faint, fontWeight:600, marginBottom:8, textTransform:"uppercase", letterSpacing:"0.05em" }}>Demo accounts - tap to fill</div>
+ {[accounts[0], accounts[1]].map(function(u){
+ return (
+ <div key={u.id} onClick={function(){setEmail(u.email);setPw(u.pw);setErr("");}} style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", cursor:"pointer", borderBottom:"1px solid "+T.border, fontSize:12 }}>
+ <span style={{ color:T.muted }}>{u.email}</span>
+ <span style={{ color:T.accent, fontWeight:600, background:T.accentL, padding:"1px 7px", borderRadius:20, fontSize:11 }}>{u.role}</span>
+ </div>
+ );
+ })}
+ <div style={{ fontSize:10, color:T.faint, marginTop:7 }}>Passwords: admin123 / amara123</div>
+ </div>
+ </div>
+ </div>
+ </div>
+ );
+
+ if (mode === "signup") return (
+ <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#F8F6F3,#EDE8E0)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", padding:20 }}>
+ <div style={{ width:"100%", maxWidth:440 }}>
+ <button onClick={function(){setMode("home");setErr("");}} style={{ ...GBTN, marginBottom:20, fontSize:12 }}>&#8592; Back</button>
+ <div style={{ ...CARD, padding:28 }}>
+ <div style={{ textAlign:"center", marginBottom:22 }}>
+ <div style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:800, fontSize:22, color:T.text }}>Create your workspace</div>
+ <div style={{ color:T.muted, fontSize:13, marginTop:4 }}>Set up ShyftRota for your team</div>
+ </div>
+ <div style={{ marginBottom:13 }}><label style={LBL}>Your name</label><input value={name} onChange={function(e){setName(e.target.value);setErr("");}} placeholder="Your full name" style={INP} /></div>
+ <div style={{ marginBottom:13 }}><label style={LBL}>Work email</label><input value={email} onChange={function(e){setEmail(e.target.value);setErr("");}} placeholder="you@company.com" style={INP} /></div>
+<div style={{ marginBottom:13 }}>
+<label style={LBL}>Password</label>
+<input type="password" value={pw} onChange={function(e){setPw(e.target.value);setErr("");}} placeholder="Min 8 + uppercase + number + symbol" style={INP} />
+{pw.length > 0 && (function(){
+  var checks = [pw.length>=8, /[A-Z]/.test(pw), /[a-z]/.test(pw), /[0-9]/.test(pw), /[^A-Za-z0-9]/.test(pw)];
+  var score = checks.filter(Boolean).length;
+  var clrs = [T.danger,"#F97316",T.warning,"#84CC16",T.success];
+  var lbls = ["Very weak","Weak","Fair","Good","Strong"];
+  return (
+    <div style={{ marginTop:6 }}>
+      <div style={{ display:"flex", gap:3, marginBottom:3 }}>
+        {[0,1,2,3,4].map(function(i){ return <div key={i} style={{ flex:1, height:3, borderRadius:2, background:i<score?clrs[score-1]:T.border }} />; })}
+      </div>
+      <div style={{ fontSize:11, color:clrs[score-1]||T.faint, fontWeight:600 }}>{lbls[score-1]||""}</div>
+    </div>
+  );
+})()}
+</div>
+ <div style={{ marginBottom:18 }}>
+ <label style={LBL}>Industry</label>
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
+ {Object.keys(INDUSTRIES).map(function(k){
+ var v = INDUSTRIES[k];
+ return (
+ <button key={k} onClick={function(){setInd(k);}} style={{ padding:"10px 8px", borderRadius:9, border:"2px solid "+(ind===k?T.accent:T.border), background:ind===k?T.accentL:T.surface, color:ind===k?T.accent:T.muted, cursor:"pointer", fontSize:12, fontWeight:ind===k?600:400, fontFamily:"inherit", textAlign:"center" }}>
+ <div style={{ fontSize:22, marginBottom:4 }}>{v.icon}</div>
+ {v.label}
+ </button>
+ );
+ })}
+ </div>
+ </div>
+ {err && <div style={{ background:T.dangerL, border:"1px solid #FCA5A5", borderRadius:8, padding:"9px 12px", color:"#991B1B", fontSize:13, marginBottom:13 }}>{err}</div>}
+          <div style={{ marginBottom:16 }}>
+            <label style={LBL}>Payroll provider</label>
+            <select value={payrollPick} onChange={function(e){setPayrollPick(e.target.value);}} style={INP}>
+              {PAYROLL_PROVIDERS.map(function(p){ return <option key={p.id} value={p.id}>{p.label}</option>; })}
+            </select>
+          </div>
+ <button onClick={doSignup} style={{ ...BTN, width:"100%", padding:"11px", fontSize:14 }}>Create workspace</button>
+ </div>
+ </div>
+ </div>
+ );
+
+ return (
+ <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#F8F6F3,#EDE8E0)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", padding:24 }}>
+ <div style={{ textAlign:"center", maxWidth:540, animation:"fadeIn .5s ease" }}>
+  <div style={{ marginBottom:24, display:"flex", justifyContent:"center" }}><LogoMark size={88} /></div>
+ <h1 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:800, fontSize:40, color:T.text, marginBottom:12, lineHeight:1.15 }}>ShyftRota</h1>
+ <p style={{ fontSize:17, color:T.muted, marginBottom:10, lineHeight:1.6 }}>Intelligent workforce scheduling for hospitality, healthcare, and beyond.</p>
+ <p style={{ fontSize:14, color:T.faint, marginBottom:36 }}>AI schedules - Shift swaps - Team chat - PTO management</p>
+ <div style={{ display:"flex", gap:20, justifyContent:"center", flexWrap:"wrap", marginBottom:36 }}>
+ {[["📅","Smart scheduling"],["🔄","Shift swaps"],["🏖","PTO management"],["💬","Team chat"],["✦","AI assistant"]].map(function(item){
+ return <div key={item[1]} style={{ display:"flex", alignItems:"center", gap:6, fontSize:13, color:T.muted }}><span>{item[0]}</span>{item[1]}</div>;
+ })}
+ </div>
+ <div style={{ display:"flex", gap:12, justifyContent:"center", flexWrap:"wrap" }}>
+ <button onClick={function(){setMode("signup");}} style={{ ...BTN, padding:"13px 32px", fontSize:15 }}>Get started free</button>
+ <button onClick={function(){setMode("login");}} style={{ ...GBTN, padding:"13px 32px", fontSize:15 }}>Sign in</button>
+ </div>
+ </div>
+ </div>
+ );
+}
+
+
+
+export default function App() {
+ var [accounts, setAccounts] = useState(function(){
+   var stored = ld("sr_acc", SEED_ACC);
+   // Migration: fix bad Python-generated hashes from a previous build
+   var badHashes = ["h:554eed2018","h:3008644718","h:6adb8a6118","h:5a9124c418","h:52f9d3e417","h:54c1484119","h:50d5626718","h:3e9f7d0717","h:4457f68919"];
+   var hashToPw  = {"h:554eed2018":"admin123","h:3008644718":"amara123","h:6adb8a6118":"diego123","h:5a9124c418":"priya123","h:52f9d3e417":"luca123","h:54c1484119":"sophie123","h:50d5626718":"james123","h:3e9f7d0717":"yuki123","h:4457f68919":"fatima123"};
+   var needsFix = stored.some(function(a){ return badHashes.indexOf(a.pw) >= 0; });
+   if (needsFix) {
+     var fixed = stored.map(function(a){
+       return hashToPw[a.pw] ? {...a, pw: hashToPw[a.pw]} : a;
+     });
+     try { localStorage.setItem("sr_acc", JSON.stringify(fixed)); } catch(e) {}
+     return fixed;
+   }
+   return stored;
+ });
+ var [user, setUser] = useState(function(){ var uid=ld("sr_uid",null); return uid ? ld("sr_acc",SEED_ACC).find(function(a){return a.id===uid;})||null : null; });
+ var [industry, setIndustry] = useState(function(){ return ld("sr_ind", "general"); });
+  var [depts,      setDepts]      = useState(function(){ return ld("sr_depts", SEED_DEPTS); });
+  var [deptFilter, setDeptFilter] = useState("all");
+  var [payroll,    setPayroll]    = useState(function(){ return ld("sr_payroll", "paychex"); });
+  var [emps, setEmps] = useState(function(){
+    var stored = ld("sr_emp", SEED_EMP);
+    // Migrate: assign dept from SEED_EMP for any seed employee missing it
+    // Version bump: if stored data looks like old seeds (no dept on id 1-8), refresh from SEED_EMP
+    var needsRefresh = stored.some(function(e){ return e.id <= 8 && !e.dept; });
+    if (needsRefresh) {
+      // Re-merge: keep custom employees, update seed employees with new dept field
+      return stored.map(function(e){
+        var seed = SEED_EMP.find(function(s){ return s.id === e.id; });
+        return seed ? {...e, dept: seed.dept || e.dept || ""} : {...e, dept: e.dept || ""};
+      });
+    }
+    return stored.map(function(e){ return {...e, dept: e.dept || ""}; });
+  });
+ var [sched, setSched] = useState(function(){ var s = ld("sr_sch", null); return s && typeof s === "object" && !s["Mon"] ? s : { 0: ld("sr_sch", SEED_SCHED) }; });
+ var [swaps, setSwaps] = useState(function(){ return ld("sr_swp", SEED_SWAPS); });
+ var [ptos, setPtos] = useState(function(){ return ld("sr_pto", []); });
+ var [opens, setOpens] = useState(function(){ return ld("sr_open", []); });
+ var [callins, setCallins] = useState(function(){ return ld("sr_call", []); });
+ var [timeclock, setTimeclock] = useState(function(){ return ld("sr_tc", []); }); // array of punch records
+ var [overruled, setOverruled] = useState(function(){ return ld("sr_ovr", []); });
+ var [shiftDefs, setShiftDefs] = useState(function(){ return ld("sr_sdefs",SEED_SHIFTS); });
+ var [weekOff, setWeekOff] = useState(0);
+ var [tab, setTab] = useState("schedule");
+ var [selCell, setSelCell] = useState(null);
+ var [addEmpOpen, setAddEmpOpen]= useState(false);
+ var [confirmRm, setConfirmRm] = useState(null);
+ var [editShift, setEditShift] = useState(null); // object: {idx,id,label,start,end,color} or null
+ var [addingShift, setAddingShift] = useState(false);
+ var [newShift, setNewShift] = useState({ label:"", start:"09:00", end:"17:00", color:"Day 9-5" });
+ var [newEmp, setNewEmp] = useState({ name:"", role:"", avail:[], max:40, email:"", pw:"", isAdmin:false, dept:"" });
+ var [swapForm, setSwapForm] = useState({ toId:"", day:DAYS[0], shift:"", reason:"" });
+ var [ptoType, setPtoType] = useState(PTO_TYPES[0]);
+ var [ptoDate, setPtoDate] = useState(null);
+ var [ptoEnd, setPtoEnd] = useState(null);
+ var [ptoNote, setPtoNote] = useState("");
+ var [callType, setCallType] = useState(ATTEND[0]);
+ var [callNote, setCallNote] = useState("");
+ var [openForm, setOpenForm] = useState({ day:DAYS[0], shift:"", role:"", note:"" });
+  var [availPanel,     setAvailPanel]     = useState(null);
+  var [shiftAvailEmp,  setShiftAvailEmp]  = useState(null); // emp.id being edited for shift-window avail
+  var [shiftOverrides, setShiftOverrides] = useState(function(){ return ld("sr_sovr", {}); }); // {weekOff_day_eid: {start,end}}
+  var [editOverride,   setEditOverride]   = useState(null); // {day, eid, start, end}
+  var [schedView,      setSchedView]      = useState("week");
+  var [newDeptName,   setNewDeptName]   = useState("");
+  var [overrideEid,    setOverrideEid]    = useState(null);
+  var [overrideType,   setOverrideType]   = useState("out");
+  var [overrideTime,   setOverrideTime]   = useState(function(){
+  var n=new Date(); return String(n.getHours()).padStart(2,"0")+":"+String(n.getMinutes()).padStart(2,"0");
+});
+  var [overrideDate,   setOverrideDate]   = useState(new Date().toISOString().slice(0,10));
+  var [editingPunchId, setEditingPunchId] = useState(null);
+  var [editPunchTime,  setEditPunchTime]  = useState("");
+  var [editPunchDate,  setEditPunchDate]  = useState("");
+ var [toast, setToast] = useState(null);
+
+ useEffect(function(){ sv("sr_acc", accounts); }, [accounts]);
+ useEffect(function(){ sv("sr_emp", emps); }, [emps]);
+ useEffect(function(){ sv("sr_sch", sched); }, [sched]);
+ useEffect(function(){ sv("sr_swp", swaps); }, [swaps]);
+ useEffect(function(){ sv("sr_pto", ptos); }, [ptos]);
+ useEffect(function(){ sv("sr_open", opens); }, [opens]);
+ useEffect(function(){ sv("sr_call", callins); }, [callins]);
+ useEffect(function(){ sv("sr_tc", timeclock); }, [timeclock]);
+ useEffect(function(){ sv("sr_ovr", overruled); }, [overruled]);
+ useEffect(function(){ sv("sr_sdefs",shiftDefs); }, [shiftDefs]);
+ useEffect(function(){ sv("sr_ind", industry); }, [industry]);
+  useEffect(function(){ sv("sr_depts",   depts);     }, [depts]);
+  useEffect(function(){ sv("sr_payroll", payroll);   }, [payroll]);
+ useEffect(function(){ if(user) sv("sr_uid", user.id); }, [user]);
+
+ function showT(msg, type) { setToast({msg:msg,type:type||"success"}); setTimeout(function(){setToast(null);},2800); }
+
+ var isAdmin = user && user.role === "admin";
+ var indRoles = (INDUSTRIES[industry] && INDUSTRIES[industry].roles) || INDUSTRIES.general.roles;
+
+ // Derived week data - must be before allConflicts
+ var weekLabel = fmtWeekRange(weekOff);
+ var weekSched = (sched[weekOff] && typeof sched[weekOff] === "object") ? sched[weekOff] : { Mon:{}, Tue:{}, Wed:{}, Thu:{}, Fri:{}, Sat:{}, Sun:{} };
+ var isPastWeek = weekOff < 0;
+ var isFutureWeek = weekOff > 0;
+
+ var allConflicts = [];
+ emps.forEach(function(e) {
+ DAYS.forEach(function(d){
+  if (!weekSched[d] || !weekSched[d][e.id]) return;
+  var shift = weekSched[d][e.id];
+  // Check day-level availability
+  if (e.avail.indexOf(d) < 0) { allConflicts.push(e.name+" on "+d+" (unavailable day)"); return; }
+  // Check shift-window availability
+  var shiftAvail = e.shiftAvail && e.shiftAvail[d];
+  if (shiftAvail && shiftAvail.length > 0 && shiftAvail.indexOf(shift) < 0) {
+    allConflicts.push(e.name+" on "+d+" (unavailable for "+shift+")");
+  }
+});
+ var h = weekHours(e.id, weekSched, shiftDefs);
+ if(h > e.max) allConflicts.push(e.name+" over max hours ("+h+"h / "+e.max+"h)");
+ });
+ var conflicts = allConflicts.filter(function(c){ return overruled.indexOf(c)<0; });
+
+ var pendingSwaps = swaps.filter(function(r){return r.status==="pending";}).length;
+ var pendingPTO = ptos.filter(function(r){return r.status==="pending";}).length;
+ var pendingCall = callins.filter(function(r){return r.status==="pending";}).length;
+ var pendingAll = pendingSwaps + pendingPTO + pendingCall;
+
+ function handleLogin(u) { setUser(u); showT("Welcome back, "+u.name.split(" ")[0]+"!"); }
+ function handleSignup(d) {
+ var acc = {id:"admin_"+Date.now(),name:d.name,email:d.email,pw:d.pw,role:"admin",eid:null};
+ setAccounts(function(p){return p.concat([acc]);});
+ setIndustry(d.industry);
+    if (d.payroll) setPayroll(d.payroll);
+ setUser(acc);
+ showT("Workspace created! Welcome, "+d.name.split(" ")[0]+".");
+ }
+ function logout() {
+  setUser(null);
+  localStorage.removeItem("sr_uid");
+  localStorage.removeItem("sr_last_active");
+ }
+
+ // Session timeout: auto-logout after 8 hours inactivity
+ useEffect(function(){
+  if (!user) return;
+  sv("sr_last_active", Date.now());
+  var id = setInterval(function(){
+   var lastActive = ld("sr_last_active", Date.now());
+   if (Date.now() - lastActive > 8 * 60 * 60 * 1000) {
+    showT("Session expired — please sign in again.", "error");
+    setTimeout(function(){ logout(); }, 2500);
+   } else {
+    sv("sr_last_active", _lastActivity);
+   }
+  }, 60000);
+  return function(){ clearInterval(id); };
+ }, [user]);
+
+ function assignShift(day, eid, shift) {
+ if (isPastWeek) { showT("Past schedules are locked and cannot be changed","error"); return; }
+ setSched(function(p) {
+ var n = {...p};
+ var w = {...(n[weekOff]||{})};
+ w[day] = {...(w[day]||{})};
+ w[day][eid] = shift;
+ n[weekOff] = w;
+ return n;
+ });
+ setSelCell(null); showT("Shift assigned");
+ }
+ function removeShift(day, eid) {
+ if (isPastWeek) { showT("Past schedules are locked and cannot be changed","error"); return; }
+ setSched(function(p) {
+ var n = {...p};
+ var w = {...(n[weekOff]||{})};
+ w[day] = {...(w[day]||{})};
+ delete w[day][eid];
+ n[weekOff] = w;
+ return n;
+ });
+ showT("Shift removed","info");
+ }
+
+ function doRemove(emp) {
+ setEmps(function(p){return p.filter(function(e){return e.id!==emp.id;});});
+ setAccounts(function(p){return p.filter(function(a){return a.eid!==emp.id;});});
+ setSched(function(p){ var n={...p}; Object.keys(n).forEach(function(wk){ var w={}; DAYS.forEach(function(d){ var dd={...((n[wk]&&n[wk][d])||{})}; delete dd[emp.id]; w[d]=dd; }); n[wk]=w; }); return n; });
+ setConfirmRm(null);
+ showT(emp.name+" removed","info");
+ }
+
+ function addEmp() {
+  var nameClean  = sanitize(newEmp.name.trim());
+  var emailClean = newEmp.email.toLowerCase().trim();
+  if (!nameClean)  { showT("Name required","error"); return; }
+  if (!emailClean) { showT("Email required","error"); return; }
+  if (!newEmp.pw.trim()) { showT("Password required","error"); return; }
+  if (newEmp.pw.length < 8) { showT("Password must be at least 8 characters","error"); return; }
+  if (accounts.find(function(a){ return a.email.toLowerCase()===emailClean; })) { showT("Email already exists","error"); return; }
+  var emp = { id:Date.now(), name:nameClean, role:newEmp.role||indRoles[0], avail:newEmp.avail, max:newEmp.max, dept:newEmp.dept||"" };
+  var acc = { id:"acc"+Date.now(), name:nameClean, email:emailClean, pw:hashPassword(newEmp.pw), role:newEmp.isAdmin?"admin":"employee", eid:emp.id };
+  setEmps(function(p){ return p.concat([emp]); });
+  setAccounts(function(p){ return p.concat([acc]); });
+  setNewEmp({ name:"", role:"", avail:[], max:40, email:"", pw:"", isAdmin:false, dept:"" });
+  setAddEmpOpen(false);
+  showT(nameClean+" added");
+ }
+
+ function toggleAdmin(accId) {
+ setAccounts(function(p){ return p.map(function(a){ return a.id===accId ? {...a,role:a.role==="admin"?"employee":"admin"} : a; }); });
+ showT("Role updated");
+ }
+
+ function approveSwap(req) {
+ var to=emps.find(function(e){return e.id===req.toId;}); var from=emps.find(function(e){return e.id===req.fromId;});
+ if(!to||!from) return;
+ setSched(function(p){ var n={...p}; var w={...(n[weekOff]||{})}; w[req.day]={...(w[req.day]||{})}; delete w[req.day][from.id]; w[req.day][to.id]=req.shift; n[weekOff]=w; return n; });
+ setSwaps(function(p){return p.map(function(r){return r.id===req.id?{...r,status:"approved"}:r;});});
+ showT("Swap approved"); writeAudit("SWAP_APPROVED","swap approved",user.id);
+ }
+ function setSwapStatus(id, status) { setSwaps(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});}); showT("Swap "+status); writeAudit("SWAP_STATUS_CHANGE","status="+status,user.id); }
+
+ function submitSwap() {
+ if (!swapForm.toId) { showT("Select a colleague","error"); return; }
+ var toEmp=emps.find(function(e){return e.id===Number(swapForm.toId);}); var myEmp=emps.find(function(e){return e.id===user.eid;});
+    var theirActualShift = (weekSched[swapForm.day] && weekSched[swapForm.day][Number(swapForm.toId)]) || swapForm.shift;
+    var myActualShift = (weekSched[swapForm.day] && weekSched[swapForm.day][user.eid]) || swapForm.shift;
+ setSwaps(function(p){return p.concat([{id:Date.now(),fromId:user.eid,from:(myEmp&&myEmp.name)||user.name,toId:Number(swapForm.toId),to:(toEmp&&toEmp.name)||"",day:swapForm.day,shift:theirActualShift,myShift:myActualShift,reason:sanitize(swapForm.reason),status:"pending"}]);});
+ setSwapForm({toId:"",day:DAYS[0],shift:"",reason:""});
+ showT("Swap request submitted");
+ }
+
+ function submitPTO() {
+ if (!ptoDate) { showT("Select a date","error"); return; }
+ var myEmp=emps.find(function(e){return e.id===user.eid;});
+ setPtos(function(p){return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:ptoType,startDate:ptoDate,endDate:ptoEnd||ptoDate,note:sanitize(ptoNote),status:"pending"}]);});
+ setPtoDate(null); setPtoEnd(null); setPtoNote("");
+ showT("Time-off request submitted");
+ }
+ function setPTOStatus(id, status) { setPtos(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});}); showT("PTO "+status); writeAudit("PTO_STATUS_CHANGE","status="+status,user.id); }
+
+ function postOpen() {
+ setOpens(function(p){return p.concat([{id:Date.now(),day:openForm.day,shift:openForm.shift,role:openForm.role,note:sanitize(openForm.note),postedBy:user.name,claimedBy:null,claimedName:"",status:"open"}]);});
+ setOpenForm({day:DAYS[0],shift:"",role:"",note:""});
+ showT("Open shift posted");
+ }
+ function claimShift(id) {
+ var myEmp=emps.find(function(e){return e.id===user.eid;});
+ setOpens(function(p){return p.map(function(s){return s.id===id?{...s,claimedBy:user.eid,claimedName:(myEmp&&myEmp.name)||user.name,status:"pending_approval"}:s;});});
+ showT("Shift claimed - awaiting approval");
+ }
+ function approveOpen(s) {
+ setSched(function(p){ var n={...p}; var w={...(n[weekOff]||{})}; w[s.day]={...(w[s.day]||{})}; w[s.day][s.claimedBy]=s.shift; n[weekOff]=w; return n; });
+ setOpens(function(p){return p.map(function(o){return o.id===s.id?{...o,status:"filled"}:o;});});
+ showT("Open shift approved");
+ }
+ function declineOpen(id) { setOpens(function(p){return p.map(function(s){return s.id===id?{...s,status:"open",claimedBy:null,claimedName:""}:s;});}); }
+ function removeOpen(id) { setOpens(function(p){return p.filter(function(s){return s.id!==id;});}); showT("Open shift removed","info"); }
+
+ function submitCallin() {
+ var myEmp=emps.find(function(e){return e.id===user.eid;});
+ setCallins(function(p){return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:callType,note:sanitize(callNote),ts:Date.now(),status:"pending"}]);});
+ setCallNote(""); showT("Attendance notice submitted");
+ }
+ function ackCallin(id) { setCallins(function(p){return p.map(function(c){return c.id===id?{...c,status:"acknowledged"}:c;});}); }
+
+ function overrule(c) { setOverruled(function(p){return p.concat([c]);}); showT("Conflict overruled","info"); }
+
+ function clearWeek() {
+ if (isPastWeek) { showT("Past schedules are locked","error"); return; }
+ setSched(function(p) {
+ var n = {...p};
+ var cleared = {};
+ DAYS.forEach(function(d){ cleared[d] = {}; });
+ n[weekOff] = cleared;
+ return n;
+ });
+ showT("Week cleared - start fresh!", "info");
+ }
+
+ function autoGenerate() {
+ if (isPastWeek) { showT("Past schedules are locked","error"); return; }
+
+ // Build a set of employee IDs who have approved PTO overlapping this week
+ var weekStart = getWeekStart(weekOff);
+ var ptoBlocked = {}; // { empId: { Mon: true, Tue: true, ... } }
+
+ ptos.forEach(function(req) {
+ if (req.status !== "approved") return;
+ var start = new Date(req.startDate);
+ var end = new Date(req.endDate || req.startDate);
+ // Check each day of the current week
+ DAYS.forEach(function(d, di) {
+ var dayDate = new Date(weekStart);
+ dayDate.setDate(weekStart.getDate() + di);
+ // Compare dates as strings yyyy-mm-dd
+ var y = dayDate.getFullYear();
+ var m = String(dayDate.getMonth()+1).padStart(2,"0");
+ var dd = String(dayDate.getDate()).padStart(2,"0");
+ var dateStr = y+"-"+m+"-"+dd;
+ var startStr = req.startDate;
+ var endStr = req.endDate || req.startDate;
+ if (dateStr >= startStr && dateStr <= endStr) {
+ if (!ptoBlocked[req.eid]) ptoBlocked[req.eid] = {};
+ ptoBlocked[req.eid][d] = true;
+ }
+ });
+ });
+
+ var gen = {};
+ DAYS.forEach(function(d){ gen[d] = {}; });
+ var shiftCycle = shiftDefs.map(function(s){ return s.id; });
+ var skipped = [];
+
+ emps.forEach(function(emp) {
+ var hoursUsed = 0;
+ DAYS.forEach(function(d) {
+ var onPTO = ptoBlocked[emp.id] && ptoBlocked[emp.id][d];
+ if (onPTO) {
+ if (skipped.indexOf(emp.name) < 0) skipped.push(emp.name);
+ return; // skip this day - employee is on approved PTO
+ }
+ var shiftWinOk = (function(){
+  if (!emp.shiftAvail || !emp.shiftAvail[d] || emp.shiftAvail[d].length===0) return true;
+  return emp.shiftAvail[d].indexOf(shift) >= 0;
+ })();
+ if (emp.avail.indexOf(d) >= 0 && hoursUsed + shiftHours(shift, shiftDefs) <= emp.max && shiftWinOk) {
+ var shift = shiftCycle[Math.floor(Math.random() * shiftCycle.length)];
+ gen[d][emp.id] = shift;
+ hoursUsed += shiftHours(shift, shiftDefs);
+ }
+ });
+ });
+
+ // Proactive insights after generate
+ var insights = [];
+ emps.forEach(function(e){
+  var hrs = (function(){ var t=0; ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].forEach(function(d){ var sh=gen[d]&&gen[d][e.id]; if(sh) t+=shiftHours(sh,shiftDefs); }); return Math.round(t*10)/10; })();
+  if (hrs >= e.max) insights.push(e.name.split(" ")[0]+" at max hours ("+hrs+"h)");
+  else if (hrs >= e.max-8) insights.push(e.name.split(" ")[0]+" near max ("+hrs+"/"+e.max+"h)");
+ });
+ DAYS.forEach(function(d){
+  var cnt = Object.keys(gen[d]||{}).length;
+  if (cnt===0) insights.push(d+" has nobody scheduled");
+  else if (cnt===1) insights.push(d+" only has 1 person");
+ });
+ var unscheduled = emps.filter(function(e){ return DAYS.some(function(d){return e.avail.indexOf(d)>=0;}) && !DAYS.some(function(d){return gen[d]&&gen[d][e.id];}); });
+ if (unscheduled.length>0) insights.push(unscheduled.length+" available employee"+(unscheduled.length>1?"s":"")+" not scheduled");
+
+ setSched(function(p) { var n={...p}; n[weekOff]=gen; return n; });
+
+ var base = skipped.length>0 ? "Generated! PTO excluded: "+skipped.join(", ") : "Schedule generated!";
+ if (insights.length>0) {
+  showT(base+" | "+insights[0]+(insights.length>1?" (+"+(insights.length-1)+" more)":""), "info");
+ } else {
+  showT(base+" No conflicts detected.");
+ }
+ }
+ function restore(c) { setOverruled(function(p){return p.filter(function(x){return x!==c;});}); showT("Conflict restored","info"); }
+
+  var ADMIN_TABS = [
+    {id:"schedule",   label:"Schedule"},
+    {id:"employees",  label:"Employees"},
+    {id:"depts",      label:"Departments"},
+    {id:"openShifts", label:"Open Shifts"},
+    {id:"requests",   label:"Requests" + (pendingAll ? " ("+pendingAll+")" : "")},
+    {id:"timeclock",  label:"Time Clock"},
+    {id:"shifts",     label:"Shift Types"},
+    {id:"chat",       label:"Team Chat"},
+    {id:"ai",         label:"AI"},
+  ];
+  var EMP_TABS = [
+    {id:"myschedule",label:"My Schedule"},
+    {id:"today",     label:"Who's Working"},
+    {id:"openShifts",label:"Open Shifts"},
+    {id:"timeoff",   label:"Time Off"},
+    {id:"swap",      label:"Shift Swap"},
+    {id:"callin",    label:"Call In"},
+    {id:"clockin",   label:"Clock In"},
+    {id:"chat",      label:"Team Chat"},
+  ];
+ var TABS = isAdmin ? ADMIN_TABS : EMP_TABS;
+  var TAB_ICONS = {schedule:"📅",employees:"👥",depts:"🏢",openShifts:"📌",requests:"📋",timeclock:"🕐",shifts:"⏱",chat:"💬",ai:"✦",myschedule:"📅",today:"👀",timeoff:"🏖",swap:"🔄",callin:"📞",clockin:"👊"};
+
+ if (!user) return <Welcome onLogin={handleLogin} onSignup={handleSignup} accounts={accounts} />;
+
+ var tz = getTZ();
+
+ return (
+ <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"'Inter',sans-serif", color:T.text }}>
+       <meta httpEquiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com https://api.anthropic.com;" />
+      <style>{`
+ @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@700;800&display=swap');
+ * { box-sizing:border-box; margin:0; padding:0; }
+ ::-webkit-scrollbar { width:4px; height:4px; }
+ ::-webkit-scrollbar-thumb { background:#CBD5E1; border-radius:4px; }
+ @keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
+ @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+ @keyframes sIn { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
+ @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+ .hv:hover { background:#F1F5F9 !important; cursor:pointer; }
+ .hv2:hover { background:#FDF0ED !important; cursor:pointer; }
+ input:focus, select:focus, textarea:focus { border-color:#C84B31 !important; box-shadow:0 0 0 3px rgba(200,75,49,0.12); outline:none; }
+ button { transition: transform 0.12s cubic-bezier(0.34,1.56,0.64,1), opacity 0.12s ease, box-shadow 0.12s ease; }
+ button:active { transform: scale(0.88); opacity:0.75; box-shadow: 0 0 0 4px rgba(26,23,20,0.18); }
+ .tab-btn { transition: color 0.18s ease, border-color 0.18s ease, transform 0.12s cubic-bezier(0.34,1.56,0.64,1) !important; }
+ .tab-btn:active { transform: scale(0.82) !important; }
+ .press-pop:active { transform: scale(0.85) !important; box-shadow: 0 0 0 5px rgba(26,23,20,0.2) !important; }
+ .sidebar { display:flex !important; }
+ .mobile-nav { display:none !important; }
+ .dtop-bar { display:flex !important; }
+ @media (max-width:680px) {
+ .sidebar { display:none !important; }
+ .mobile-nav { display:flex !important; }
+ .dtop-bar { display:none !important; }
+ .main-pad { padding:12px !important; overflow-x:hidden !important; }
+ .two-col { grid-template-columns:1fr !important; }
+ .time-grid { grid-template-columns:1fr !important; }
+ }
+ `}</style>
+
+ <Toast toast={toast} />
+ <Confirm show={!!confirmRm} title={"Remove "+((confirmRm&&confirmRm.name)||"")} body="This deletes their profile, login, and all assigned shifts." onOk={function(){doRemove(confirmRm);}} onCancel={function(){setConfirmRm(null);}} />
+
+ {/* Mobile nav - fixed structure, no height shifts */}
+ <div className="mobile-nav" style={{ flexDirection:"column", background:T.surface, borderBottom:"1px solid "+T.border, position:"sticky", top:0, zIndex:50 }}>
+
+ {/* Row 1: Logo + user - always same height */}
+ <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"9px 16px", height:48, flexShrink:0 }}>
+ <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <LogoMark size={28} />
+ <span style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:800, fontSize:14, color:T.text }}>ShyftRota</span>
+ </div>
+ <div style={{ display:"flex", gap:7, alignItems:"center" }}>
+ {conflicts.length > 0 && <div style={{ background:T.warningL, border:"1px solid #FDE68A", borderRadius:6, padding:"3px 8px", color:"#92400E", fontSize:11 }}>&#9888; {conflicts.length}</div>}
+ <div style={{ width:26, height:26, borderRadius:"50%", background:avatarBg(user.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"white" }}>{user.name[0]}</div>
+ <button onClick={logout} style={{ ...GBTN, fontSize:11, padding:"3px 8px" }}>Out</button>
+ </div>
+ </div>
+
+ {/* Row 2: Week nav - ALWAYS rendered, fixed height 36px, fades when not on schedule */}
+ <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, height:36, borderTop:"1px solid "+T.border, background:T.bg, flexShrink:0, opacity:(tab==="schedule"||tab==="myschedule")?1:0.35, transition:"opacity 0.2s ease", pointerEvents:(tab==="schedule"||tab==="myschedule")?"auto":"none" }}>
+ <button className="tab-btn" onClick={function(){setWeekOff(function(p){return p-1;});}} style={{ background:"none", border:"1px solid "+T.border, borderRadius:6, padding:"2px 10px", cursor:"pointer", fontSize:15, color:T.muted, lineHeight:1 }}>&#8249;</button>
+ <span style={{ fontWeight:600, fontSize:12, color:T.text, letterSpacing:"0.01em" }}>{weekLabel}</span>
+ <button className="tab-btn" onClick={function(){setWeekOff(function(p){return p+1;});}} style={{ background:"none", border:"1px solid "+T.border, borderRadius:6, padding:"2px 10px", cursor:"pointer", fontSize:15, color:T.muted, lineHeight:1 }}>&#8250;</button>
+ {weekOff !== 0 && <button className="tab-btn" onClick={function(){setWeekOff(0);}} style={{ fontSize:10, color:T.accent, background:T.accentL, border:"none", borderRadius:20, padding:"2px 8px", cursor:"pointer", fontWeight:600 }}>Today</button>}
+ </div>
+
+ {/* Row 3: Tab bar - horizontal scroll only, fixed height */}
+ <div style={{ display:"flex", overflowX:"auto", overflowY:"hidden", borderTop:"1px solid "+T.border, flexShrink:0, scrollbarWidth:"none" }}>
+ {TABS.map(function(t) {
+ var active = tab === t.id;
+ return (
+ <button key={t.id} className="tab-btn" onClick={function(){setTab(t.id);}} style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"8px 12px", border:"none", background:"transparent", cursor:"pointer", fontFamily:"inherit", color:active?T.accent:T.muted, borderBottom:active?"2px solid "+T.accent:"2px solid transparent", marginBottom:-1, minWidth:60 }}>
+ <span style={{ fontSize:16, lineHeight:1 }}>{TAB_ICONS[t.id]||"."}</span>
+ <span style={{ fontSize:9, fontWeight:active?700:400, whiteSpace:"nowrap", letterSpacing:"0.02em", textTransform:"uppercase" }}>{t.label.replace(/ \(\d+\)/,"")}</span>
+ </button>
+ );
+ })}
+ </div>
+ </div>
+
+ {/* Desktop layout */}
+ <div style={{ display:"flex", minHeight:"100vh" }}>
+
+ {/* Sidebar */}
+ <div className="sidebar" style={{ width:220, background:T.surface, borderRight:"1px solid "+T.border, flexDirection:"column", flexShrink:0 }}>
+ <div style={{ padding:"18px 16px 14px", borderBottom:"1px solid "+T.border }}>
+ <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+          <LogoMark size={32} />
+ <div>
+ <div style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:800, fontSize:14, color:T.text }}>ShyftRota</div>
+ <div style={{ fontSize:10, color:T.faint }}>{(INDUSTRIES[industry]&&INDUSTRIES[industry].label)||"General"}</div>
+ </div>
+ </div>
+ </div>
+ <nav style={{ flex:1, padding:"10px 8px", overflowY:"auto" }}>
+ <div style={{ fontSize:10, color:T.faint, fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase", padding:"0 8px", marginBottom:6 }}>{isAdmin?"Management":"My Workspace"}</div>
+ {TABS.map(function(t) {
+ var active = tab === t.id;
+ return (
+ <button key={t.id} onClick={function(){setTab(t.id);}} style={{ width:"100%", display:"flex", alignItems:"center", gap:8, padding:"7px 9px", borderRadius:8, border:"none", cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:active?600:400, color:active?T.accent:T.muted, background:active?T.accentL:"transparent", marginBottom:2, textAlign:"left" }}>
+ <span style={{ fontSize:13 }}>{TAB_ICONS[t.id]||"."}</span>
+ <span style={{ flex:1 }}>{t.label.replace(/ \(\d+\)/,"")}</span>
+ {t.id==="requests" && pendingAll > 0 && <span style={{ background:T.accent, color:"white", fontSize:10, fontWeight:700, borderRadius:20, padding:"1px 6px" }}>{pendingAll}</span>}
+ </button>
+ );
+ })}
+ </nav>
+ <div style={{ padding:"12px", borderTop:"1px solid "+T.border }}>
+ <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+ <div style={{ width:30, height:30, borderRadius:"50%", background:avatarBg(user.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:"white", flexShrink:0 }}>{user.name[0]}</div>
+ <div style={{ flex:1, minWidth:0 }}>
+ <div style={{ fontSize:12, fontWeight:600, color:T.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{user.name.split(" ")[0]}</div>
+ <div style={{ fontSize:10, color:T.faint, textTransform:"capitalize" }}>{user.role}</div>
+ </div>
+ <button onClick={logout} style={{ background:"none", border:"1px solid "+T.border, borderRadius:6, color:T.faint, cursor:"pointer", fontSize:11, width:24, height:24, display:"flex", alignItems:"center", justifyContent:"center" }}>&#8617;</button>
+ </div>
+ </div>
+ </div>
+
+ {/* Content */}
+ <div style={{ flex:1, display:"flex", flexDirection:"column", minWidth:0 }}>
+
+ {/* Desktop top bar */}
+ <div className="dtop-bar" style={{ background:T.surface, borderBottom:"1px solid "+T.border, padding:"13px 24px", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
+ <div>
+ <h1 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:17, color:T.text }}>
+ {(TABS.find(function(t){return t.id===tab;})&&TABS.find(function(t){return t.id===tab;}).label.replace(/ \(\d+\)/,""))||""}
+ </h1>
+ <div style={{ fontSize:11, color:T.faint, marginTop:2, display:"flex", alignItems:"center", gap:8 }}>
+ <button onClick={function(){setWeekOff(function(p){return p-1;});}} style={{ background:"none", border:"1px solid "+T.border, borderRadius:5, padding:"1px 7px", cursor:"pointer", fontSize:13, color:T.muted }}>&#8249;</button>
+ <span>{weekLabel}</span>
+ <button onClick={function(){setWeekOff(function(p){return p+1;});}} style={{ background:"none", border:"1px solid "+T.border, borderRadius:5, padding:"1px 7px", cursor:"pointer", fontSize:13, color:T.muted }}>&#8250;</button>
+ {weekOff !== 0 && <button onClick={function(){setWeekOff(0);}} style={{ fontSize:10, color:T.accent, background:T.accentL, border:"none", borderRadius:20, padding:"1px 7px", cursor:"pointer" }}>Today</button>}
+ {tz && <span style={{ color:T.faint }}>- {tz}</span>}
+ </div>
+ </div>
+ {isAdmin && (
+ <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+ {conflicts.length > 0 && <div style={{ background:T.warningL, border:"1px solid #FDE68A", borderRadius:8, padding:"5px 11px", color:"#92400E", fontSize:12 }}>&#9888; {conflicts.length} conflict{conflicts.length>1?"s":""}</div>}
+ <button onClick={function(){exportCSV(emps,sched);}} style={{ ...GBTN, fontSize:12 }}>📊 CSV</button>
+ </div>
+ )}
+ </div>
+
+ {/* Page content */}
+ <div className="main-pad" style={{ flex:1, padding:24, overflowY:"auto", overflowX:"hidden", animation:"fadeIn .2s ease" }}>
+
+ {/* SCHEDULE */}
+ {tab==="schedule" && isAdmin && (
+ <div>
+
+ {/* TODAY AT A GLANCE */}
+ {weekOff === 0 && (function(){
+   var dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+   var todayDay = dayNames[new Date().getDay()];
+   var todayShifts = weekSched[todayDay] || {};
+   var onToday = emps.filter(function(e){ return todayShifts[e.id]; });
+   var offToday = emps.filter(function(e){ return !todayShifts[e.id]; });
+   var now = new Date();
+   var hr = now.getHours(); var mn = String(now.getMinutes()).padStart(2,"0");
+   var ap = hr>=12?"PM":"AM"; hr=hr%12||12;
+   var clockedInToday = emps.filter(function(e){
+     var last = timeclock.slice().reverse().find(function(p){ return p.eid===e.id; });
+     return last && last.type==="in" && new Date(last.ts).toDateString()===new Date().toDateString();
+   });
+   return (
+     <div style={{ ...CARD, marginBottom:16, background:"linear-gradient(135deg,#1A1714,#2E2A26)", border:"none" }}>
+       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12, marginBottom:14 }}>
+         <div>
+           <div style={{ fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.4)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>Today</div>
+           <div style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:800, fontSize:20, color:"white" }}>{hr}:{mn} {ap}</div>
+         </div>
+         <div style={{ display:"flex", gap:8 }}>
+           <div style={{ textAlign:"center", background:"rgba(255,255,255,0.08)", borderRadius:10, padding:"8px 14px" }}>
+             <div style={{ fontSize:18, fontWeight:800, color:"white" }}>{onToday.length}</div>
+             <div style={{ fontSize:9, color:"rgba(255,255,255,0.4)", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em" }}>Scheduled</div>
+           </div>
+           <div style={{ textAlign:"center", background:"rgba(34,211,160,0.15)", borderRadius:10, padding:"8px 14px", border:"1px solid rgba(34,211,160,0.25)" }}>
+             <div style={{ fontSize:18, fontWeight:800, color:"#34D399" }}>{clockedInToday.length}</div>
+             <div style={{ fontSize:9, color:"rgba(34,211,160,0.6)", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em" }}>Clocked In</div>
+           </div>
+           <div style={{ textAlign:"center", background:"rgba(255,255,255,0.05)", borderRadius:10, padding:"8px 14px" }}>
+             <div style={{ fontSize:18, fontWeight:800, color:"rgba(255,255,255,0.35)" }}>{offToday.length}</div>
+             <div style={{ fontSize:9, color:"rgba(255,255,255,0.25)", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em" }}>Off Today</div>
+           </div>
+         </div>
+       </div>
+       {onToday.length > 0 ? (
+         <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
+           {onToday.map(function(e){
+             var shift = todayShifts[e.id]; var sc = SC[shift] || {};
+             var isIn = clockedInToday.some(function(c){ return c.id===e.id; });
+             return (
+               <div key={e.id} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", borderRadius:20, background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)" }}>
+                 <div style={{ width:6, height:6, borderRadius:"50%", background:isIn?"#34D399":"rgba(255,255,255,0.2)", flexShrink:0 }} />
+                 <span style={{ fontSize:11, color:"white", fontWeight:500 }}>{e.name.split(" ")[0]}</span>
+                 {sc.bg && <span style={{ fontSize:10, color:sc.text, background:sc.bg, padding:"1px 5px", borderRadius:8, fontWeight:600 }}>{(function(){ var def=shiftDefs.find(function(d){return d.id===shift;}); return def?to12(def.start)+"-"+to12(def.end):shift.split(" ")[0]; })()}</span>}
+               </div>
+             );
+           })}
+         </div>
+       ) : (
+         <div style={{ fontSize:12, color:"rgba(255,255,255,0.3)", fontStyle:"italic" }}>Nobody scheduled today — auto-generate or assign shifts manually.</div>
+       )}
+     </div>
+   );
+ })()}
+
+ {/* Past week banner */}
+ {isPastWeek && (
+ <div style={{ background:"#FFF7ED", border:"1px solid #FED7AA", borderRadius:10, padding:"10px 16px", marginBottom:14, display:"flex", alignItems:"center", gap:10 }}>
+ <span style={{ fontSize:18 }}>🔒</span>
+ <div>
+ <div style={{ fontWeight:600, fontSize:13, color:"#9A3412" }}>Past week - read only</div>
+ <div style={{ fontSize:12, color:"#C2410C", marginTop:1 }}>This schedule is locked as a historical record. Navigate to the current or future week to make changes.</div>
+ </div>
+ </div>
+ )}
+
+ {/* Schedule toolbar */}
+ <div style={{ ...CARD, padding:"12px 16px", marginBottom:16, display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12 }}>
+ <div>
+ <div style={{ fontWeight:700, fontSize:14, color:T.text }}>
+ {isPastWeek ? "Schedule History" : isFutureWeek ? "Plan Ahead" : "Build Your Schedule"}
+ </div>
+ <div style={{ fontSize:12, color:T.muted, marginTop:2 }}>
+ {isPastWeek ? "Archived schedule - view only." : "Click any cell to assign a shift. Use auto-generate as a starting point, then adjust."}
+ </div>
+ </div>
+ <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+  <div style={{ display:"flex", background:T.bg, border:"1px solid "+T.border, borderRadius:8, padding:2 }}>
+   <button onClick={function(){setSchedView("week");}} style={{ padding:"5px 12px", borderRadius:6, border:"none", background:schedView==="week"?T.surface:"transparent", color:schedView==="week"?T.text:T.faint, fontSize:11, fontWeight:schedView==="week"?700:400, cursor:"pointer", fontFamily:"inherit" }}>Week</button>
+   <button onClick={function(){setSchedView("day");}} style={{ padding:"5px 12px", borderRadius:6, border:"none", background:schedView==="day"?T.surface:"transparent", color:schedView==="day"?T.text:T.faint, fontSize:11, fontWeight:schedView==="day"?700:400, cursor:"pointer", fontFamily:"inherit" }}>Today</button>
+  </div>
+  {!isPastWeek && <button onClick={clearWeek} style={{ ...GBTN, fontSize:12, display:"flex", alignItems:"center", gap:6, color:T.danger, borderColor:"#FCA5A5" }}>&#128465; Clear</button>}
+  {!isPastWeek && <button onClick={autoGenerate} style={{ ...BTN, fontSize:12, display:"flex", alignItems:"center", gap:6, background:"linear-gradient(135deg,#C84B31,#E05C40)" }}>&#10024; Auto-Generate</button>}
+ </div>
+ </div>
+
+ {/* Shift legend */}
+                <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:10, alignItems:"center" }}>
+                  <span style={{ fontSize:11, color:T.faint, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em" }}>Dept:</span>
+                  <button onClick={function(){setDeptFilter("all");}} style={{ padding:"4px 12px", borderRadius:20, border:"1px solid "+(deptFilter==="all"?T.accent:T.border), background:deptFilter==="all"?T.accentL:"transparent", color:deptFilter==="all"?T.accent:T.muted, fontSize:12, cursor:"pointer", fontWeight:deptFilter==="all"?600:400 }}>All</button>
+                  {depts.map(function(d){ return <button key={d.id} onClick={function(){setDeptFilter(deptFilter===d.id?"all":d.id);}} style={{ padding:"4px 12px", borderRadius:20, border:"1px solid "+(deptFilter===d.id?d.color:T.border), background:deptFilter===d.id?(d.color+"22"):"transparent", color:deptFilter===d.id?d.color:T.muted, fontSize:12, cursor:"pointer", fontWeight:deptFilter===d.id?600:400 }}>{d.name}</button>; })}
+                </div>
+ <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:16 }}>
+ {shiftDefs.map(function(s) {
+ var c = SC[s.id] || SC["Day 9-5"];
+ return (
+ <div key={s.id} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", borderRadius:20, background:c.bg, border:"1px solid "+c.border }}>
+ <div style={{ width:6, height:6, borderRadius:"50%", background:c.dot }} />
+ <span style={{ fontSize:10, color:c.text, fontWeight:500 }}>{s.label} {to12(s.start)}</span>
+ </div>
+ );
+ })}
+ </div>
+
+ {schedView==="day" && (function(){
+   var dayNames2=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+   var todayD=dayNames2[new Date().getDay()];
+   var todayS=weekSched[todayD]||{};
+   var filtE=emps.filter(function(e){return deptFilter==="all"||e.dept===deptFilter;});
+   var onS=filtE.filter(function(e){return todayS[e.id];});
+   var offS=filtE.filter(function(e){return !todayS[e.id];});
+   var todayLabel=new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
+   return (
+     <div style={{ marginBottom:16 }}>
+       <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:12 }}>{todayLabel}</div>
+       {onS.length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:28 }}>Nobody scheduled today. Hit Auto-Generate or assign shifts manually.</div>}
+       <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+         {onS.map(function(emp){
+           var sh=todayS[emp.id]; var sc=SC[sh]||{};
+           var dept=depts.find(function(d){return d.id===emp.dept;});
+           var lastP=timeclock.slice().reverse().find(function(p){return p.eid===emp.id;});
+           var isIn=lastP&&lastP.type==="in"&&new Date(lastP.ts).toDateString()===new Date().toDateString();
+           var conf=conflicts.find(function(c){return c.indexOf(emp.name)>=0;});
+           return (
+             <div key={emp.id} style={{ ...CARD, display:"flex", alignItems:"center", gap:12, padding:"12px 16px", border:"1px solid "+(conf?T.danger:sc.border||T.border) }}>
+               <div style={{ width:34,height:34,borderRadius:"50%",background:avatarBg(emp.id),display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"white",flexShrink:0 }}>{initials(emp.name)}</div>
+               <div style={{ flex:1, minWidth:0 }}>
+                 <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
+                   <span style={{ fontSize:13, fontWeight:700, color:T.text }}>{emp.name}</span>
+                   <span style={{ fontSize:11, color:T.faint }}>{emp.role}</span>
+                   {dept && <span style={{ fontSize:10, padding:"1px 6px", borderRadius:20, background:dept.color+"22", color:dept.color, fontWeight:600 }}>{dept.name}</span>}
+                 </div>
+                 {conf && <div style={{ fontSize:11, color:T.danger, marginTop:2 }}>&#9888; {conf}</div>}
+               </div>
+               <div style={{ display:"flex", alignItems:"center", gap:7, flexShrink:0 }}>
+                 <div style={{ width:8,height:8,borderRadius:"50%",background:isIn?"#34D399":T.faint }} />
+                 {sc.bg && <span style={{ fontSize:11, fontWeight:700, padding:"4px 10px", borderRadius:20, background:sc.bg, color:sc.text, border:"1px solid "+(sc.border||T.border) }}>{(function(){ var def=shiftDefs.find(function(d){return d.id===sh;}); return def?(def.label+" "+to12(def.start)+"-"+to12(def.end)):sh; })()}</span>}
+               </div>
+             </div>
+           );
+         })}
+       </div>
+       {offS.length>0 && (
+         <div style={{ marginTop:14 }}>
+           <div style={{ fontSize:10, color:T.faint, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:7 }}>Off today ({offS.length})</div>
+           <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+             {offS.map(function(emp){ return (
+               <div key={emp.id} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", borderRadius:20, background:T.bg, border:"1px solid "+T.border }}>
+                 <div style={{ width:16,height:16,borderRadius:"50%",background:avatarBg(emp.id),display:"flex",alignItems:"center",justifyContent:"center",fontSize:7,fontWeight:700,color:"white" }}>{initials(emp.name)}</div>
+                 <span style={{ fontSize:11, color:T.muted }}>{emp.name.split(" ")[0]}</span>
+               </div>
+             ); })}
+           </div>
+         </div>
+       )}
+     </div>
+   );
+ })()}
+
+ {schedView==="week" && (
+ <div style={{ ...CARD, padding:0, overflow:"hidden", marginBottom:16 }}>
+ <div style={{ overflowX:"auto" }}>
+ <table style={{ width:"100%", borderCollapse:"collapse", minWidth:620 }}>
+ <thead>
+ <tr style={{ background:T.bg }}>
+ <th style={{ padding:"10px 14px", textAlign:"left", color:T.faint, fontSize:10, fontWeight:600, borderBottom:"1px solid "+T.border, width:150, letterSpacing:"0.04em", textTransform:"uppercase" }}>Employee</th>
+ {DAYS.map(function(d, di) {
+ var dd = getDayDate(di, weekOff);
+ return (
+ <th key={d} style={{ padding:"8px 4px", textAlign:"center", color:T.faint, fontSize:10, fontWeight:600, borderBottom:"1px solid "+T.border }}>
+ <div style={{ fontSize:9, textTransform:"uppercase" }}>{d}</div>
+ <div style={{ color:T.text, fontWeight:700, fontSize:11, marginTop:1 }}>{dd}</div>
+ </th>
+ );
+ })}
+ <th style={{ padding:"10px 6px", textAlign:"center", color:T.faint, fontSize:10, fontWeight:600, borderBottom:"1px solid "+T.border, textTransform:"uppercase" }}>Hrs</th>
+ </tr>
+ </thead>
+ <tbody>
+ {emps.filter(function(emp){ return deptFilter==="all" || emp.dept===deptFilter; }).map(function(emp, ri) {
+ var hrs = weekHours(emp.id, weekSched, shiftDefs);
+ var over = hrs > emp.max;
+ return (
+ <tr key={emp.id} style={{ borderBottom:"1px solid "+T.border, background:ri%2===0?T.surface:T.bg }}>
+ <td style={{ padding:"9px 14px" }}>
+ <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+ <div style={{ width:26, height:26, borderRadius:"50%", background:avatarBg(emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"white", flexShrink:0 }}>{initials(emp.name)}</div>
+ <div>
+ <div style={{ fontSize:12, fontWeight:600, color:T.text }}>{emp.name}</div>
+ <div style={{ fontSize:10, color:T.faint, display:"flex", alignItems:"center", gap:3 }}>{emp.role}{(function(){ var dd=depts.find(function(x){return x.id===emp.dept;}); return dd?<span style={{ color:dd.color, fontWeight:600, marginLeft:2 }}>· {dd.name}</span>:null; })()}</div>
+ </div>
+ </div>
+ </td>
+ {DAYS.map(function(d) {
+ var shift = weekSched[d] && weekSched[d][emp.id];
+ var avail = emp.avail.indexOf(d) >= 0;
+ var cKey = emp.name+" on "+d+" (unavailable)";
+ var conflict = shift && !avail;
+ var isOvr = conflict && overruled.indexOf(cKey) >= 0;
+ var isSel = selCell && selCell.day===d && selCell.eid===emp.id;
+ var cellBg = isSel?"#FDF0ED":(conflict&&!isOvr)?"#FEF2F2":(!avail?"#F8FAFC":"inherit");
+ return (
+ <td key={d} className={isPastWeek?"":"hv"} onClick={function(){if(!isPastWeek)setSelCell(isSel?null:{day:d,eid:emp.id});}} style={{ padding:"6px 4px", textAlign:"center", background:cellBg, position:"relative", transition:"background .1s" }}>
+ {shift ? (
+ <div style={{ display:"inline-flex", alignItems:"center", gap:3, padding:"3px 7px", borderRadius:20, fontSize:10, fontWeight:600, background:SC[shift].bg, color:SC[shift].text, border:"1px solid "+SC[shift].border, whiteSpace:"nowrap" }}>
+ <span style={{ width:5, height:5, borderRadius:"50%", background:SC[shift].dot, display:"inline-block", flexShrink:0 }} />
+ {(function(){
+ var ovKey = overrideKey(weekOff,d,emp.id);
+ var ov = shiftOverrides[ovKey];
+ if (ov) return to12(ov.start)+"-"+to12(ov.end);
+ var def=shiftDefs.find(function(d2){return d2.id===shift;});
+ return def ? to12(def.start)+"-"+to12(def.end) : shift.split(" ")[0];
+ })()}
+ {conflict && !isOvr && <span style={{ color:T.danger, marginLeft:2 }}>!</span>}
+ {isOvr && <span style={{ color:"#2E2A26", marginLeft:2 }}>&#10003;</span>}
+ </div>
+ ) : avail ? (
+ <span style={{ color:T.border, fontSize:16 }}>+</span>
+ ) : (
+ <span style={{ color:T.border }}>&#8212;</span>
+ )}
+ {isSel && (
+ <div style={{ position:"absolute", top:"100%", left:"50%", transform:"translateX(-50%)", zIndex:100, background:T.surface, border:"1px solid "+T.border, borderRadius:10, padding:8, minWidth:165, boxShadow:"0 8px 24px rgba(0,0,0,0.12)", marginTop:4 }}>
+ {shiftDefs.map(function(s) {
+ var c = SC[s.id] || SC["Day 9-5"];
+ return (
+ <div key={s.id} className="hv2" onClick={function(e){e.stopPropagation();assignShift(d,emp.id,s.id);}} style={{ display:"flex", alignItems:"center", gap:7, padding:"6px 10px", borderRadius:7, fontSize:12, color:c.text, marginBottom:2, cursor:"pointer" }}>
+ <span style={{ width:7, height:7, borderRadius:"50%", background:c.dot }} />{s.label} <span style={{ fontSize:10, color:c.text, opacity:0.7 }}>{to12(s.start)}-{to12(s.end)}</span>
+ </div>
+ );
+ })}
+ {shift && (
+   <div onClick={function(e){
+     e.stopPropagation();
+     var ovKey = overrideKey(weekOff,d,emp.id);
+     var ov = shiftOverrides[ovKey];
+     var def = shiftDefs.find(function(sd){return sd.id===shift;});
+     setEditOverride({ day:d, eid:emp.id, empName:emp.name, shiftId:shift, start:ov?ov.start:(def?def.start:"09:00"), end:ov?ov.end:(def?def.end:"17:00") });
+     setSelCell(null);
+   }} style={{ display:"flex", alignItems:"center", padding:"6px 10px", borderRadius:7, fontSize:12, color:T.accent, cursor:"pointer", marginTop:4, borderTop:"1px solid "+T.border }} className="hv">
+     &#9998; Custom time for this day
+   </div>
+ )}
+ {shift && shiftOverrides[overrideKey(weekOff,d,emp.id)] && (
+   <div onClick={function(e){
+     e.stopPropagation();
+     var ovKey = overrideKey(weekOff,d,emp.id);
+     setShiftOverrides(function(p){ var n={...p}; delete n[ovKey]; return n; });
+     setSelCell(null); showT("Custom time removed","info");
+   }} style={{ display:"flex", alignItems:"center", padding:"6px 10px", borderRadius:7, fontSize:12, color:T.warning, cursor:"pointer" }} className="hv">
+     &#8617; Reset to shift default
+   </div>
+ )}
+ {shift && <div onClick={function(e){e.stopPropagation();removeShift(d,emp.id);}} style={{ display:"flex", alignItems:"center", padding:"6px 10px", borderRadius:7, fontSize:12, color:T.danger, cursor:"pointer", marginTop:2, borderTop:"1px solid "+T.border }} className="hv">Remove shift</div>}
+ {conflict && !isOvr && <div onClick={function(e){e.stopPropagation();overrule(cKey);setSelCell(null);}} style={{ display:"flex", alignItems:"center", padding:"6px 10px", borderRadius:7, fontSize:12, color:"#5B21B6", cursor:"pointer", background:"#EDE9FE", marginTop:4 }}>Overrule conflict</div>}
+ {isOvr && <div onClick={function(e){e.stopPropagation();restore(cKey);setSelCell(null);}} style={{ display:"flex", alignItems:"center", padding:"6px 10px", borderRadius:7, fontSize:12, color:T.muted, cursor:"pointer", marginTop:4, borderTop:"1px solid "+T.border }} className="hv">Restore conflict</div>}
+ </div>
+ )}
+ </td>
+ );
+ })}
+ <td style={{ padding:"9px 6px", textAlign:"center" }}>
+ <span style={{ fontSize:11, fontWeight:600, color:over?T.danger:hrs>emp.max*.8?T.warning:T.success }}>{hrs}h</span>
+ <div style={{ fontSize:9, color:T.faint }}>/{emp.max}h</div>
+ </td>
+ </tr>
+ );
+ })}
+ </tbody>
+ </table>
+ </div>
+ </div>
+ )}
+ {conflicts.length > 0 && (
+ <div style={{ background:T.warningL, border:"1px solid #FDE68A", borderRadius:10, padding:14, marginBottom:12 }}>
+ <div style={{ color:"#92400E", fontWeight:600, marginBottom:8, fontSize:13 }}>&#9888; Conflicts - tap a conflicted cell to overrule</div>
+ {conflicts.map(function(c,i){
+ return (
+ <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, color:"#B45309", padding:"3px 0", borderBottom:i<conflicts.length-1?"1px solid #FDE68A":"none" }}>
+ <span>- {c}</span>
+ <button onClick={function(){overrule(c);}} style={{ fontSize:11, color:"#5B21B6", background:"#EDE9FE", border:"none", borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Overrule</button>
+ </div>
+ );
+ })}
+ </div>
+ )}
+ {overruled.length > 0 && (
+ <div style={{ background:"#F5F3FF", border:"1px solid #DDD6FE", borderRadius:10, padding:14 }}>
+ <div style={{ color:"#5B21B6", fontWeight:600, marginBottom:8, fontSize:12 }}>&#10003; Overruled conflicts</div>
+ {overruled.map(function(c,i){
+ return (
+ <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, color:"#7C3AED", padding:"3px 0" }}>
+ <span>- {c}</span>
+ <button onClick={function(){restore(c);}} style={{ fontSize:11, color:T.muted, background:T.bg, border:"1px solid "+T.border, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Restore</button>
+ </div>
+ );
+ })}
+ </div>
+ )}
+ </div>
+ )}
+
+ {/* EMPLOYEES */}
+ {tab==="employees" && isAdmin && (
+ <div>
+ <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:10 }}>
+ <div style={{ fontSize:13, color:T.muted }}>{emps.length} team members</div>
+ <button onClick={function(){setAddEmpOpen(true);}} style={BTN}>+ Add Employee</button>
+ </div>
+ {addEmpOpen && (
+ <div style={{ ...CARD, marginBottom:18, border:"2px solid "+T.accent }}>
+ <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>New Employee</div>
+ <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:11 }} className="two-col">
+ <div><label style={LBL}>Full name</label><input value={newEmp.name} onChange={function(e){setNewEmp(function(p){return {...p,name:e.target.value};});}} placeholder="Sarah Chen" style={INP} /></div>
+ <div>
+ <label style={LBL}>Role / Position</label>
+ <input value={newEmp.role} onChange={function(e){setNewEmp(function(p){return {...p,role:e.target.value};});}} placeholder={indRoles[0]} list="role-list" style={INP} />
+ <datalist id="role-list">{indRoles.map(function(r){return <option key={r} value={r} />;})}</datalist>
+ </div>
+ <div><label style={LBL}>Login email</label><input value={newEmp.email} onChange={function(e){setNewEmp(function(p){return {...p,email:e.target.value};});}} placeholder="sarah@co.com" style={INP} /></div>
+ <div><label style={LBL}>Password</label><input type="password" value={newEmp.pw} onChange={function(e){setNewEmp(function(p){return {...p,pw:e.target.value};});}} placeholder="Set password" style={INP} /></div>
+ </div>
+ <div style={{ marginBottom:11 }}>
+                    <div style={{ marginBottom:11 }}>
+                      <label style={LBL}>Department</label>
+                      <select value={newEmp.dept} onChange={function(e){setNewEmp(function(p){return {...p,dept:e.target.value};});}} style={INP}>
+                        <option value="">No department</option>
+                        {depts.map(function(d){ return <option key={d.id} value={d.id}>{d.name}</option>; })}
+                      </select>
+                    </div>
+ <label style={LBL}>Availability</label>
+ <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+ {DAYS.map(function(d) {
+ var on = newEmp.avail.indexOf(d)>=0;
+ return <button key={d} onClick={function(){setNewEmp(function(p){return {...p,avail:on?p.avail.filter(function(x){return x!==d;}):[...p.avail,d]};});}} style={{ padding:"5px 11px", borderRadius:20, border:"1px solid "+(on?T.accent:T.border), background:on?T.accentL:T.surface, color:on?T.accent:T.muted, fontSize:12, cursor:"pointer" }}>{d}</button>;
+ })}
+ </div>
+ </div>
+ <div style={{ display:"flex", gap:11, alignItems:"center", marginBottom:11, flexWrap:"wrap" }}>
+ <div style={{ display:"flex", gap:7, alignItems:"center" }}>
+ <label style={{ ...LBL, margin:0 }}>Max hrs/week:</label>
+ <input type="number" value={newEmp.max} onChange={function(e){setNewEmp(function(p){return {...p,max:Number(e.target.value)};});}} style={{ ...INP, width:65 }} />
+ </div>
+ <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer", fontSize:13, color:T.muted }}>
+ <input type="checkbox" checked={newEmp.isAdmin} onChange={function(e){setNewEmp(function(p){return {...p,isAdmin:e.target.checked};});}} />
+ Grant admin access
+ </label>
+ </div>
+ <div style={{ display:"flex", gap:8 }}>
+ <button onClick={addEmp} style={BTN}>Add Employee</button>
+ <button onClick={function(){setAddEmpOpen(false);}} style={GBTN}>Cancel</button>
+ </div>
+ </div>
+ )}
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(255px,1fr))", gap:12 }}>
+ {emps.map(function(emp) {
+ var hrs = weekHours(emp.id, weekSched, shiftDefs);
+ var pct = Math.min(100,(hrs/emp.max)*100);
+ var acc = accounts.find(function(a){return a.eid===emp.id;});
+ return (
+ <div key={emp.id} style={CARD}>
+ <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:11 }}>
+ <div style={{ width:38, height:38, borderRadius:"50%", background:avatarBg(emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, color:"white", flexShrink:0 }}>{initials(emp.name)}</div>
+ <div style={{ flex:1 }}>
+ <div style={{ fontSize:13, fontWeight:600 }}>{emp.name}</div>
+ <div style={{ fontSize:11, color:T.faint, display:"flex", alignItems:"center", gap:4, flexWrap:"wrap" }}>{emp.role||"—"}{(function(){ var dd=depts.find(function(x){return x.id===emp.dept;}); return dd?<span style={{ padding:"1px 6px", borderRadius:20, background:dd.color+"22", color:dd.color, fontSize:10, fontWeight:600, marginLeft:2 }}>{dd.name}</span>:null; })()}</div>
+ </div>
+ <button onClick={function(){setConfirmRm(emp);}} style={{ background:T.dangerL, border:"none", borderRadius:7, padding:"4px 8px", color:T.danger, cursor:"pointer", fontSize:11, fontWeight:600 }}>Remove</button>
+ </div>
+ {acc && (
+ <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", fontSize:11, color:T.faint, marginBottom:10, background:T.bg, borderRadius:7, padding:"5px 9px" }}>
+ <span>🔑 {acc.email}</span>
+ <button onClick={function(){toggleAdmin(acc.id);}} style={{ fontSize:10, color:acc.role==="admin"?"#5B21B6":T.muted, background:acc.role==="admin"?"#EDE9FE":"transparent", border:"1px solid "+(acc.role==="admin"?"#DDD6FE":T.border), borderRadius:20, padding:"1px 7px", cursor:"pointer" }}>{acc.role==="admin"?"Admin":"Employee"}</button>
+ </div>
+ )}
+ <div style={{ marginBottom:9 }}>
+ <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+ <span style={{ fontSize:11, color:T.muted }}>Max hrs/week</span>
+ <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+   <span style={{ fontSize:11, color:hrs>emp.max?T.danger:T.muted }}>{hrs}h /</span>
+   <input
+     type="number"
+     defaultValue={emp.max}
+     min={8} max={80} step={4}
+     key={"max-"+emp.id}
+     onBlur={function(ev){
+       var raw = ev.target.value.trim();
+       var val = parseInt(raw, 10);
+       if (isNaN(val) || val < 8) val = 8;
+       if (val > 80) val = 80;
+       ev.target.value = val;
+       setEmps(function(p){ return p.map(function(e){ return e.id===emp.id?{...e,max:val}:e; }); });
+       showT(emp.name.split(" ")[0]+"'s max hours updated to "+val+"h", "info");
+     }}
+     onKeyDown={function(ev){
+       if (ev.key==="Enter") { ev.target.blur(); }
+     }}
+     style={{ width:56, padding:"4px 6px", borderRadius:6, border:"1px solid "+T.border, fontSize:13, fontWeight:700, color:T.text, textAlign:"center", background:T.surface, outline:"none", fontFamily:"inherit" }}
+   />
+   <span style={{ fontSize:11, color:T.muted }}>h</span>
+   <span style={{ fontSize:10, color:T.faint }}>(tap away to save)</span>
+ </div>
+ </div>
+ <div style={{ height:4, background:T.bg, borderRadius:4, border:"1px solid "+T.border }}>
+ <div style={{ height:"100%", width:pct+"%", borderRadius:4, background:pct>100?T.danger:pct>80?T.warning:T.accent, transition:"width .4s" }} />
+ </div>
+ </div>
+ <div style={{ marginBottom:2 }}>
+ <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+   <div style={{ fontSize:9, color:T.faint, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em" }}>Availability</div>
+   <button onClick={function(){ setShiftAvailEmp(emp.id); }} style={{ fontSize:10, color:T.accent, background:T.accentL, border:"1px solid rgba(200,75,49,0.2)", borderRadius:20, padding:"2px 8px", cursor:"pointer", fontWeight:600, fontFamily:"inherit" }}>&#9998; Edit shifts</button>
+ </div>
+ <div style={{ display:"flex", gap:3, flexWrap:"wrap" }}>
+ {DAYS.map(function(d){
+   var avail = emp.avail.indexOf(d)>=0;
+   var shiftWins = emp.shiftAvail && emp.shiftAvail[d];
+   var hasRestriction = avail && shiftWins && shiftWins.length > 0 && shiftWins.length < shiftDefs.length;
+   return (
+     <div key={d} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
+       <button onClick={function(){
+         setEmps(function(p){ return p.map(function(e){
+           if (e.id!==emp.id) return e;
+           var newAvail = avail ? e.avail.filter(function(x){return x!==d;}) : e.avail.concat([d]);
+           return {...e, avail:newAvail};
+         }); });
+       }} style={{ padding:"3px 7px", borderRadius:20, fontSize:9, fontWeight:600, background:avail?T.accentL:T.bg, color:avail?T.accent:T.faint, border:"1px solid "+(avail?"rgba(200,75,49,0.3)":T.border), cursor:"pointer", fontFamily:"inherit" }}>{d}</button>
+       {hasRestriction && <div style={{ width:4, height:4, borderRadius:"50%", background:T.warning }} title="Shift restrictions set" />}
+     </div>
+   );
+ })}
+ </div>
+ </div>
+ </div>
+ );
+ })}
+ </div>
+ </div>
+ )}
+
+
+            {/* DEPARTMENTS */}
+            {tab==="depts" && isAdmin && (function(){
+              var DEPT_COLORS = ["#1A1714","#10B981","#F59E0B","#EF4444","#2E2A26","#3B82F6","#EC4899","#14B8A6"];
+              return (
+                <div>
+                  <div style={{ marginBottom:14 }}>
+                    <h2 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:18 }}>Departments</h2>
+                    <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Create departments, assign staff, and link teams that work together. Linked teams can see each other in the "Who's Working" view.</p>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:12 }}>
+                    {depts.map(function(dept){
+                      var deptEmps = emps.filter(function(e){ return e.dept===dept.id; });
+                      return (
+                        <div key={dept.id} style={{ ...CARD, borderLeft:"3px solid "+dept.color }}>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                              <div style={{ width:10, height:10, borderRadius:"50%", background:dept.color }} />
+                              <span style={{ fontWeight:700, fontSize:15 }}>{dept.name}</span>
+                              <span style={{ fontSize:11, color:T.faint }}>{deptEmps.length} staff</span>
+                            </div>
+                            {depts.length > 1 && <button onClick={function(){
+                              setDepts(function(p){ return p.filter(function(d){return d.id!==dept.id;}); });
+                              setEmps(function(p){ return p.map(function(e){ return e.dept===dept.id?{...e,dept:""}:e; }); });
+                              showT(dept.name+" removed","info");
+                            }} style={{ ...GBTN, padding:"4px 8px", fontSize:12, color:T.danger, borderColor:"#FCA5A5" }}>Remove</button>}
+                          </div>
+                          <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginBottom:12 }}>
+                            {deptEmps.length===0 && <span style={{ fontSize:12, color:T.faint }}>No staff yet — assign dept on employee card</span>}
+                            {deptEmps.map(function(e){ return <span key={e.id} style={{ padding:"2px 8px", borderRadius:20, background:dept.color+"22", color:dept.color, fontSize:11, fontWeight:600 }}>{e.name.split(" ")[0]}</span>; })}
+                          </div>
+                          <div>
+                            <label style={{ ...LBL, marginBottom:8 }}>Linked departments (staff see each other)</label>
+                            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                              {depts.filter(function(d){return d.id!==dept.id;}).map(function(other){
+                                var linked = dept.linked && dept.linked.indexOf(other.id)>=0;
+                                return (
+                                  <div key={other.id} onClick={function(){
+                                    setDepts(function(p){ return p.map(function(d){
+                                      if (d.id!==dept.id) return d;
+                                      var nl = linked ? (d.linked||[]).filter(function(x){return x!==other.id;}) : (d.linked||[]).concat([other.id]);
+                                      return {...d, linked:nl};
+                                    }); });
+                                  }} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 10px", borderRadius:8, background:linked?(other.color+"15"):T.bg, border:"1px solid "+(linked?other.color:T.border), cursor:"pointer" }}>
+                                    <div style={{ width:8, height:8, borderRadius:"50%", background:other.color }} />
+                                    <span style={{ fontSize:13, color:linked?other.color:T.muted, fontWeight:linked?600:400 }}>{other.name}</span>
+                                    <span style={{ marginLeft:"auto", fontSize:11, color:linked?other.color:T.faint }}>{linked?"Linked ✓":"Tap to link"}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div style={{ ...CARD, border:"2px dashed "+T.border, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:28, gap:12 }}>
+                      <div style={{ fontSize:13, fontWeight:600, color:T.muted, marginBottom:4 }}>Add Department</div>
+                      <input value={newDeptName} onChange={function(e){setNewDeptName(e.target.value);}} placeholder="e.g. Front Desk" style={{ ...INP, textAlign:"center" }} />
+                      <button onClick={function(){
+                                                var nm  = (inp&&inp.value||"").trim();
+                        if (!nm) { showT("Name required","error"); return; }
+                        var colors = ["#1A1714","#10B981","#F59E0B","#EF4444","#2E2A26","#3B82F6","#EC4899","#14B8A6"];
+                        var col = colors[depts.length % colors.length];
+                        var id  = nm.toLowerCase().replace(/[^a-z0-9]+/g,"-") + "_" + Date.now();
+                        setDepts(function(p){ return p.concat([{id:id,name:nm,color:col,linked:[]}]); });
+                        if (inp) inp.value = "";
+                        showT(nm+" department created");
+                      }} style={{ ...BTN, width:"100%" }}>+ Add Department</button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+ {/* OPEN SHIFTS admin */}
+ {tab==="openShifts" && isAdmin && (
+ <div>
+ <div style={{ display:"grid", gridTemplateColumns:"360px 1fr", gap:20, marginBottom:24 }} className="two-col">
+ <div style={CARD}>
+ <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>Post an Open Shift</div>
+ <div style={{ marginBottom:11 }}><label style={LBL}>Day</label><select value={openForm.day} onChange={function(e){setOpenForm(function(p){return {...p,day:e.target.value};});}} style={INP}>{DAYS.map(function(d){return <option key={d}>{d}</option>;})}</select></div>
+ <div style={{ marginBottom:11 }}><label style={LBL}>Shift</label><select value={openForm.shift} onChange={function(e){setOpenForm(function(p){return {...p,shift:e.target.value};});}} style={INP}>{shiftDefs.map(function(s){return <option key={s.id} value={s.id}>{s.label} ({to12(s.start)}-{to12(s.end)})</option>;})}</select></div>
+ <div style={{ marginBottom:11 }}><label style={LBL}>Role needed</label><input value={openForm.role} onChange={function(e){setOpenForm(function(p){return {...p,role:e.target.value};});}} placeholder="Any role" list="role-list2" style={INP} /><datalist id="role-list2">{indRoles.map(function(r){return <option key={r} value={r} />;})}</datalist></div>
+ <div style={{ marginBottom:16 }}><label style={LBL}>Note</label><input value={openForm.note} onChange={function(e){setOpenForm(function(p){return {...p,note:e.target.value};});}} placeholder="Details for employees" style={INP} /></div>
+ <button onClick={postOpen} style={{ ...BTN, width:"100%" }}>Post Open Shift</button>
+ </div>
+ <div>
+ <div style={{ fontSize:13, fontWeight:600, marginBottom:12 }}>Posted Shifts</div>
+ {opens.length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13 }}>No open shifts posted yet</div>}
+ <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+ {opens.map(function(s){
+ var isOpen = s.status === "open";
+ var panelOpen = availPanel === s.id;
+ var availEmps = emps.filter(function(e){ return e.avail.indexOf(s.day) >= 0; });
+ var alreadyScheduled = availEmps.filter(function(e){ return weekSched[s.day] && weekSched[s.day][e.id]; });
+ var freeEmps = availEmps.filter(function(e){ return !weekSched[s.day] || !weekSched[s.day][e.id]; });
+ return (
+ <div key={s.id} style={{ ...CARD, border:"1px solid "+(panelOpen?T.accent:T.border), transition:"border-color .2s" }}>
+ <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:9 }}>
+ <div>
+ <div style={{ display:"flex", gap:6, marginBottom:5, flexWrap:"wrap" }}>
+ <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:600 }}>{s.day}</span>
+ <span style={{ padding:"3px 9px", borderRadius:20, background:(SC[s.shift]&&SC[s.shift].bg)||T.bg, color:(SC[s.shift]&&SC[s.shift].text)||T.muted, fontSize:12, fontWeight:600 }}>{s.shift}</span>
+ {s.role && <span style={{ padding:"3px 9px", borderRadius:20, background:T.bg, color:T.muted, fontSize:12 }}>{s.role}</span>}
+ </div>
+ {s.claimedBy && <div style={{ fontSize:12, color:T.muted }}>Claimed by: <strong>{s.claimedName}</strong></div>}
+ {s.note && <div style={{ fontSize:11, color:T.faint, marginTop:3 }}>{s.note}</div>}
+ </div>
+ <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+ {s.status==="pending_approval" ? (
+ <>
+ <button onClick={function(){approveOpen(s);}} style={{ ...BTN, padding:"6px 12px", fontSize:12 }}>Approve</button>
+ <button onClick={function(){declineOpen(s.id);}} style={{ ...GBTN, padding:"6px 12px", fontSize:12, color:T.danger, borderColor:"#FCA5A5" }}>Decline</button>
+ </>
+ ) : isOpen ? (
+ <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+ <button onClick={function(){ setAvailPanel(panelOpen ? null : s.id); }} style={{ padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:600, background:panelOpen?T.accent:T.accentL, color:panelOpen?"white":T.accent, border:"1px solid "+(panelOpen?T.accent:"#F0A898"), cursor:"pointer", transition:"all .15s" }}>
+ {panelOpen ? "Hide" : "Open - See who's free"}
+ </button>
+ <button onClick={function(){removeOpen(s.id);setAvailPanel(null);}} style={{ ...GBTN, padding:"4px 10px", fontSize:12, color:T.danger, borderColor:"#FCA5A5" }}>Remove</button>
+ </div>
+ ) : (
+ <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+ <span style={{ padding:"3px 9px", borderRadius:20, fontSize:11, fontWeight:600, background:T.successL, color:T.success }}>Filled</span>
+ <button onClick={function(){removeOpen(s.id);}} style={{ ...GBTN, padding:"4px 10px", fontSize:12, color:T.danger, borderColor:"#FCA5A5" }}>Remove</button>
+ </div>
+ )}
+ </div>
+ </div>
+
+ {panelOpen && (
+ <div style={{ marginTop:14, borderTop:"1px solid "+T.border, paddingTop:14, animation:"fadeIn .2s" }}>
+ <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:10 }}>
+ Who can cover this shift on {s.day}?
+ </div>
+ {freeEmps.length === 0 && availEmps.length === 0 && (
+ <div style={{ fontSize:13, color:T.faint, padding:"10px 0" }}>No employees available on {s.day}.</div>
+ )}
+ {freeEmps.length > 0 && (
+ <div style={{ marginBottom:12 }}>
+ <div style={{ fontSize:11, fontWeight:600, color:T.success, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:7 }}>Free - not yet scheduled</div>
+ <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+ {freeEmps.map(function(e){
+ return (
+ <div key={e.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 12px", background:T.successL, borderRadius:9, border:"1px solid #6EE7B7" }}>
+ <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+ <div style={{ width:28, height:28, borderRadius:"50%", background:avatarBg(e.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"white", flexShrink:0 }}>{initials(e.name)}</div>
+ <div>
+ <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{e.name}</div>
+ <div style={{ fontSize:11, color:T.muted }}>{e.role}</div>
+ </div>
+ </div>
+ <button onClick={function(){
+ assignShift(s.day, e.id, s.shift);
+ setOpens(function(p){return p.map(function(o){return o.id===s.id?{...o,status:"filled",claimedBy:e.id,claimedName:e.name}:o;});});
+ setAvailPanel(null);
+ showT(e.name+" assigned to "+s.shift+" on "+s.day);
+ }} style={{ ...BTN, padding:"5px 13px", fontSize:12 }}>Assign</button>
+ </div>
+ );
+ })}
+ </div>
+ </div>
+ )}
+ {alreadyScheduled.length > 0 && (
+ <div>
+ <div style={{ fontSize:11, fontWeight:600, color:T.warning, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:7 }}>Already scheduled that day</div>
+ <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+ {alreadyScheduled.map(function(e){
+ return (
+ <div key={e.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 12px", background:T.warningL, borderRadius:9, border:"1px solid #FDE68A" }}>
+ <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+ <div style={{ width:28, height:28, borderRadius:"50%", background:avatarBg(e.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"white", flexShrink:0 }}>{initials(e.name)}</div>
+ <div>
+ <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{e.name}</div>
+ <div style={{ fontSize:11, color:T.muted }}>{e.role} - already on {weekSched[s.day] && weekSched[s.day][e.id]}</div>
+ </div>
+ </div>
+ <button onClick={function(){
+ assignShift(s.day, e.id, s.shift);
+ setOpens(function(p){return p.map(function(o){return o.id===s.id?{...o,status:"filled",claimedBy:e.id,claimedName:e.name}:o;});});
+ setAvailPanel(null);
+ showT(e.name+" assigned (overrides existing shift)","info");
+ }} style={{ ...GBTN, padding:"5px 13px", fontSize:12, color:T.warning, borderColor:"#FDE68A" }}>Override</button>
+ </div>
+ );
+ })}
+ </div>
+ </div>
+ )}
+ </div>
+ )}
+ </div>
+ );
+ })}
+ </div>
+ </div>
+ </div>
+ </div>
+ )}
+
+ {/* REQUESTS */}
+ {tab==="requests" && isAdmin && (
+ <div>
+ {callins.length > 0 && (
+ <div style={{ marginBottom:24 }}>
+ <div style={{ fontSize:13, fontWeight:600, color:T.danger, marginBottom:10 }}>📞 Attendance Notices</div>
+ <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+ {callins.map(function(c){
+ return (
+ <div key={c.id} style={CARD}>
+ <div style={{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:9 }}>
+ <div>
+ <div style={{ fontWeight:600, fontSize:13, marginBottom:4 }}>{c.ename}</div>
+ <span style={{ padding:"2px 8px", borderRadius:20, background:T.dangerL, color:T.danger, fontSize:11, fontWeight:600 }}>{c.type}</span>
+ {c.note && <div style={{ fontSize:12, color:T.muted, marginTop:5 }}>{c.note}</div>}
+ <div style={{ fontSize:10, color:T.faint, marginTop:4 }}>{fmtAgo(c.ts)}</div>
+ </div>
+ <button onClick={function(){ackCallin(c.id);}} style={{ ...GBTN, fontSize:12, padding:"5px 12px", color:c.status==="acknowledged"?T.success:T.muted }}>{c.status==="acknowledged"?"&#10003; Acknowledged":"Acknowledge"}</button>
+ </div>
+ </div>
+ );
+ })}
+ </div>
+ </div>
+ )}
+ {ptos.length > 0 && (
+ <div style={{ marginBottom:24 }}>
+ <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>🏖 Time Off Requests</div>
+ <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+ {ptos.map(function(req){
+ return (
+ <div key={req.id} style={{ ...CARD, border:"1px solid "+(req.status==="approved"?"#6EE7B7":req.status==="rejected"?"#FCA5A5":T.border) }}>
+ <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:9 }}>
+ <div>
+ <div style={{ fontWeight:600, fontSize:14, marginBottom:6 }}>{req.ename}</div>
+ <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+ <span style={{ padding:"3px 9px", borderRadius:20, background:"#EDE9FE", color:"#5B21B6", fontSize:12, fontWeight:500 }}>{req.type}</span>
+ <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:500 }}>{req.startDate}{req.endDate&&req.endDate!==req.startDate?" to "+req.endDate:""}</span>
+ </div>
+ {req.note && <div style={{ marginTop:6, fontSize:12, color:T.muted }}>{req.note}</div>}
+ </div>
+ <div style={{ display:"flex", gap:7, alignItems:"center", flexWrap:"wrap" }}>
+ {req.status==="pending" ? (
+ <>
+ <button onClick={function(){setPTOStatus(req.id,"approved");}} style={{ ...BTN, background:T.success, padding:"7px 14px", fontSize:12 }}>Approve</button>
+ <button onClick={function(){setPTOStatus(req.id,"rejected");}} style={{ ...GBTN, padding:"7px 14px", fontSize:12, color:T.danger, borderColor:"#FCA5A5" }}>Decline</button>
+ </>
+ ) : (
+ <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+ <Badge status={req.status} />
+ <button onClick={function(){setPTOStatus(req.id,"pending");}} style={{ fontSize:11, color:T.muted, background:"none", border:"1px solid "+T.border, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Reopen</button>
+ </div>
+ )}
+ </div>
+ </div>
+ </div>
+ );
+ })}
+ </div>
+ </div>
+ )}
+ <div>
+ <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>🔄 Shift Swap Requests</div>
+ <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+ {swaps.map(function(req){
+ return (
+ <div key={req.id} style={{ ...CARD, border:"1px solid "+(req.status==="approved"?"#6EE7B7":req.status==="rejected"?"#FCA5A5":T.border) }}>
+ <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:9 }}>
+ <div>
+ <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:6 }}>
+ <span style={{ fontWeight:600, fontSize:13 }}>{req.from}</span>
+ <span style={{ color:T.faint }}>&#8594;</span>
+ <span style={{ fontWeight:600, fontSize:13 }}>{req.to}</span>
+ </div>
+ <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+ <span style={{ padding:"2px 8px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:11, fontWeight:500 }}>{req.day}</span>
+ <span style={{ padding:"2px 8px", borderRadius:20, background:(SC[req.shift]&&SC[req.shift].bg)||T.bg, color:(SC[req.shift]&&SC[req.shift].text)||T.muted, fontSize:11 }}>{(function(){ var _sd=shiftDefs.find(function(d){return d.id===req.shift;}); return _sd?(_sd.label+" "+to12(_sd.start)+"-"+to12(_sd.end)):req.shift; })()}</span>
+ </div>
+ {req.reason && <div style={{ marginTop:5, fontSize:12, color:T.muted }}>{req.reason}</div>}
+ </div>
+ <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
+ {req.status==="pending" ? (
+ <>
+ <button onClick={function(){approveSwap(req);}} style={{ ...BTN, padding:"7px 14px", fontSize:12 }}>Approve</button>
+ <button onClick={function(){setSwapStatus(req.id,"rejected");}} style={{ ...GBTN, padding:"7px 14px", fontSize:12, color:T.danger, borderColor:"#FCA5A5" }}>Decline</button>
+ </>
+ ) : (
+ <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+ <Badge status={req.status} />
+ <button onClick={function(){setSwapStatus(req.id,"pending");}} style={{ fontSize:11, color:T.muted, background:"none", border:"1px solid "+T.border, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Reopen</button>
+ </div>
+ )}
+ </div>
+ </div>
+ </div>
+ );
+ })}
+ {swaps.length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:28 }}>No swap requests yet</div>}
+ </div>
+ </div>
+ </div>
+ )}
+
+ {/* SHIFT TYPES */}
+ {tab==="shifts" && isAdmin && (
+ <div>
+ <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18, flexWrap:"wrap", gap:10 }}>
+ <div>
+ <h2 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:18 }}>Shift Types</h2>
+ <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Edit existing shifts or add new ones. Save to apply changes to the schedule.</p>
+ </div>
+ <button onClick={function(){setAddingShift(true);setNewShift({label:"",start:"09:00",end:"17:00",color:"Day 9-5"});}} style={BTN}>+ Add Shift</button>
+ </div>
+
+ {addingShift && (
+ <div style={{ ...CARD, border:"2px solid "+T.accent, marginBottom:20, animation:"fadeIn .2s" }}>
+ <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>New Shift Type</div>
+ <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:11, marginBottom:14 }} className="two-col time-grid">
+ <div><label style={LBL}>Shift name</label><input value={newShift.label} onChange={function(e){setNewShift(function(p){return {...p,label:e.target.value};});}} placeholder="e.g. Split Shift" style={INP} /></div>
+ <div><label style={LBL}>Start time</label><input type="time" value={newShift.start} onChange={function(e){setNewShift(function(p){return {...p,start:e.target.value};});}} style={TINP} /></div>
+ <div><label style={LBL}>End time</label><input type="time" value={newShift.end} onChange={function(e){setNewShift(function(p){return {...p,end:e.target.value};});}} style={TINP} /></div>
+ </div>
+ <div style={{ marginBottom:16 }}>
+ <label style={LBL}>Color theme</label>
+ <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+ {["Morning 6-2","Day 9-5","Evening 2-10","Night 10-6"].map(function(cid){
+ var sc = SC[cid];
+ return (
+ <button key={cid} onClick={function(){setNewShift(function(p){return {...p,color:cid};});}} style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", borderRadius:20, border:"2px solid "+(newShift.color===cid?sc.dot:T.border), background:newShift.color===cid?sc.bg:T.surface, cursor:"pointer" }}>
+ <div style={{ width:10, height:10, borderRadius:"50%", background:sc.dot }} />
+ <span style={{ fontSize:12, color:sc.text, fontWeight:newShift.color===cid?600:400 }}>{cid}</span>
+ </button>
+ );
+ })}
+ </div>
+ </div>
+ <div style={{ display:"flex", gap:8 }}>
+ <button onClick={function(){
+ if (!newShift.label.trim()) { showT("Shift name required","error"); return; }
+ var sc = SC[newShift.color] || SC["Day 9-5"];
+ var id = newShift.label.trim();
+ setShiftDefs(function(p){ return p.concat([{id:id, label:newShift.label.trim(), start:newShift.start, end:newShift.end, color:newShift.color}]); });
+ setAddingShift(false);
+ showT(newShift.label+" shift added");
+ }} style={BTN}>Save New Shift</button>
+ <button onClick={function(){setAddingShift(false);}} style={GBTN}>Cancel</button>
+ </div>
+ </div>
+ )}
+
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:14, marginBottom:20 }}>
+ {shiftDefs.map(function(s, i){
+ var c = SC[s.color] || SC[s.id] || SC["Morning 6-2"];
+ return (
+ <div key={s.id} style={{ ...CARD, border:"2px solid "+c.border, background:c.bg+"44" }}>
+ <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+   <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+     <div style={{ width:12, height:12, borderRadius:"50%", background:c.dot }} />
+     <span style={{ fontWeight:700, fontSize:15, color:c.text }}>{s.label}</span>
+   </div>
+   <button onClick={function(){
+     setEditShift({ idx:i, id:s.id, label:s.label, start:s.start, end:s.end, color:s.color||s.id });
+   }} style={{ ...GBTN, padding:"4px 12px", fontSize:12 }}>Edit</button>
+ </div>
+ <div style={{ fontSize:13, color:T.muted, marginBottom:4 }}>{to12(s.start)} &#8594; {to12(s.end)}</div>
+ <div style={{ fontSize:11, color:T.faint }}>{(function(){
+   var sp=s.start.split(":"); var ep=s.end.split(":");
+   var h=(parseInt(ep[0])*60+parseInt(ep[1]))-(parseInt(sp[0])*60+parseInt(sp[1]));
+   if(h<=0)h+=1440; return Math.round(h/60*10)/10+" hours";
+ })()}</div>
+</div>
+ );
+ })}
+ </div>
+
+ <div style={{ background:T.successL, border:"1px solid #6EE7B7", borderRadius:10, padding:14, fontSize:13, color:"#065F46" }}>
+ &#10003; Changes save automatically. New shifts appear in the schedule dropdown immediately.
+ </div>
+ </div>
+ )}
+
+ {/* CHAT */}
+ {tab==="chat" && <TeamChat user={user} accounts={accounts} />}
+
+ {/* AI */}
+ {tab==="ai" && isAdmin && (
+ <div>
+ <div style={{ marginBottom:14 }}>
+ <h2 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:18 }}>AI Assistant</h2>
+ <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Scheduling intelligence powered by Claude</p>
+ </div>
+ <div style={{ display:"grid", gridTemplateColumns:"1fr 220px", gap:14, minHeight:460 }} className="two-col">
+ <AIChat emps={emps} sched={sched} user={user} />
+ <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+ <div style={CARD}>
+ <div style={{ fontSize:10, color:T.faint, fontWeight:600, letterSpacing:"0.05em", textTransform:"uppercase", marginBottom:9 }}>Quick Prompts</div>
+ {["Detect all conflicts","Suggest a fair schedule","Who has the most hours?","Find coverage for nights","Who is under-scheduled?"].map(function(p,i){
+ return (
+ <div key={i} className="hv" style={{ padding:"6px 9px", borderRadius:7, background:T.bg, border:"1px solid "+T.border, cursor:"pointer", fontSize:12, color:T.muted, marginBottom:5 }}
+ onClick={function(){
+ var el = document.querySelector('input[placeholder*="Ask"]');
+ if (el) {
+ var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,"value").set;
+ setter.call(el, p);
+ el.dispatchEvent(new Event("input",{bubbles:true}));
+ }
+ }}>
+ {p}
+ </div>
+ );
+ })}
+ </div>
+ <div style={{ ...CARD, flex:1 }}>
+ <div style={{ fontSize:10, color:T.faint, fontWeight:600, letterSpacing:"0.05em", textTransform:"uppercase", marginBottom:9 }}>Week at a Glance</div>
+ {[
+ {l:"Total shifts", v:DAYS.reduce(function(a,d){return a+Object.keys(weekSched[d]||{}).length;},0)}, {l:"Staff scheduled", v:new Set(DAYS.reduce(function(a,d){return a.concat(Object.keys(weekSched[d]||{}));},[])).size}, {l:"Active conflicts", v:conflicts.length, warn:conflicts.length>0}, {l:"Pending requests", v:pendingAll}, {l:"Open shifts", v:opens.filter(function(s){return s.status==="open";}).length}, ].map(function(s, i, arr){
+ return (
+ <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7, paddingBottom:7, borderBottom:i<arr.length-1?"1px solid "+T.border:"none" }}>
+ <span style={{ fontSize:12, color:T.muted }}>{s.l}</span>
+ <span style={{ fontSize:14, fontWeight:700, color:s.warn?T.danger:T.text }}>{s.v}</span>
+ </div>
+ );
+ })}
+ </div>
+ </div>
+ </div>
+ </div>
+ )}
+
+ {/* EMPLOYEE: MY SCHEDULE */}
+ {tab==="myschedule" && !isAdmin && (function(){
+ var me = emps.find(function(e){return e.id===user.eid;});
+ if (!me) return <div style={{ color:T.faint, padding:28, textAlign:"center" }}>No schedule found.</div>;
+ // Shift reminder
+ var dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+ var todayDay = dayNames[new Date().getDay()];
+ var todayShift = weekOff===0 && weekSched[todayDay] && weekSched[todayDay][me.id];
+ var shiftDef = todayShift ? shiftDefs.find(function(d){ return d.id===todayShift; }) : null;
+ var reminderMsg = null; var reminderType = "info";
+ if (todayShift && shiftDef) {
+   var nowT = new Date();
+   var sp = shiftDef.start.split(":").map(Number);
+   var shiftStart = new Date(); shiftStart.setHours(sp[0], sp[1], 0, 0);
+   var minsUntil = Math.round((shiftStart - nowT) / 60000);
+   var lastP = timeclock.slice().reverse().find(function(p){ return p.eid===user.eid && new Date(p.ts).toDateString()===new Date().toDateString(); });
+   var isClockedIn = lastP && lastP.type==="in";
+   if (isClockedIn) { reminderMsg = "You are clocked in. Have a great shift!"; reminderType = "success"; }
+  else if (minsUntil > 0 && minsUntil <= 60) { reminderMsg = "Your " + (shiftDef?shiftDef.label:todayShift) + " shift (" + to12(shiftDef?shiftDef.start:"") + ") starts in " + minsUntil + " min. Remember to clock in!"; reminderType = "warning"; }
+  else if (minsUntil > 60 && minsUntil <= 180) { reminderMsg = "Heads up — your " + (shiftDef?shiftDef.label:todayShift) + " shift starts at " + to12(shiftDef?shiftDef.start:"") + " (" + Math.round(minsUntil/60*10)/10 + " hrs away)."; reminderType = "info"; }
+   else if (minsUntil <= 0 && minsUntil > -60 && !isClockedIn) { reminderMsg = "Your shift started " + Math.abs(minsUntil) + " min ago — clock in now!"; reminderType = "danger"; }
+ }
+ var RC = { success:{ bg:T.successL, border:"#6EE7B7", color:T.success, icon:"&#9989;" }, warning:{ bg:T.warningL, border:"#FDE68A", color:"#92400E", icon:"&#9200;" }, danger:{ bg:T.dangerL, border:"#FCA5A5", color:T.danger, icon:"&#9888;" }, info:{ bg:T.accentL, border:"#F0A898", color:T.accent, icon:"&#128197;" } };
+ var rc = RC[reminderType];
+ return (
+ <div>
+ {reminderMsg && (
+   <div style={{ background:rc.bg, border:"1px solid "+rc.border, borderRadius:10, padding:"12px 14px", marginBottom:14, display:"flex", alignItems:"center", gap:10 }}>
+     <span style={{ fontSize:18, flexShrink:0 }} dangerouslySetInnerHTML={{__html:rc.icon}} />
+     <span style={{ fontSize:13, fontWeight:600, color:rc.color }}>{reminderMsg}</span>
+   </div>
+ )}
+ <div style={{ marginBottom:14 }}>
+ <h2 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:18 }}>My Schedule</h2>
+ <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{me.name} - {me.role}</p>
+ </div>
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(100px,1fr))", gap:9, marginBottom:18 }}>
+ {DAYS.map(function(d, di){
+ var shift = weekSched[d] && weekSched[d][me.id];
+ var avail = me.avail.indexOf(d) >= 0;
+ var pto = ptos.find(function(r){return r.eid===user.eid&&r.status==="approved";});
+ var dd = getDayDate(di, weekOff);
+ return (
+ <div key={d} style={{ ...CARD, padding:12, textAlign:"center", background:shift?(SC[shift]&&SC[shift].bg)||T.surface:T.surface, border:"1px solid "+(shift?(SC[shift]&&SC[shift].border)||T.border:T.border) }}>
+ <div style={{ fontSize:9, color:T.faint, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.04em" }}>{d}</div>
+ <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:4 }}>{dd}</div>
+ {pto ? <div style={{ fontSize:10, fontWeight:600, color:"#5B21B6" }}>PTO</div>
+ : shift ? (function(){ var def=shiftDefs.find(function(d){return d.id===shift;}); var label=def?def.label:(shift.split(" ")[0]); var hours=def?(to12(def.start)+"-"+to12(def.end)):shift.split(" ").slice(1).join(" "); return <><div style={{ fontSize:11, fontWeight:700, color:(SC[shift]&&SC[shift].text)||T.text }}>{label}</div><div style={{ fontSize:9, color:((SC[shift]&&SC[shift].text)||T.text)+"99" }}>{hours}</div></>; })()
+ : avail ? <div style={{ fontSize:11, color:T.border }}>—</div>
+ : <div style={{ fontSize:11, color:T.faint }}>Off</div>}
+ </div>
+ );
+ })}
+ </div>
+ <div style={CARD}>
+ <div style={{ display:"flex", justifyContent:"space-between", marginBottom:9 }}>
+ <span style={{ fontSize:13, color:T.muted }}>Hours this week</span>
+ <span style={{ fontSize:13, fontWeight:700, color:T.success }}>{weekHours(me.id, weekSched, shiftDefs)}h / {me.max}h</span>
+ </div>
+ <div style={{ height:5, background:T.bg, borderRadius:4, border:"1px solid "+T.border }}>
+ <div style={{ height:"100%", width:Math.min(100,weekHours(me.id, weekSched, shiftDefs)/me.max*100)+"%", borderRadius:4, background:T.accent, transition:"width .4s" }} />
+ </div>
+ </div>
+ </div>
+ );
+ })()}
+
+
+            {/* WHO'S WORKING TODAY */}
+            {tab==="today" && !isAdmin && (function(){
+              var myEmp  = emps.find(function(e){ return e.id===user.eid; });
+              var myDept = myEmp && depts.find(function(d){ return d.id===myEmp.dept; });
+              var visibleIds   = myDept ? [myDept.id].concat(myDept.linked||[]) : [];
+              var visibleDepts = depts.filter(function(d){ return visibleIds.indexOf(d.id)>=0; });
+              var dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+              var todayDay = dayNames[new Date().getDay()];
+              return (
+                <div>
+                  <div style={{ marginBottom:18 }}>
+                    <h2 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:18 }}>Who's Working Today</h2>
+                    <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{todayDay} — your department{visibleDepts.length>1?" and linked teams":""}</p>
+                  </div>
+                  {visibleDepts.length===0 && (
+                    <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:32 }}>You haven't been assigned to a department yet. Ask your admin to set this up in the Departments tab.</div>
+                  )}
+                  {visibleDepts.map(function(dept){
+                    var deptEmps     = emps.filter(function(e){ return e.dept===dept.id; });
+                    var workingToday = deptEmps.filter(function(e){ return weekSched[todayDay] && weekSched[todayDay][e.id]; });
+                    var isMyDept     = myDept && dept.id===myDept.id;
+                    return (
+                      <div key={dept.id} style={{ marginBottom:24 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+                          <div style={{ width:10, height:10, borderRadius:"50%", background:dept.color }} />
+                          <span style={{ fontWeight:700, fontSize:14 }}>{dept.name}</span>
+                          {isMyDept && <span style={{ padding:"2px 8px", borderRadius:20, background:dept.color+"22", color:dept.color, fontSize:11, fontWeight:600 }}>Your team</span>}
+                          <span style={{ fontSize:12, color:T.faint }}>{workingToday.length} on shift</span>
+                        </div>
+                        {workingToday.length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:18 }}>Nobody from {dept.name} is scheduled today</div>}
+                        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))", gap:8 }}>
+                          {workingToday.map(function(e){
+                            var shift = weekSched[todayDay][e.id];
+                            var sc    = SC[shift];
+                            var isMe  = e.id===user.eid;
+                            return (
+                              <div key={e.id} style={{ ...CARD, padding:14, border:"1px solid "+(isMe?dept.color:T.border), background:isMe?(dept.color+"0D"):T.surface }}>
+                                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                                  <div style={{ width:30, height:30, borderRadius:"50%", background:avatarBg(e.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"white", flexShrink:0 }}>{initials(e.name)}</div>
+                                  <div style={{ minWidth:0 }}>
+                                    <div style={{ fontSize:12, fontWeight:600, color:T.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.name.split(" ")[0]}{isMe?" (You)":""}</div>
+                                    <div style={{ fontSize:10, color:T.faint, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.role}</div>
+                                  </div>
+                                </div>
+                                {sc && <span style={{ padding:"3px 9px", borderRadius:20, background:sc.bg, color:sc.text, border:"1px solid "+sc.border, fontSize:11, fontWeight:600 }}>{(function(){ var def=shiftDefs.find(function(d){return d.id===shift;}); return def?(def.label+" "+to12(def.start)+"-"+to12(def.end)):shift; })()}</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+ {/* EMPLOYEE: OPEN SHIFTS */}
+ {tab==="openShifts" && !isAdmin && (
+ <div>
+ <div style={{ fontSize:13, color:T.muted, marginBottom:16 }}>Pick up available shifts posted by your manager</div>
+ {opens.filter(function(s){return s.status==="open";}).length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:32 }}>No open shifts available right now</div>}
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
+ {opens.filter(function(s){return s.status==="open";}).map(function(s){
+ return (
+ <div key={s.id} style={{ ...CARD, border:"2px solid "+T.accentL }}>
+ <div style={{ display:"flex", gap:6, marginBottom:9, flexWrap:"wrap" }}>
+ <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:600 }}>{s.day}</span>
+ <span style={{ padding:"3px 9px", borderRadius:20, background:(SC[s.shift]&&SC[s.shift].bg)||T.bg, color:(SC[s.shift]&&SC[s.shift].text)||T.muted, fontSize:12, fontWeight:600 }}>{s.shift}</span>
+ </div>
+ {s.role && <div style={{ fontSize:12, color:T.muted, marginBottom:5 }}>Role: {s.role}</div>}
+ {s.note && <div style={{ fontSize:12, color:T.faint, marginBottom:9 }}>{s.note}</div>}
+ <div style={{ fontSize:11, color:T.faint, marginBottom:11 }}>Posted by {s.postedBy}</div>
+ <button onClick={function(){claimShift(s.id);}} style={{ ...BTN, width:"100%", fontSize:13 }}>Claim this shift</button>
+ </div>
+ );
+ })}
+ </div>
+ {opens.filter(function(s){return s.claimedBy===user.eid;}).length > 0 && (
+ <div style={{ marginTop:24 }}>
+ <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>My Claimed Shifts</div>
+ <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+ {opens.filter(function(s){return s.claimedBy===user.eid;}).map(function(s){
+ return (
+ <div key={s.id} style={CARD}>
+ <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
+ <div style={{ display:"flex", gap:6 }}>
+ <span style={{ padding:"2px 8px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:11 }}>{s.day}</span>
+ <span style={{ padding:"2px 8px", borderRadius:20, background:(SC[s.shift]&&SC[s.shift].bg)||T.bg, color:(SC[s.shift]&&SC[s.shift].text)||T.muted, fontSize:11 }}>{s.shift}</span>
+ </div>
+ <Badge status={s.status==="filled"?"approved":"pending"} />
+ </div>
+ </div>
+ );
+ })}
+ </div>
+ </div>
+ )}
+ </div>
+ )}
+
+ {/* EMPLOYEE: TIME OFF */}
+ {tab==="timeoff" && !isAdmin && (
+ <div>
+ <div style={{ marginBottom:14 }}>
+ <h2 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:18 }}>Time Off</h2>
+ <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Request vacation, sick days, or personal time</p>
+ </div>
+ <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, maxWidth:640 }} className="two-col">
+ <div style={CARD}>
+ <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>New Request</div>
+ <div style={{ marginBottom:11 }}><label style={LBL}>Request type</label><select value={ptoType} onChange={function(e){setPtoType(e.target.value);}} style={INP}>{PTO_TYPES.map(function(t){return <option key={t}>{t}</option>;})}</select></div>
+ <div style={{ marginBottom:11, position:"relative" }}><DateInput label="Start date" value={ptoDate} onChange={setPtoDate} rangeEnd={ptoEnd} onRangeEnd={setPtoEnd} allowRange placeholder="Select start date" /></div>
+ {ptoDate && <div style={{ marginBottom:11, position:"relative" }}><DateInput label="End date (optional)" value={ptoEnd} onChange={setPtoEnd} placeholder="Same as start" /></div>}
+ <div style={{ marginBottom:14 }}><label style={LBL}>Note for manager</label><input value={ptoNote} onChange={function(e){setPtoNote(e.target.value);}} placeholder="Any details..." style={INP} /></div>
+ <button onClick={submitPTO} style={{ ...BTN, width:"100%", padding:"10px" }}>Submit Request</button>
+ </div>
+ <div>
+ <div style={{ fontSize:13, fontWeight:600, marginBottom:11 }}>Your Requests</div>
+ {ptos.filter(function(r){return r.eid===user.eid;}).length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13 }}>No requests yet</div>}
+ <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+ {ptos.filter(function(r){return r.eid===user.eid;}).map(function(req){
+ return (
+ <div key={req.id} style={CARD}>
+ <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:3 }}>
+ <span style={{ fontSize:12, fontWeight:600 }}>{req.type}</span>
+ <Badge status={req.status} />
+ </div>
+ <div style={{ fontSize:12, color:T.muted }}>{req.startDate}{req.endDate&&req.endDate!==req.startDate?" to "+req.endDate:""}</div>
+ {req.note && <div style={{ fontSize:11, color:T.faint, marginTop:3 }}>{req.note}</div>}
+ </div>
+ );
+ })}
+ </div>
+ </div>
+ </div>
+ </div>
+ )}
+
+ {/* EMPLOYEE: SWAP */}
+ {tab==="swap" && !isAdmin && (
+ <div>
+ <div style={{ marginBottom:14 }}>
+ <h2 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:18 }}>Shift Swap</h2>
+ <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Request a swap with a colleague</p>
+ </div>
+ <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, maxWidth:640 }} className="two-col">
+ <div style={CARD}>
+ <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>New Request</div>
+
+ {(function(){
+   var myShift = weekSched[swapForm.day] && weekSched[swapForm.day][user.eid];
+   var sc = myShift ? SC[myShift] : null;
+   return (
+     <div style={{ marginBottom:14 }}>
+       <label style={LBL}>Your shift on {swapForm.day}</label>
+       {myShift && sc
+         ? <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:9, background:sc.bg, border:"1px solid "+sc.border }}>
+             <span>&#128197;</span>
+             <div><div style={{ fontSize:13, fontWeight:700, color:sc.text }}>{(function(){ var _sd=shiftDefs.find(function(d){return d.id===myShift;}); return _sd?(_sd.label+" "+to12(_sd.start)+"-"+to12(_sd.end)):myShift; })()}</div><div style={{ fontSize:11, color:sc.text, opacity:0.8 }}>Your current shift — this is what you're swapping</div></div>
+           </div>
+         : <div style={{ padding:"10px 12px", borderRadius:9, background:T.bg, border:"1px solid "+T.border, fontSize:13, color:T.faint }}>You have no shift on {swapForm.day}</div>
+       }
+     </div>
+   );
+ })()}
+
+ <div style={{ marginBottom:11 }}><label style={LBL}>Swap with</label><select value={swapForm.toId} onChange={function(e){setSwapForm(function(p){return {...p,toId:e.target.value};});}} style={INP}><option value="">Select a colleague...</option>{emps.filter(function(e){return e.id!==user.eid;}).map(function(e){return <option key={e.id} value={e.id}>{e.name} — {e.role}</option>; })}</select></div>
+
+ <div style={{ marginBottom:11 }}><label style={LBL}>Day</label><select value={swapForm.day} onChange={function(e){setSwapForm(function(p){return {...p,day:e.target.value};});}} style={INP}>{DAYS.map(function(d){return <option key={d}>{d}</option>;})}</select></div>
+
+ {swapForm.toId ? (function(){
+   var toEmp      = emps.find(function(e){ return e.id===Number(swapForm.toId); });
+   var theirShift = weekSched[swapForm.day] && weekSched[swapForm.day][Number(swapForm.toId)];
+   var sc2 = theirShift ? SC[theirShift] : null;
+   return (
+     <div style={{ marginBottom:14 }}>
+       <label style={LBL}>{toEmp ? toEmp.name.split(" ")[0] : "Their"} shift on {swapForm.day}</label>
+       {theirShift && sc2
+         ? <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:9, background:sc2.bg, border:"1px solid "+sc2.border }}>
+             <span>&#128260;</span>
+             <div><div style={{ fontSize:13, fontWeight:700, color:sc2.text }}>{(function(){ var _sd=shiftDefs.find(function(d){return d.id===theirShift;}); return _sd?(_sd.label+" "+to12(_sd.start)+"-"+to12(_sd.end)):theirShift; })()}</div><div style={{ fontSize:11, color:sc2.text, opacity:0.8 }}>You would take this shift</div></div>
+           </div>
+         : <div style={{ padding:"10px 12px", borderRadius:9, background:T.bg, border:"1px solid "+T.border, fontSize:13, color:T.faint }}>{toEmp ? toEmp.name.split(" ")[0] : "They"} has no shift on {swapForm.day}</div>
+       }
+     </div>
+   );
+ })() : null}
+
+ <div style={{ marginBottom:14 }}><label style={LBL}>Reason (optional)</label><input value={swapForm.reason} onChange={function(e){setSwapForm(function(p){return {...p,reason:e.target.value};});}} placeholder="e.g. Family event" style={INP} /></div>
+ <button onClick={submitSwap} style={{ ...BTN, width:"100%", padding:"10px" }}>Submit Request</button>
+ </div>
+ <div>
+ <div style={{ fontSize:13, fontWeight:600, marginBottom:11 }}>Your Requests</div>
+ {swaps.filter(function(r){return r.fromId===user.eid;}).length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13 }}>No requests yet</div>}
+ <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+ {swaps.filter(function(r){return r.fromId===user.eid;}).map(function(req){
+ return (
+ <div key={req.id} style={CARD}>
+ <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:3 }}>
+ <span style={{ fontSize:12, fontWeight:600 }}>{req.day} - {(function(){ var _sd=shiftDefs.find(function(d){return d.id===req.shift;}); return _sd?(_sd.label+" "+to12(_sd.start)+"-"+to12(_sd.end)):req.shift; })()}</span>
+ <Badge status={req.status} />
+ </div>
+ <div style={{ fontSize:12, color:T.muted }}>To: {req.to}</div>
+ </div>
+ );
+ })}
+ </div>
+ </div>
+ </div>
+ </div>
+ )}
+
+ {/* EMPLOYEE: CALL IN */}
+ {tab==="callin" && !isAdmin && (
+ <div style={{ maxWidth:420 }}>
+ <div style={{ marginBottom:14 }}>
+ <h2 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:18 }}>Call In</h2>
+ <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Notify your manager if you will be absent, late, or leaving early.</p>
+ </div>
+ <div style={CARD}>
+ <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>Attendance Notice</div>
+ <div style={{ marginBottom:11 }}>
+ <label style={LBL}>Type</label>
+ <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7 }}>
+ {ATTEND.map(function(t){
+ return (
+ <button key={t} onClick={function(){setCallType(t);}} style={{ padding:"9px 12px", borderRadius:9, border:"2px solid "+(callType===t?T.accent:T.border), background:callType===t?T.accentL:T.surface, color:callType===t?T.accent:T.muted, cursor:"pointer", fontSize:12, fontWeight:callType===t?600:400, fontFamily:"inherit" }}>{t}</button>
+ );
+ })}
+ </div>
+ </div>
+ <div style={{ marginBottom:16 }}>
+ <label style={LBL}>Note</label>
+ <textarea value={callNote} onChange={function(e){setCallNote(e.target.value);}} placeholder="Let your manager know what's happening..." rows={3} style={{ ...INP, resize:"vertical" }} />
+ </div>
+ <button onClick={submitCallin} style={{ ...BTN, width:"100%", background:T.danger, padding:"10px" }}>Send Notice</button>
+ </div>
+ {callins.filter(function(c){return c.eid===user.eid;}).length > 0 && (
+ <div style={{ marginTop:20 }}>
+ <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>Your Recent Notices</div>
+ <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+ {callins.filter(function(c){return c.eid===user.eid;}).map(function(c){
+ return (
+ <div key={c.id} style={CARD}>
+ <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+ <span style={{ padding:"2px 8px", borderRadius:20, background:T.dangerL, color:T.danger, fontSize:11, fontWeight:600 }}>{c.type}</span>
+ <span style={{ fontSize:11, color:c.status==="acknowledged"?T.success:T.faint }}>{c.status==="acknowledged"?"Acknowledged":"Pending"}</span>
+ </div>
+ {c.note && <div style={{ fontSize:12, color:T.muted, marginTop:6 }}>{c.note}</div>}
+ <div style={{ fontSize:10, color:T.faint, marginTop:4 }}>{fmtAgo(c.ts)}</div>
+ </div>
+ );
+ })}
+ </div>
+ </div>
+ )}
+ </div>
+ )}
+
+            {/* EMPLOYEE: CLOCK IN */}
+            {tab==="clockin" && !isAdmin && (function(){
+              var myEmp = emps.find(function(e){ return e.id===user.eid; });
+              var dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+              var todayDay = dayNames[new Date().getDay()];
+              var todayShift = weekSched[todayDay] && weekSched[todayDay][user.eid] ? weekSched[todayDay][user.eid] : null;
+              var lastPunch = timeclock.slice().reverse().find(function(p){ return p.eid===user.eid; });
+              var isClockedIn = lastPunch && lastPunch.type==="in";
+              var todayPunches = timeclock.filter(function(p){ return p.eid===user.eid && new Date(p.ts).toDateString()===new Date().toDateString(); });
+              function clockIn()  { setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"in",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked in! Have a great shift."); }
+              function clockOut() { setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"out",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked out! See you next time."); }
+              var now = new Date();
+              var hr = now.getHours(); var mn = String(now.getMinutes()).padStart(2,"0"); var ap = hr>=12?"PM":"AM"; hr=hr%12||12;
+              var sc = todayShift ? SC[todayShift] : null;
+              return (
+                <div style={{ maxWidth:400 }}>
+                  <div style={{ marginBottom:16 }}>
+                    <h2 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:18 }}>Clock In / Out</h2>
+                    <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Track your hours for payroll</p>
+                  </div>
+                  <div style={{ ...CARD, textAlign:"center", padding:28, marginBottom:16 }}>
+                    {todayShift && sc ? (
+                      <div style={{ marginBottom:14 }}>
+                        <div style={{ fontSize:11, color:T.faint, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:6 }}>Today's Shift</div>
+                        <span style={{ padding:"5px 14px", borderRadius:20, background:sc.bg, color:sc.text, fontSize:13, fontWeight:600, border:"1px solid "+sc.border }}>{todayShift}</span>
+                      </div>
+                    ) : <div style={{ marginBottom:14, fontSize:13, color:T.faint }}>No shift scheduled today</div>}
+                    <div style={{ fontSize:34, fontWeight:800, fontFamily:"'Plus Jakarta Sans',sans-serif", color:T.text, marginBottom:4 }}>{hr}:{mn} {ap}</div>
+                    <div style={{ fontSize:12, color:T.faint, marginBottom:18 }}>{now.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</div>
+                    <div style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"5px 12px", borderRadius:20, background:isClockedIn?T.successL:T.bg, border:"1px solid "+(isClockedIn?"#6EE7B7":T.border), marginBottom:18 }}>
+                      <div style={{ width:8, height:8, borderRadius:"50%", background:isClockedIn?T.success:T.faint, animation:isClockedIn?"pulse 2s infinite":"none" }} />
+                      <span style={{ fontSize:12, fontWeight:600, color:isClockedIn?T.success:T.faint }}>{isClockedIn?"Clocked In":"Not Clocked In"}</span>
+                    </div>
+                    {!isClockedIn
+                      ? <button onClick={clockIn}  style={{ ...BTN, width:"100%", padding:"14px", fontSize:15, fontWeight:700, background:"linear-gradient(135deg,#10B981,#059669)", borderRadius:12 }}>&#128076; Clock In</button>
+                      : (
+                        <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                          <button onClick={clockOut} style={{ ...BTN, width:"100%", padding:"13px", fontSize:15, fontWeight:700, background:"linear-gradient(135deg,#EF4444,#DC2626)", borderRadius:12 }}>&#9209; Clock Out</button>
+                          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
+                            <button onClick={function(){ setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_out",ts:Date.now(),shift:todayShift||""}]); }); showT("Lunch started - enjoy your break!"); }}
+                              style={{ ...BTN, padding:"10px", fontSize:13, fontWeight:600, background:"linear-gradient(135deg,#F59E0B,#D97706)", borderRadius:10 }}>&#127829; Lunch Out</button>
+                            <button onClick={function(){ setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_in",ts:Date.now(),shift:todayShift||""}]); }); showT("Back from lunch!"); }}
+                              style={{ ...BTN, padding:"10px", fontSize:13, fontWeight:600, background:"linear-gradient(135deg,#3B82F6,#2563EB)", borderRadius:10 }}>&#127829; Lunch In</button>
+                          </div>
+                        </div>
+                      )}
+                  </div>
+                  {todayPunches.length > 0 && (
+                    <div style={CARD}>
+                      <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:10 }}>Today's punches</div>
+                      <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+                        {todayPunches.map(function(p){
+                          var t   = new Date(p.ts);
+                          var st  = getPunchStatus(p, shiftDefs);
+                          return (
+                            <div key={p.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 10px", borderRadius:8, background:st.bg, border:"1px solid "+st.border }}>
+                              <span style={{ fontSize:12, fontWeight:700, color:st.color }}>{st.label}</span>
+                              <span style={{ fontSize:13, fontWeight:700, color:T.text }}>{t.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* ADMIN: TIME CLOCK */}
+            {tab==="timeclock" && isAdmin && (function(){
+              var clockedInNow = emps.filter(function(e){
+                var last = timeclock.slice().reverse().find(function(p){ return p.eid===e.id; });
+                return last && last.type==="in";
+              }).map(function(e){
+                var last = timeclock.slice().reverse().find(function(p){ return p.eid===e.id; });
+                return {emp:e, since:last.ts};
+              });
+              var summary = {};
+              timeclock.forEach(function(p){
+                if (!summary[p.eid]) summary[p.eid] = {ename:p.ename, eid:p.eid, records:[]};
+                summary[p.eid].records.push(p);
+              });
+              function exportPaychex() {
+                var provLabel = (PAYROLL_PROVIDERS.find(function(p){return p.id===payroll;})||{label:"Payroll"}).label;
+                var rows = [["Employee","Date","Clock In","Lunch Out","Lunch In","Clock Out","Hours Worked (excl. lunch)","Shift"].join(",")];
+                var grouped = {};
+                timeclock.forEach(function(p){
+                  var ds = new Date(p.ts).toLocaleDateString();
+                  var k  = p.eid+"_"+ds;
+                  if (!grouped[k]) grouped[k] = {ename:p.ename,date:ds,shift:p.shift,ins:[],outs:[],lunchOuts:[],lunchIns:[]};
+                  if (p.type==="in")        grouped[k].ins.push(p.ts);
+                  if (p.type==="out")       grouped[k].outs.push(p.ts);
+                  if (p.type==="lunch_out") grouped[k].lunchOuts.push(p.ts);
+                  if (p.type==="lunch_in")  grouped[k].lunchIns.push(p.ts);
+                });
+                Object.keys(grouped).forEach(function(k){
+                  var g     = grouped[k];
+                  var inT   = g.ins.length      ? new Date(g.ins[0]).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "";
+                  var loutT = g.lunchOuts.length ? new Date(g.lunchOuts[0]).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "";
+                  var linT  = g.lunchIns.length  ? new Date(g.lunchIns[0]).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "";
+                  var outT  = g.outs.length      ? new Date(g.outs[g.outs.length-1]).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "";
+                  var totalMs = g.ins.length && g.outs.length ? g.outs[g.outs.length-1]-g.ins[0] : 0;
+                  var lunchMs = g.lunchOuts.length && g.lunchIns.length ? g.lunchIns[0]-g.lunchOuts[0] : 0;
+                  var hrs   = totalMs > 0 ? ((totalMs-lunchMs)/3600000).toFixed(2) : "";
+                  rows.push([g.ename,g.date,inT,loutT,linT,outT,hrs,g.shift].join(","));
+                });
+                var a = document.createElement("a");
+                a.href = URL.createObjectURL(new Blob([rows.join("\n")],{type:"text/csv"}));
+                a.download = "ShyftRota_Paychex.csv";
+                a.click();
+              }
+              function addOverridePunch() {
+                if (!overrideEid || !overrideTime) { showT("Select employee and time","error"); return; }
+                var emp = emps.find(function(e){ return e.id===overrideEid; });
+                var dtStr = overrideDate + "T" + overrideTime + ":00";
+                var ts = new Date(dtStr).getTime();
+                if (isNaN(ts)) { showT("Invalid date or time","error"); return; }
+                setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:overrideEid,ename:emp?emp.name:"",type:overrideType,ts:ts,shift:"",overrideBy:user.name}]); });
+                setOverrideEid(null);
+  var rn=new Date(); setOverrideTime(String(rn.getHours()).padStart(2,"0")+":"+String(rn.getMinutes()).padStart(2,"0"));
+  setOverrideDate(new Date().toISOString().slice(0,10));
+                showT("Punch added for "+(emp?emp.name:"employee"),"info");
+              }
+
+              function forceClockOut(eid, ename) {
+                var now = new Date();
+                var timeStr = String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
+                setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:eid,ename:ename,type:"out",ts:Date.now(),shift:"",overrideBy:user.name}]); });
+                showT(ename+" clocked out by admin","info");
+              }
+
+              function deletePunch(id) {
+                setTimeclock(function(p){ return p.filter(function(x){ return x.id!==id; }); });
+                showT("Punch deleted","info");
+              }
+
+              function saveEditPunch(id) {
+                if (!editPunchTime) { showT("Enter a time","error"); return; }
+                var dtStr = editPunchDate + "T" + editPunchTime + ":00";
+                var ts = new Date(dtStr).getTime();
+                if (isNaN(ts)) { showT("Invalid time","error"); return; }
+                setTimeclock(function(p){ return p.map(function(x){ return x.id===id ? {...x, ts:ts, editedBy:user.name} : x; }); });
+                setEditingPunchId(null);
+                showT("Punch updated","info");
+              }
+
+              var providerLabel = (PAYROLL_PROVIDERS.find(function(p){return p.id===payroll;})||{label:"Payroll"}).label;
+
+              return (
+                <div>
+                  {/* Header */}
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20, flexWrap:"wrap", gap:12 }}>
+                    <div>
+                      <h2 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:18 }}>Time Clock</h2>
+                      <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Live attendance + payroll-ready export</p>
+                    </div>
+                    <button onClick={exportPaychex} style={{ ...BTN, fontSize:13, display:"flex", alignItems:"center", gap:7, background:"linear-gradient(135deg,#0F766E,#0D9488)" }}>
+                      &#128196; Export for {providerLabel}
+                    </button>
+                  </div>
+
+                  {/* Admin Override Panel */}
+                  <div style={{ background:T.surface, border:"2px solid #A5B4FC", borderRadius:12, padding:16, marginBottom:22, boxSizing:"border-box" }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:14 }}>&#9998; Admin Override — Add or Fix a Punch</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 }}>
+                      <div style={{ overflow:"hidden" }}>
+                        <label style={LBL}>Employee</label>
+                        <div style={{ overflow:"hidden", borderRadius:8 }}>
+                          <select value={overrideEid||""} onChange={function(e){setOverrideEid(Number(e.target.value)||null);}} style={{ ...INP, width:"100%", maxWidth:"100%", boxSizing:"border-box" }}>
+                            <option value="">Select employee...</option>
+                            {emps.map(function(e){ return <option key={e.id} value={e.id}>{e.name}</option>; })}
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ overflow:"hidden" }}>
+                        <label style={LBL}>Punch type</label>
+                        <div style={{ overflow:"hidden", borderRadius:8 }}>
+                          <select value={overrideType} onChange={function(e){setOverrideType(e.target.value);}} style={{ ...INP, width:"100%", maxWidth:"100%", boxSizing:"border-box" }}>
+                            <option value="in">Clock In</option>
+                            <option value="out">Clock Out</option>
+                            <option value="lunch_out">Lunch Out</option>
+                            <option value="lunch_in">Lunch In</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ overflow:"hidden" }}>
+                        <label style={LBL}>Date</label>
+                        <div style={{ overflow:"hidden", borderRadius:8 }}>
+                          <input type="date" value={overrideDate} onChange={function(e){setOverrideDate(e.target.value);}} style={{ ...INP, width:"100%", maxWidth:"100%", boxSizing:"border-box" }} />
+                        </div>
+                      </div>
+                      <div style={{ overflow:"hidden" }}>
+                        <label style={LBL}>Time</label>
+                        <div style={{ overflow:"hidden", borderRadius:8 }}>
+                          <input type="time" value={overrideTime} onChange={function(e){setOverrideTime(e.target.value);}} style={{ ...TINP, width:"100%", maxWidth:"100%", boxSizing:"border-box" }} />
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ overflow:"hidden" }}>
+                      <button onClick={addOverridePunch} style={{ ...BTN, width:"100%", padding:"11px", fontSize:14, fontWeight:700, boxSizing:"border-box" }}>&#10010; Add Punch</button>
+                    </div>
+                  </div>
+
+                  {/* Currently clocked in */}
+                  <div style={{ marginBottom:22 }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:11 }}>Currently clocked in ({clockedInNow.length})</div>
+                    {clockedInNow.length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:22 }}>Nobody clocked in right now</div>}
+                    <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:10 }}>
+                      {clockedInNow.map(function(item){
+                        var elapsed = ((Date.now()-item.since)/3600000).toFixed(1);
+                        return (
+                          <div key={item.emp.id} style={{ ...CARD, border:"1px solid #6EE7B7", background:T.successL }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:8 }}>
+                              <div style={{ width:32, height:32, borderRadius:"50%", background:avatarBg(item.emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:"white" }}>{initials(item.emp.name)}</div>
+                              <div>
+                                <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{item.emp.name}</div>
+                                <div style={{ fontSize:11, color:T.muted }}>{item.emp.role}</div>
+                              </div>
+                            </div>
+                            <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:10 }}>
+                              <span style={{ color:T.muted }}>Since {new Date(item.since).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>
+                              <span style={{ fontWeight:700, color:T.success }}>{elapsed}h</span>
+                            </div>
+                            <button onClick={function(){forceClockOut(item.emp.id,item.emp.name);}} style={{ ...GBTN, width:"100%", fontSize:12, color:T.danger, borderColor:"#FCA5A5", padding:"6px" }}>
+                              &#9209; Force Clock Out
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* All time records */}
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:11 }}>All Time Records</div>
+                    {Object.keys(summary).length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:26 }}>No records yet.</div>}
+                    <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                      {Object.values(summary).map(function(s){
+                        var emp = emps.find(function(e){ return e.id===s.eid; });
+                        var ins  = s.records.filter(function(p){ return p.type==="in"; });
+                        var outs = s.records.filter(function(p){ return p.type==="out"; });
+                        var ms = 0;
+                        outs.forEach(function(o,i){ if(ins[i]) ms += o.ts-ins[i].ts; });
+                        return (
+                          <div key={s.eid} style={CARD}>
+                            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
+                              <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                                <div style={{ width:32, height:32, borderRadius:"50%", background:avatarBg(s.eid), display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:"white" }}>{emp?initials(emp.name):s.ename[0]}</div>
+                                <div>
+                                  <div style={{ fontSize:13, fontWeight:600 }}>{s.ename}</div>
+                                  <div style={{ fontSize:11, color:T.faint }}>{emp&&emp.role}</div>
+                                </div>
+                              </div>
+                              <div style={{ textAlign:"right" }}>
+                                <div style={{ fontSize:16, fontWeight:800, color:T.accent }}>{(ms/3600000).toFixed(1)}h</div>
+                                <div style={{ fontSize:10, color:T.faint }}>total logged</div>
+                              </div>
+                            </div>
+                            <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+                              {s.records.map(function(p){
+                                var t  = new Date(p.ts);
+                                var st = getPunchStatus(p, shiftDefs);
+                                var isEditing = editingPunchId === p.id;
+                                return (
+                                  <div key={p.id} style={{ borderRadius:8, border:"1px solid "+st.border, background:st.bg, marginBottom:2, overflow:"hidden" }}>
+                                    {isEditing ? (
+                                      <div style={{ padding:"8px 10px" }}>
+                                        <div style={{ fontSize:11, fontWeight:700, color:st.color, marginBottom:7 }}>Edit punch — {st.label}</div>
+                                        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7, marginBottom:8 }}>
+                                          <div>
+                                            <label style={{ ...LBL, fontSize:9 }}>Date</label>
+                                            <input type="date" value={editPunchDate} onChange={function(e){setEditPunchDate(e.target.value);}} style={{ ...INP, fontSize:12, padding:"5px 8px" }} />
+                                          </div>
+                                          <div>
+                                            <label style={{ ...LBL, fontSize:9 }}>Time</label>
+                                            <input type="time" value={editPunchTime} onChange={function(e){setEditPunchTime(e.target.value);}} style={{ ...TINP, fontSize:12, padding:"5px 8px" }} />
+                                          </div>
+                                        </div>
+                                        <div style={{ display:"flex", gap:6 }}>
+                                          <button onClick={function(){saveEditPunch(p.id);}} style={{ ...BTN, fontSize:11, padding:"5px 12px" }}>Save</button>
+                                          <button onClick={function(){setEditingPunchId(null);}} style={{ ...GBTN, fontSize:11, padding:"5px 12px" }}>Cancel</button>
+                                          <button onClick={function(){deletePunch(p.id);}} style={{ ...GBTN, fontSize:11, padding:"5px 12px", color:T.danger, borderColor:"#FCA5A5", marginLeft:"auto" }}>Delete</button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 10px" }}>
+                                        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                                          <span style={{ fontSize:11, fontWeight:700, color:st.color }}>{st.label}</span>
+                                          <span style={{ fontSize:12, color:T.muted }}>{t.toLocaleDateString()} {t.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>
+                                          {p.overrideBy && <span style={{ fontSize:10, color:T.faint, fontStyle:"italic" }}>&#9998; {p.overrideBy}</span>}
+                                          {p.editedBy   && <span style={{ fontSize:10, color:T.faint, fontStyle:"italic" }}>&#9998; edited</span>}
+                                        </div>
+                                        <button onClick={function(){
+                                          setEditingPunchId(p.id);
+                                          setEditPunchTime(String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0"));
+                                          setEditPunchDate(t.toISOString().slice(0,10));
+                                        }} style={{ background:"none", border:"none", cursor:"pointer", fontSize:13, color:T.faint, padding:"2px 6px" }}>&#9998;</button>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+
+    {/* Shift-window availability modal */}
+    {shiftAvailEmp && (function(){
+      var emp = emps.find(function(e){ return e.id===shiftAvailEmp; });
+      if (!emp) return null;
+      var sa = emp.shiftAvail || {};
+      var availDays = emp.avail;
+      return (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:300, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"20px 16px", overflowY:"auto" }} onClick={function(){setShiftAvailEmp(null);}}>
+          <div style={{ background:T.surface, borderRadius:14, padding:22, width:"100%", maxWidth:400, boxSizing:"border-box", boxShadow:"0 24px 64px rgba(0,0,0,0.2)" }} onClick={function(e){e.stopPropagation();}}>
+            <div style={{ fontWeight:700, fontSize:16, marginBottom:4 }}>Shift availability — {emp.name.split(" ")[0]}</div>
+            <div style={{ fontSize:12, color:T.muted, marginBottom:18 }}>For each working day, select which shifts they can do. Leave all checked to allow any shift.</div>
+            {availDays.length === 0 && <div style={{ color:T.faint, fontSize:13, textAlign:"center", padding:16 }}>No available days set. Toggle days on the employee card first.</div>}
+            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              {availDays.map(function(d){
+                var dayShifts = sa[d] || shiftDefs.map(function(s){ return s.id; }); // default = all
+                return (
+                  <div key={d} style={{ background:T.bg, borderRadius:10, padding:"12px 14px", border:"1px solid "+T.border }}>
+                    <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:10 }}>{d}</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+                      {shiftDefs.map(function(s){
+                        var sc = SC[s.id] || SC["Day 9-5"];
+                        var checked = dayShifts.indexOf(s.id) >= 0;
+                        return (
+                          <button key={s.id} onClick={function(){
+                            setEmps(function(p){ return p.map(function(e){
+                              if (e.id !== emp.id) return e;
+                              var curSA = {...(e.shiftAvail||{})};
+                              var curDay = curSA[d] ? curSA[d].slice() : shiftDefs.map(function(x){ return x.id; });
+                              var newDay = checked
+                                ? curDay.filter(function(x){ return x!==s.id; })
+                                : curDay.concat([s.id]);
+                              curSA[d] = newDay;
+                              return {...e, shiftAvail:curSA};
+                            }); });
+                          }} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 10px", borderRadius:8, border:"1px solid "+(checked?sc.border:T.border), background:checked?sc.bg:T.surface, cursor:"pointer", textAlign:"left", fontFamily:"inherit" }}>
+                            <div style={{ width:16, height:16, borderRadius:4, border:"2px solid "+(checked?sc.dot:T.faint), background:checked?sc.dot:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                              {checked && <span style={{ color:"white", fontSize:10, fontWeight:700 }}>&#10003;</span>}
+                            </div>
+                            <div>
+                              <div style={{ fontSize:12, fontWeight:600, color:checked?sc.text:T.muted }}>{s.label}</div>
+                              <div style={{ fontSize:10, color:T.faint }}>{to12(s.start)} - {to12(s.end)}</div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ marginTop:18, display:"flex", gap:8 }}>
+              <button onClick={function(){setShiftAvailEmp(null); showT(emp.name.split(" ")[0]+"'s shift availability saved");}} style={{ ...BTN, flex:1, padding:"10px" }}>Save</button>
+              <button onClick={function(){
+                setEmps(function(p){ return p.map(function(e){ return e.id===emp.id?{...e,shiftAvail:{}}:e; }); });
+                setShiftAvailEmp(null);
+                showT("Shift restrictions cleared","info");
+              }} style={{ ...GBTN, padding:"10px 14px", fontSize:12 }}>Clear all</button>
+            </div>
+          </div>
+        </div>
+      );
+    })()}
+
+    {/* Edit Shift modal */}
+    {editShift && (
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }} onClick={function(){setEditShift(null);}}>
+        <div style={{ ...CARD, maxWidth:380, width:"100%", padding:24, overflow:"hidden" }} onClick={function(e){e.stopPropagation();}}>
+          <div style={{ fontWeight:700, fontSize:17, marginBottom:18 }}>Edit Shift</div>
+          <div style={{ marginBottom:12 }}>
+            <label style={LBL}>Shift name</label>
+            <input value={editShift.label} onChange={function(e){ setEditShift(function(p){return {...p,label:e.target.value};}); }} style={INP} />
+          </div>
+          <div className="time-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
+            <div>
+              <label style={LBL}>Start time</label>
+              <input type="time" value={editShift.start} onChange={function(e){ setEditShift(function(p){return {...p,start:e.target.value};}); }} style={TINP} />
+            </div>
+            <div>
+              <label style={LBL}>End time</label>
+              <input type="time" value={editShift.end} onChange={function(e){ setEditShift(function(p){return {...p,end:e.target.value};}); }} style={TINP} />
+            </div>
+          </div>
+          <div style={{ marginBottom:20 }}>
+            <label style={LBL}>Color theme</label>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:6 }}>
+              {["Morning 6-2","Day 9-5","Evening 2-10","Night 10-6"].map(function(cid){
+                var sc = SC[cid]; var active = editShift.color===cid;
+                return (
+                  <button key={cid} onClick={function(){ setEditShift(function(p){return {...p,color:cid};}); }} style={{ width:32, height:32, borderRadius:"50%", border:"3px solid "+(active?sc.dot:"transparent"), background:sc.bg, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:active?"0 0 0 2px "+sc.dot+"55":"none" }}>
+                    <div style={{ width:14, height:14, borderRadius:"50%", background:sc.dot }} />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={function(){
+              if (!editShift.label.trim()) { showT("Shift name required","error"); return; }
+              setShiftDefs(function(p){ return p.map(function(x,j){ return j===editShift.idx ? {...x, label:editShift.label, start:editShift.start, end:editShift.end, color:editShift.color} : x; }); });
+              showT(editShift.label+" saved");
+              setEditShift(null);
+            }} style={{ ...BTN, flex:1, padding:"10px" }}>Save Changes</button>
+            <button onClick={function(){setEditShift(null);}} style={{ ...GBTN, padding:"10px 16px" }}>Cancel</button>
+            {shiftDefs.length > 1 && (
+              <button onClick={function(){
+                setShiftDefs(function(p){ return p.filter(function(x,j){ return j!==editShift.idx; }); });
+                setEditShift(null);
+                showT("Shift removed","info");
+              }} style={{ ...GBTN, padding:"10px 16px", color:T.danger, borderColor:"#FCA5A5" }}>Delete</button>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Custom shift time override modal */}
+    {editOverride && (
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }} onClick={function(){setEditOverride(null);}}>
+        <div style={{ ...CARD, maxWidth:340, width:"100%", padding:24, overflow:"hidden" }} onClick={function(e){e.stopPropagation();}}>
+          <div style={{ fontWeight:700, fontSize:16, marginBottom:4 }}>Custom time</div>
+          <div style={{ fontSize:12, color:T.muted, marginBottom:18 }}>{editOverride&&editOverride.empName&&editOverride.empName.split(" ")[0]} — {editOverride&&editOverride.day} (this week only)</div>
+          <div className="time-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:20 }}>
+            <div>
+              <label style={LBL}>Start</label>
+              <input type="time" value={editOverride?editOverride.start:""} onChange={function(e){setEditOverride(function(p){return {...p,start:e.target.value};});}} style={TINP} />
+            </div>
+            <div>
+              <label style={LBL}>End</label>
+              <input type="time" value={editOverride?editOverride.end:""} onChange={function(e){setEditOverride(function(p){return {...p,end:e.target.value};});}} style={TINP} />
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={function(){
+              if (!editOverride) return;
+              var ovKey = overrideKey(weekOff, editOverride.day, editOverride.eid);
+              setShiftOverrides(function(p){ var n={...p}; n[ovKey]={start:editOverride.start,end:editOverride.end}; return n; });
+              showT((editOverride.empName||"Employee").split(" ")[0]+"'s "+editOverride.day+" updated to "+to12(editOverride.start)+"-"+to12(editOverride.end));
+              setEditOverride(null);
+            }} style={{ ...BTN, flex:1, padding:"10px" }}>Save</button>
+            <button onClick={function(){setEditOverride(null);}} style={{ ...GBTN, flex:1, padding:"10px" }}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+ </div>
+ </div>
+ </div>
+ </div>
+ );
+}
