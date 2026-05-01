@@ -1,4 +1,20 @@
-import { useState, useEffect, useRef } from "react";
+// ── localStorage polyfill (Claude sandbox safety) ──────────
+(function() {
+  try { localStorage.setItem('__test__','1'); localStorage.removeItem('__test__'); }
+  catch(e) {
+    var _store = {};
+    window.localStorage = {
+      getItem:    function(k){ return _store.hasOwnProperty(k) ? _store[k] : null; },
+      setItem:    function(k,v){ _store[k] = String(v); },
+      removeItem: function(k){ delete _store[k]; },
+      clear:      function(){ _store = {}; },
+      key:        function(i){ return Object.keys(_store)[i]||null; },
+      get length(){ return Object.keys(_store).length; }
+    };
+  }
+})();
+
+var { useState, useEffect, useRef } = React;
 
 const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 
@@ -706,48 +722,13 @@ function TeamChat({ user, accounts }) {
 
 
 // ── ShyftRota Logo Mark ───────────────────────────────
-// Key insight: left vertical STOPS before the bottom bar so
-// the bottom-left pill of the S is visible → reads as S not 2
 function LogoMark({ size }) {
   var s = size || 32;
   var r = Math.round(s * 0.22);
+  var src = "data:image/jpeg;base64,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";
   return (
-    <svg width={s} height={s} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" style={{ borderRadius:r, display:"block", flexShrink:0 }}>
-      <rect width="1024" height="1024" fill="#1A1714"/>
-
-      {/* Accent bar top-left */}
-      <rect x="175" y="185" width="170" height="36" rx="18" fill="#C84B31"/>
-
-      {/* ── S ──
-          Key: gap between left-vertical (ends y=555) and bottom bar (starts y=585)
-               + rounded left ends on top and bottom bars = clearly S not 2 */}
-      {/* Top bar — rounded left pill visible */}
-      <rect x="175" y="272" width="320" height="90" rx="45" fill="white"/>
-      {/* Right vertical — bridges top bar down to middle */}
-      <rect x="405" y="272" width="90" height="190" fill="white"/>
-      {/* Middle bar */}
-      <rect x="175" y="372" width="320" height="90" fill="white"/>
-      {/* Left vertical — SHORT connector, stops well above bottom bar */}
-      <rect x="175" y="462" width="90" height="93" fill="white"/>
-      {/* Bottom bar — rounded left pill FULLY visible (gap above it) */}
-      <rect x="175" y="585" width="320" height="90" rx="45" fill="white"/>
-
-      {/* ── R ── */}
-      {/* Stem */}
-      <rect x="565" y="272" width="90" height="403" fill="white"/>
-      {/* Top bar */}
-      <rect x="565" y="272" width="310" height="90" fill="white"/>
-      {/* Right bowl vertical */}
-      <rect x="785" y="272" width="90" height="190" fill="white"/>
-      {/* Middle bar */}
-      <rect x="565" y="372" width="230" height="90" fill="white"/>
-
-      {/* Terracotta diagonal leg */}
-      <rect x="750" y="460" width="86" height="360" rx="43" fill="#C84B31" transform="rotate(20 793 640)"/>
-
-      {/* Bottom dot */}
-      <circle cx="895" cy="820" r="48" fill="#C84B31"/>
-    </svg>
+    <img src={src} width={s} height={s} alt="SR"
+      style={{ borderRadius:r, display:"block", flexShrink:0, objectFit:"cover" }} />
   );
 }
 
@@ -898,7 +879,7 @@ function Welcome({ onLogin, onSignup, accounts }) {
 
 
 
-export default function App() {
+function App() {
  var [accounts, setAccounts] = useState(function(){
    var stored = ld("sr_acc", SEED_ACC);
    // Migration: fix bad Python-generated hashes from a previous build
@@ -3094,16 +3075,5 @@ export default function App() {
 }
 
 
-// ── Mount app ──────────────────────────────────────────────────
-(function() {
-  if (typeof ReactDOM !== "undefined" && document.getElementById("root")) {
-    var root = ReactDOM.createRoot(document.getElementById("root"));
-    root.render(React.createElement(App));
-    var splash = document.getElementById("splash");
-    if (splash) {
-      splash.style.opacity = "0";
-      splash.style.transition = "opacity 0.4s";
-      setTimeout(function(){ splash.style.display = "none"; }, 400);
-    }
-  }
-})();
+// ── Export for Claude sandbox ──
+export default App;
