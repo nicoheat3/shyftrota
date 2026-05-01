@@ -1268,8 +1268,9 @@ function App() {
  gen[d][emp.id] = shift;
  hoursUsed += shiftHours(shift, shiftDefs);
  }
- });
- });
+ } // close: if (emp.avail.indexOf(d) >= 0)
+ }); // close: DAYS.forEach
+ }); // close: emps.forEach
 
  // Proactive insights after generate
  var insights = [];
