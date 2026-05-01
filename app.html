@@ -12,8 +12,8 @@
     *{margin:0;padding:0;box-sizing:border-box;}
     body{font-family:'Plus Jakarta Sans',sans-serif;background:#F8F6F3;}
     #root{min-height:100vh;}
-    #splash{position:fixed;inset:0;background:#F8F6F3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px;z-index:9999;}
-    #splash-msg{font-size:13px;color:#999;text-align:center;max-width:280px;line-height:1.6;}
+    #splash{position:fixed;inset:0;background:#F8F6F3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px;z-index:9999;transition:opacity 0.4s;}
+    #splash-msg{font-size:13px;color:#999;text-align:center;padding:0 40px;line-height:1.6;}
     .dots{display:flex;gap:8px;}
     .dot{width:8px;height:8px;border-radius:50%;background:#C84B31;animation:pulse 1.2s ease-in-out infinite;}
     .dot:nth-child(2){animation-delay:.2s;}
@@ -23,33 +23,53 @@
 </head>
 <body>
   <div id="splash">
-    <svg width="72" height="72" viewBox="0 0 1024 1024" style="border-radius:16px;">
-      <rect width="1024" height="1024" fill="#1A1714"/>
-      <rect x="175" y="185" width="170" height="36" rx="18" fill="#C84B31"/>
-      <rect x="175" y="272" width="320" height="90" rx="45" fill="white"/>
-      <rect x="405" y="272" width="90" height="190" fill="white"/>
-      <rect x="175" y="372" width="320" height="90" fill="white"/>
-      <rect x="175" y="462" width="90" height="93" fill="white"/>
-      <rect x="175" y="585" width="320" height="90" rx="45" fill="white"/>
-      <rect x="565" y="272" width="90" height="403" fill="white"/>
-      <rect x="565" y="272" width="310" height="90" fill="white"/>
-      <rect x="785" y="272" width="90" height="190" fill="white"/>
-      <rect x="565" y="372" width="230" height="90" fill="white"/>
-      <rect x="750" y="460" width="86" height="360" rx="43" fill="#C84B31" transform="rotate(20 793 640)"/>
-      <circle cx="895" cy="820" r="48" fill="#C84B31"/>
-    </svg>
+    <img src="data:image/jpeg;base64,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" width="80" height="80" alt="ShyftRota" style="border-radius:18px;display:block;object-fit:cover">
     <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
     <div id="splash-msg">Loading ShyftRota...</div>
   </div>
   <div id="root"></div>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js" crossorigin="anonymous"></script>
   <script>
-    var _cw=console.warn;
-    console.warn=function(m){if(typeof m==='string'&&m.indexOf('Babel')>-1)return;_cw.apply(console,arguments);};
-    window.onerror=function(e,s,l){document.getElementById('splash-msg').textContent='Error L'+l+': '+e;};
-    function hideSplash(){var s=document.getElementById('splash');s.style.transition='opacity 0.4s';s.style.opacity='0';setTimeout(function(){s.style.display='none';},400);}
+    var _cw = console.warn;
+    console.warn = function(m){ if(typeof m==='string' && m.indexOf('Babel')>-1) return; _cw.apply(console,arguments); };
+    window.onerror = function(msg, src, line, col, err) {
+      document.getElementById('splash').style.display = 'flex';
+      document.getElementById('splash').style.opacity = '1';
+      var detail = err ? (err.message + (err.stack ? '<br><small style="color:#999;font-size:10px;white-space:pre-wrap">' + err.stack.split('\n').slice(0,4).join('\n') + '</small>' : '')) : msg;
+      document.getElementById('splash-msg').innerHTML = '<strong style="color:#C84B31">Error (line ' + line + '):</strong><br>' + detail;
+      document.querySelector('.dots').style.display = 'none';
+    };
+    // Also catch unhandled promise rejections
+    window.onunhandledrejection = function(e) {
+      document.getElementById('splash').style.display = 'flex';
+      document.getElementById('splash').style.opacity = '1';
+      document.getElementById('splash-msg').innerHTML = '<strong style="color:#C84B31">Promise error:</strong><br>' + e.reason;
+      document.querySelector('.dots').style.display = 'none';
+    };
+    function hideSplash() {
+      var s = document.getElementById('splash');
+      s.style.opacity = '0';
+      setTimeout(function(){ s.style.display = 'none'; }, 400);
+    }
+  </script>
+  <script>
+    (function() {
+      try { localStorage.setItem('__sr__','1'); localStorage.removeItem('__sr__'); }
+      catch(e) {
+        var _s={};
+        window.localStorage={
+          getItem:function(k){return _s.hasOwnProperty(k)?_s[k]:null;},
+          setItem:function(k,v){_s[k]=String(v);},
+          removeItem:function(k){delete _s[k];},
+          clear:function(){_s={};},
+          key:function(i){return Object.keys(_s)[i]||null;},
+          get length(){return Object.keys(_s).length;}
+        };
+      }
+    })();
   </script>
   <script type="text/babel" data-presets="react">
 var { useState, useEffect, useRef } = React;
@@ -760,48 +780,13 @@ function TeamChat({ user, accounts }) {
 
 
 // ── ShyftRota Logo Mark ───────────────────────────────
-// Key insight: left vertical STOPS before the bottom bar so
-// the bottom-left pill of the S is visible → reads as S not 2
+var SR_LOGO = "data:image/jpeg;base64,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";
 function LogoMark({ size }) {
   var s = size || 32;
   var r = Math.round(s * 0.22);
   return (
-    <svg width={s} height={s} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" style={{ borderRadius:r, display:"block", flexShrink:0 }}>
-      <rect width="1024" height="1024" fill="#1A1714"/>
-
-      {/* Accent bar top-left */}
-      <rect x="175" y="185" width="170" height="36" rx="18" fill="#C84B31"/>
-
-      {/* ── S ──
-          Key: gap between left-vertical (ends y=555) and bottom bar (starts y=585)
-               + rounded left ends on top and bottom bars = clearly S not 2 */}
-      {/* Top bar — rounded left pill visible */}
-      <rect x="175" y="272" width="320" height="90" rx="45" fill="white"/>
-      {/* Right vertical — bridges top bar down to middle */}
-      <rect x="405" y="272" width="90" height="190" fill="white"/>
-      {/* Middle bar */}
-      <rect x="175" y="372" width="320" height="90" fill="white"/>
-      {/* Left vertical — SHORT connector, stops well above bottom bar */}
-      <rect x="175" y="462" width="90" height="93" fill="white"/>
-      {/* Bottom bar — rounded left pill FULLY visible (gap above it) */}
-      <rect x="175" y="585" width="320" height="90" rx="45" fill="white"/>
-
-      {/* ── R ── */}
-      {/* Stem */}
-      <rect x="565" y="272" width="90" height="403" fill="white"/>
-      {/* Top bar */}
-      <rect x="565" y="272" width="310" height="90" fill="white"/>
-      {/* Right bowl vertical */}
-      <rect x="785" y="272" width="90" height="190" fill="white"/>
-      {/* Middle bar */}
-      <rect x="565" y="372" width="230" height="90" fill="white"/>
-
-      {/* Terracotta diagonal leg */}
-      <rect x="750" y="460" width="86" height="360" rx="43" fill="#C84B31" transform="rotate(20 793 640)"/>
-
-      {/* Bottom dot */}
-      <circle cx="895" cy="820" r="48" fill="#C84B31"/>
-    </svg>
+    <img src={SR_LOGO} width={s} height={s} alt="SR"
+      style={{ borderRadius:r, display:"block", flexShrink:0, objectFit:"cover" }} />
   );
 }
 
@@ -1273,12 +1258,13 @@ function App() {
  if (skipped.indexOf(emp.name) < 0) skipped.push(emp.name);
  return; // skip this day - employee is on approved PTO
  }
+ if (emp.avail.indexOf(d) >= 0) {
+ var shift = shiftCycle[Math.floor(Math.random() * shiftCycle.length)];
  var shiftWinOk = (function(){
   if (!emp.shiftAvail || !emp.shiftAvail[d] || emp.shiftAvail[d].length===0) return true;
   return emp.shiftAvail[d].indexOf(shift) >= 0;
  })();
- if (emp.avail.indexOf(d) >= 0 && hoursUsed + shiftHours(shift, shiftDefs) <= emp.max && shiftWinOk) {
- var shift = shiftCycle[Math.floor(Math.random() * shiftCycle.length)];
+ if (hoursUsed + shiftHours(shift, shiftDefs) <= emp.max && shiftWinOk) {
  gen[d][emp.id] = shift;
  hoursUsed += shiftHours(shift, shiftDefs);
  }
@@ -1984,13 +1970,13 @@ function App() {
                       <div style={{ fontSize:13, fontWeight:600, color:T.muted, marginBottom:4 }}>Add Department</div>
                       <input value={newDeptName} onChange={function(e){setNewDeptName(e.target.value);}} placeholder="e.g. Front Desk" style={{ ...INP, textAlign:"center" }} />
                       <button onClick={function(){
-                                                var nm  = (inp&&inp.value||"").trim();
+                                                var nm  = newDeptName.trim();
                         if (!nm) { showT("Name required","error"); return; }
                         var colors = ["#1A1714","#10B981","#F59E0B","#EF4444","#2E2A26","#3B82F6","#EC4899","#14B8A6"];
                         var col = colors[depts.length % colors.length];
                         var id  = nm.toLowerCase().replace(/[^a-z0-9]+/g,"-") + "_" + Date.now();
                         setDepts(function(p){ return p.concat([{id:id,name:nm,color:col,linked:[]}]); });
-                        if (inp) inp.value = "";
+                        setNewDeptName("");
                         showT(nm+" department created");
                       }} style={{ ...BTN, width:"100%" }}>+ Add Department</button>
                     </div>
@@ -3162,6 +3148,6 @@ function App() {
   }
 })();
   hideSplash();
-  </script>
+    </script>
 </body>
 </html>
