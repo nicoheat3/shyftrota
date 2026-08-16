@@ -734,7 +734,7 @@ function LogoMark({ size }) {
 }
 
 // ── Welcome / Auth ────────────────────────────────────
-function Welcome({ onLogin, onSignup, accounts }) {
+function Welcome({ onLogin, onSignup, accounts, authError }) {
  var [mode, setMode] = useState("home");
  var [email, setEmail] = useState("");
  var [pw, setPw] = useState("");
@@ -787,6 +787,7 @@ function Welcome({ onLogin, onSignup, accounts }) {
  </div>
  <div style={{ marginBottom:13 }}><label style={LBL}>Email</label><input value={email} onChange={function(e){setEmail(e.target.value);setErr("");}} placeholder="you@company.com" style={INP} /></div>
  <div style={{ marginBottom:18 }}><label style={LBL}>Password</label><input type="password" value={pw} onChange={function(e){setPw(e.target.value);setErr("");}} onKeyDown={function(e){if(e.key==="Enter")doLogin();}} placeholder="password" style={INP} /></div>
+ {authError && <div style={{ background:"#FEF3C7", border:"1px solid #FCD34D", borderRadius:8, padding:"9px 12px", color:"#92400E", fontSize:12, marginBottom:13 }}><b>Signed in, but couldn't load your account:</b> {authError}</div>}
  {err && <div style={{ background:T.dangerL, border:"1px solid #FCA5A5", borderRadius:8, padding:"9px 12px", color:"#991B1B", fontSize:13, marginBottom:13 }}>{err}</div>}
  <button onClick={doLogin} disabled={loggingIn} style={{ ...BTN, width:"100%", padding:"11px", fontSize:14, opacity:loggingIn?0.6:1, cursor:loggingIn?"default":"pointer" }}>{loggingIn ? "Signing in..." : "Sign in"}</button>
  </div>
@@ -891,11 +892,13 @@ function App() {
  });
  var [user, setUser] = useState(null);
  var [authLoading, setAuthLoading] = useState(true);
+ var [authError, setAuthError] = useState(null);
 
  // Load the profile row (name/role/employee link) that matches a Supabase Auth session.
  function loadProfile(authUser) {
   supabase.from("profiles").select("*").eq("id", authUser.id).single().then(function(res){
    if (res.data) {
+    setAuthError(null);
     setUser({
      id: authUser.id,
      name: res.data.name,
@@ -905,8 +908,10 @@ function App() {
      property_id: res.data.property_id,
     });
    } else {
-    // Authenticated with Supabase but no matching profiles row yet — treat as logged out
-    // rather than letting them into the app with no role/property assigned.
+    // Authenticated with Supabase but couldn't load the matching profile row —
+    // surface exactly why instead of silently bouncing back to the login screen.
+    console.error("loadProfile failed:", res.error);
+    setAuthError(res.error ? (res.error.message || JSON.stringify(res.error)) : "No profile found for this account.");
     setUser(null);
    }
    setAuthLoading(false);
@@ -1295,7 +1300,7 @@ function App() {
    Loading…
   </div>
  );
- if (!user) return <Welcome onLogin={handleLogin} onSignup={handleSignup} accounts={accounts} />;
+ if (!user) return <Welcome onLogin={handleLogin} onSignup={handleSignup} accounts={accounts} authError={authError} />;
 
  var tz = getTZ();
 
