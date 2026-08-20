@@ -930,23 +930,33 @@ function App() {
   return function(){ sub.data.subscription.unsubscribe(); };
  }, []);
  var [industry, setIndustry] = useState(function(){ return ld("sr_ind", "general"); });
-  var [depts,      setDepts]      = useState(function(){ return ld("sr_depts", SEED_DEPTS); });
+  var [depts,      setDepts]      = useState([]);
   var [deptFilter, setDeptFilter] = useState("all");
   var [payroll,    setPayroll]    = useState(function(){ return ld("sr_payroll", "paychex"); });
-  var [emps, setEmps] = useState(function(){
-    var stored = ld("sr_emp", SEED_EMP);
-    // Migrate: assign dept from SEED_EMP for any seed employee missing it
-    // Version bump: if stored data looks like old seeds (no dept on id 1-8), refresh from SEED_EMP
-    var needsRefresh = stored.some(function(e){ return e.id <= 8 && !e.dept; });
-    if (needsRefresh) {
-      // Re-merge: keep custom employees, update seed employees with new dept field
-      return stored.map(function(e){
-        var seed = SEED_EMP.find(function(s){ return s.id === e.id; });
-        return seed ? {...e, dept: seed.dept || e.dept || ""} : {...e, dept: e.dept || ""};
-      });
-    }
-    return stored.map(function(e){ return {...e, dept: e.dept || ""}; });
-  });
+  var [emps, setEmps] = useState([]);
+
+  // Pull the real roster, departments, and shift definitions from Supabase
+  // as soon as we know which property this user belongs to.
+  useEffect(function(){
+   if (!user || !user.property_id) return;
+   supabase.from("employees").select("*").eq("property_id", user.property_id).then(function(res){
+    if (res.data) {
+     setEmps(res.data.map(function(r){
+      return { id:r.id, name:r.name, role:r.role, avail:r.avail||[], max:r.max_hours, dept:r.dept_id||"", shiftAvail:r.shift_avail||{} };
+     }));
+    } else { console.error("load employees failed:", res.error); }
+   });
+   supabase.from("departments").select("*").eq("property_id", user.property_id).then(function(res){
+    if (res.data) {
+     setDepts(res.data.map(function(r){ return { id:r.id, name:r.name, color:r.color, linked:r.linked||[] }; }));
+    } else { console.error("load departments failed:", res.error); }
+   });
+   supabase.from("shift_defs").select("*").eq("property_id", user.property_id).then(function(res){
+    if (res.data) {
+     setShiftDefs(res.data.map(function(r){ return { id:r.id, label:r.label, start:r.start_time, end:r.end_time, color:r.color||"Day 9-5" }; }));
+    } else { console.error("load shift_defs failed:", res.error); }
+   });
+  }, [user && user.property_id]);
  var [sched, setSched] = useState(function(){ var s = ld("sr_sch", null); return s && typeof s === "object" && !s["Mon"] ? s : { 0: ld("sr_sch", SEED_SCHED) }; });
  var [swaps, setSwaps] = useState(function(){ return ld("sr_swp", SEED_SWAPS); });
  var [ptos, setPtos] = useState(function(){ return ld("sr_pto", []); });
@@ -954,7 +964,7 @@ function App() {
  var [callins, setCallins] = useState(function(){ return ld("sr_call", []); });
  var [timeclock, setTimeclock] = useState(function(){ return ld("sr_tc", []); }); // array of punch records
  var [overruled, setOverruled] = useState(function(){ return ld("sr_ovr", []); });
- var [shiftDefs, setShiftDefs] = useState(function(){ return ld("sr_sdefs",SEED_SHIFTS); });
+ var [shiftDefs, setShiftDefs] = useState([]);
  var [weekOff, setWeekOff] = useState(0);
  var [tab, setTab] = useState("schedule");
  var [selCell, setSelCell] = useState(null);
@@ -990,7 +1000,6 @@ function App() {
  var [toast, setToast] = useState(null);
 
  useEffect(function(){ sv("sr_acc", accounts); }, [accounts]);
- useEffect(function(){ sv("sr_emp", emps); }, [emps]);
  useEffect(function(){ sv("sr_sch", sched); }, [sched]);
  useEffect(function(){ sv("sr_swp", swaps); }, [swaps]);
  useEffect(function(){ sv("sr_pto", ptos); }, [ptos]);
@@ -998,9 +1007,7 @@ function App() {
  useEffect(function(){ sv("sr_call", callins); }, [callins]);
  useEffect(function(){ sv("sr_tc", timeclock); }, [timeclock]);
  useEffect(function(){ sv("sr_ovr", overruled); }, [overruled]);
- useEffect(function(){ sv("sr_sdefs",shiftDefs); }, [shiftDefs]);
  useEffect(function(){ sv("sr_ind", industry); }, [industry]);
-  useEffect(function(){ sv("sr_depts",   depts);     }, [depts]);
   useEffect(function(){ sv("sr_payroll", payroll);   }, [payroll]);
  useEffect(function(){ if(user) sv("sr_uid", user.id); }, [user]);
 
@@ -1100,9 +1107,12 @@ function App() {
  setSched(function(p){ var n={...p}; Object.keys(n).forEach(function(wk){ var w={}; DAYS.forEach(function(d){ var dd={...((n[wk]&&n[wk][d])||{})}; delete dd[emp.id]; w[d]=dd; }); n[wk]=w; }); return n; });
  setConfirmRm(null);
  showT(emp.name+" removed","info");
+ supabase.from("employees").delete().eq("id", emp.id).then(function(res){
+  if (res.error) { console.error("employee delete failed:", res.error); showT("Removed locally, but the server delete failed — check connection","error"); }
+ });
  }
 
- function addEmp() {
+ async function addEmp() {
   var nameClean  = sanitize(newEmp.name.trim());
   var emailClean = newEmp.email.toLowerCase().trim();
   if (!nameClean)  { showT("Name required","error"); return; }
@@ -1110,7 +1120,24 @@ function App() {
   if (!newEmp.pw.trim()) { showT("Password required","error"); return; }
   if (newEmp.pw.length < 8) { showT("Password must be at least 8 characters","error"); return; }
   if (accounts.find(function(a){ return a.email.toLowerCase()===emailClean; })) { showT("Email already exists","error"); return; }
-  var emp = { id:Date.now(), name:nameClean, role:newEmp.role||indRoles[0], avail:newEmp.avail, shiftAvail:{}, max:newEmp.max, dept:newEmp.dept||"" };
+  var res = await supabase.from("employees").insert({
+   property_id: user.property_id,
+   name: nameClean,
+   role: newEmp.role||indRoles[0],
+   avail: newEmp.avail,
+   max_hours: newEmp.max,
+   dept_id: newEmp.dept || null,
+   shift_avail: {},
+  }).select().single();
+  if (res.error || !res.data) {
+   console.error("employee insert failed:", res.error);
+   showT("Couldn't save employee to the server — check connection","error");
+   return;
+  }
+  var emp = { id:res.data.id, name:nameClean, role:res.data.role, avail:newEmp.avail, shiftAvail:{}, max:newEmp.max, dept:newEmp.dept||"" };
+  // NOTE: this still creates a LOCAL-ONLY login account, not a real Supabase Auth user —
+  // employee login creation needs a server-side function (Supabase's user-creation API
+  // requires a secret key that can't live in browser code). That's the next piece, not this one.
   var acc = { id:"acc"+Date.now(), name:nameClean, email:emailClean, pw:hashPassword(newEmp.pw), role:newEmp.isAdmin?"admin":"employee", eid:emp.id };
   setEmps(function(p){ return p.concat([emp]); });
   setAccounts(function(p){ return p.concat([acc]); });
@@ -1844,6 +1871,9 @@ function App() {
        ev.target.value = val;
        setEmps(function(p){ return p.map(function(e){ return e.id===emp.id?{...e,max:val}:e; }); });
        showT(emp.name.split(" ")[0]+"'s max hours updated to "+val+"h", "info");
+       supabase.from("employees").update({ max_hours: val }).eq("id", emp.id).then(function(res){
+        if (res.error) console.error("max hours sync failed:", res.error);
+       });
      }}
      onKeyDown={function(ev){
        if (ev.key==="Enter") { ev.target.blur(); }
@@ -1871,11 +1901,14 @@ function App() {
    return (
      <div key={d} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
        <button onClick={function(){
+         var newAvail = avail ? emp.avail.filter(function(x){return x!==d;}) : emp.avail.concat([d]);
          setEmps(function(p){ return p.map(function(e){
            if (e.id!==emp.id) return e;
-           var newAvail = avail ? e.avail.filter(function(x){return x!==d;}) : e.avail.concat([d]);
            return {...e, avail:newAvail};
          }); });
+         supabase.from("employees").update({ avail: newAvail }).eq("id", emp.id).then(function(res){
+          if (res.error) console.error("avail sync failed:", res.error);
+         });
        }} style={{ padding:"3px 7px", borderRadius:20, fontSize:9, fontWeight:600, background:avail?T.accentL:T.bg, color:avail?T.accent:T.faint, border:"1px solid "+(avail?"rgba(200,75,49,0.3)":T.border), cursor:"pointer", fontFamily:"inherit" }}>{d}</button>
        {hasRestriction && <div style={{ width:4, height:4, borderRadius:"50%", background:T.warning }} title="Shift restrictions set" />}
      </div>
@@ -1915,6 +1948,12 @@ function App() {
                               setDepts(function(p){ return p.filter(function(d){return d.id!==dept.id;}); });
                               setEmps(function(p){ return p.map(function(e){ return e.dept===dept.id?{...e,dept:""}:e; }); });
                               showT(dept.name+" removed","info");
+                              supabase.from("employees").update({ dept_id: null }).eq("dept_id", dept.id).then(function(res){
+                               if (res.error) console.error("clearing dept from employees failed:", res.error);
+                              });
+                              supabase.from("departments").delete().eq("id", dept.id).then(function(res){
+                               if (res.error) console.error("department delete failed:", res.error);
+                              });
                             }} style={{ ...GBTN, padding:"4px 8px", fontSize:12, color:T.danger, borderColor:"#FCA5A5" }}>Remove</button>}
                           </div>
                           <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginBottom:12 }}>
@@ -1928,11 +1967,14 @@ function App() {
                                 var linked = dept.linked && dept.linked.indexOf(other.id)>=0;
                                 return (
                                   <div key={other.id} onClick={function(){
+                                    var nl = linked ? (dept.linked||[]).filter(function(x){return x!==other.id;}) : (dept.linked||[]).concat([other.id]);
                                     setDepts(function(p){ return p.map(function(d){
                                       if (d.id!==dept.id) return d;
-                                      var nl = linked ? (d.linked||[]).filter(function(x){return x!==other.id;}) : (d.linked||[]).concat([other.id]);
                                       return {...d, linked:nl};
                                     }); });
+                                    supabase.from("departments").update({ linked: nl }).eq("id", dept.id).then(function(res){
+                                     if (res.error) console.error("dept linked sync failed:", res.error);
+                                    });
                                   }} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 10px", borderRadius:8, background:linked?(other.color+"15"):T.bg, border:"1px solid "+(linked?other.color:T.border), cursor:"pointer" }}>
                                     <div style={{ width:8, height:8, borderRadius:"50%", background:other.color }} />
                                     <span style={{ fontSize:13, color:linked?other.color:T.muted, fontWeight:linked?600:400 }}>{other.name}</span>
@@ -1957,6 +1999,9 @@ function App() {
                         setDepts(function(p){ return p.concat([{id:id,name:nm,color:col,linked:[]}]); });
                         if (inp) inp.value = "";
                         showT(nm+" department created");
+                        supabase.from("departments").insert({ id:id, property_id:user.property_id, name:nm, color:col, linked:[] }).then(function(res){
+                         if (res.error) { console.error("department insert failed:", res.error); showT("Saved locally, but the server save failed","error"); }
+                        });
                       }} style={{ ...BTN, width:"100%" }}>+ Add Department</button>
                     </div>
                   </div>
@@ -2235,6 +2280,9 @@ function App() {
  setShiftDefs(function(p){ return p.concat([{id:id, label:newShift.label.trim(), start:newShift.start, end:newShift.end, color:newShift.color}]); });
  setAddingShift(false);
  showT(newShift.label+" shift added");
+ supabase.from("shift_defs").insert({ id:id, property_id:user.property_id, label:newShift.label.trim(), start_time:newShift.start, end_time:newShift.end, color:newShift.color }).then(function(res){
+  if (res.error) { console.error("shift_defs insert failed:", res.error); showT("Saved locally, but the server save failed","error"); }
+ });
  }} style={BTN}>Save New Shift</button>
  <button onClick={function(){setAddingShift(false);}} style={GBTN}>Cancel</button>
  </div>
@@ -2984,16 +3032,19 @@ function App() {
                         var checked = dayShifts.indexOf(s.id) >= 0;
                         return (
                           <button key={s.id} onClick={function(){
+                            var curSA = {...(emp.shiftAvail||{})};
+                            var curDay = curSA[d] ? curSA[d].slice() : shiftDefs.map(function(x){ return x.id; });
+                            var newDay = checked
+                              ? curDay.filter(function(x){ return x!==s.id; })
+                              : curDay.concat([s.id]);
+                            curSA[d] = newDay;
                             setEmps(function(p){ return p.map(function(e){
                               if (e.id !== emp.id) return e;
-                              var curSA = {...(e.shiftAvail||{})};
-                              var curDay = curSA[d] ? curSA[d].slice() : shiftDefs.map(function(x){ return x.id; });
-                              var newDay = checked
-                                ? curDay.filter(function(x){ return x!==s.id; })
-                                : curDay.concat([s.id]);
-                              curSA[d] = newDay;
                               return {...e, shiftAvail:curSA};
                             }); });
+                            supabase.from("employees").update({ shift_avail: curSA }).eq("id", emp.id).then(function(res){
+                             if (res.error) console.error("shift_avail sync failed:", res.error);
+                            });
                           }} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 10px", borderRadius:8, border:"1px solid "+(checked?sc.border:T.border), background:checked?sc.bg:T.surface, cursor:"pointer", textAlign:"left", fontFamily:"inherit" }}>
                             <div style={{ width:16, height:16, borderRadius:4, border:"2px solid "+(checked?sc.dot:T.faint), background:checked?sc.dot:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
                               {checked && <span style={{ color:"white", fontSize:10, fontWeight:700 }}>&#10003;</span>}
@@ -3016,6 +3067,9 @@ function App() {
                 setEmps(function(p){ return p.map(function(e){ return e.id===emp.id?{...e,shiftAvail:{}}:e; }); });
                 setShiftAvailEmp(null);
                 showT("Shift restrictions cleared","info");
+                supabase.from("employees").update({ shift_avail: {} }).eq("id", emp.id).then(function(res){
+                 if (res.error) console.error("shift_avail clear sync failed:", res.error);
+                });
               }} style={{ ...GBTN, padding:"10px 14px", fontSize:12 }}>Clear all</button>
             </div>
           </div>
@@ -3060,6 +3114,9 @@ function App() {
               if (!editShift.label.trim()) { showT("Shift name required","error"); return; }
               setShiftDefs(function(p){ return p.map(function(x,j){ return j===editShift.idx ? {...x, label:editShift.label, start:editShift.start, end:editShift.end, color:editShift.color} : x; }); });
               showT(editShift.label+" saved");
+              supabase.from("shift_defs").update({ label:editShift.label, start_time:editShift.start, end_time:editShift.end, color:editShift.color }).eq("id", editShift.id).then(function(res){
+               if (res.error) { console.error("shift_defs update failed:", res.error); showT("Saved locally, but the server save failed","error"); }
+              });
               setEditShift(null);
             }} style={{ ...BTN, flex:1, padding:"10px" }}>Save Changes</button>
             <button onClick={function(){setEditShift(null);}} style={{ ...GBTN, padding:"10px 16px" }}>Cancel</button>
@@ -3068,6 +3125,9 @@ function App() {
                 setShiftDefs(function(p){ return p.filter(function(x,j){ return j!==editShift.idx; }); });
                 setEditShift(null);
                 showT("Shift removed","info");
+                supabase.from("shift_defs").delete().eq("id", editShift.id).then(function(res){
+                 if (res.error) console.error("shift_defs delete failed:", res.error);
+                });
               }} style={{ ...GBTN, padding:"10px 16px", color:T.danger, borderColor:"#FCA5A5" }}>Delete</button>
             )}
           </div>
