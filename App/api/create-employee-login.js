@@ -39,28 +39,7 @@ export default async function handler(req, res) {
     .single();
 
   if (callerProfileResult.error || !callerProfileResult.data || callerProfileResult.data.role !== "admin") {
-    var keyRoleDebug = "unknown";
-    try {
-      var parts = serviceRoleKey.split(".");
-      if (parts.length === 3) {
-        var payloadJson = Buffer.from(parts[1], "base64").toString("utf8");
-        var payloadObj = JSON.parse(payloadJson);
-        keyRoleDebug = payloadObj.role || "no role field in token";
-      } else {
-        keyRoleDebug = "not a JWT (expected 3 dot-separated parts, got " + parts.length + ")";
-      }
-    } catch (e) {
-      keyRoleDebug = "could not parse key: " + e.message;
-    }
-    return res.status(403).json({
-      error: "Only admins can create employee logins",
-      debug: {
-        callerId: callerId,
-        profileError: callerProfileResult.error ? callerProfileResult.error.message : null,
-        profileData: callerProfileResult.data || null,
-        serviceKeyRole: keyRoleDebug,
-      },
-    });
+    return res.status(403).json({ error: "Only admins can create employee logins" });
   }
   var propertyId = callerProfileResult.data.property_id;
 
