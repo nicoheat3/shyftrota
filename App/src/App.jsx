@@ -2012,13 +2012,13 @@ function App() {
                       <div style={{ fontSize:13, fontWeight:600, color:T.muted, marginBottom:4 }}>Add Department</div>
                       <input value={newDeptName} onChange={function(e){setNewDeptName(e.target.value);}} placeholder="e.g. Front Desk" style={{ ...INP, textAlign:"center" }} />
                       <button onClick={function(){
-                                                var nm  = (inp&&inp.value||"").trim();
+                        var nm = newDeptName.trim();
                         if (!nm) { showT("Name required","error"); return; }
                         var colors = ["#1A1714","#10B981","#F59E0B","#EF4444","#2E2A26","#3B82F6","#EC4899","#14B8A6"];
                         var col = colors[depts.length % colors.length];
                         var id  = nm.toLowerCase().replace(/[^a-z0-9]+/g,"-") + "_" + Date.now();
                         setDepts(function(p){ return p.concat([{id:id,name:nm,color:col,linked:[]}]); });
-                        if (inp) inp.value = "";
+                        setNewDeptName("");
                         showT(nm+" department created");
                         supabase.from("departments").insert({ id:id, property_id:user.property_id, name:nm, color:col, linked:[] }).then(function(res){
                          if (res.error) { console.error("department insert failed:", res.error); showT("Saved locally, but the server save failed","error"); }
