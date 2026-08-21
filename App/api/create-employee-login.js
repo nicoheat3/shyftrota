@@ -39,7 +39,14 @@ export default async function handler(req, res) {
     .single();
 
   if (callerProfileResult.error || !callerProfileResult.data || callerProfileResult.data.role !== "admin") {
-    return res.status(403).json({ error: "Only admins can create employee logins" });
+    return res.status(403).json({
+      error: "Only admins can create employee logins",
+      debug: {
+        callerId: callerId,
+        profileError: callerProfileResult.error ? callerProfileResult.error.message : null,
+        profileData: callerProfileResult.data || null,
+      },
+    });
   }
   var propertyId = callerProfileResult.data.property_id;
 
