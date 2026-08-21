@@ -1135,15 +1135,36 @@ function App() {
    return;
   }
   var emp = { id:res.data.id, name:nameClean, role:res.data.role, avail:newEmp.avail, shiftAvail:{}, max:newEmp.max, dept:newEmp.dept||"" };
-  // NOTE: this still creates a LOCAL-ONLY login account, not a real Supabase Auth user —
-  // employee login creation needs a server-side function (Supabase's user-creation API
-  // requires a secret key that can't live in browser code). That's the next piece, not this one.
+
+  // Create their REAL login via the serverless function (needs the secret service-role
+  // key, which only exists server-side — never in this browser code).
+  var sessionRes = await supabase.auth.getSession();
+  var accessToken = sessionRes.data.session ? sessionRes.data.session.access_token : null;
+  var loginCreated = false;
+  if (accessToken) {
+   try {
+    var apiRes = await fetch("/api/create-employee-login", {
+     method: "POST",
+     headers: { "Content-Type": "application/json", "Authorization": "Bearer " + accessToken },
+     body: JSON.stringify({ name: nameClean, email: emailClean, password: newEmp.pw, role: newEmp.isAdmin?"admin":"employee", employeeId: emp.id }),
+    });
+    var apiData = await apiRes.json();
+    if (!apiRes.ok) { console.error("login creation failed:", apiData.error); showT("Employee saved, but login creation failed: " + apiData.error, "error"); }
+    else { loginCreated = true; }
+   } catch (err) {
+    console.error("login creation request failed:", err);
+    showT("Employee saved, but couldn't reach the server to create their login","error");
+   }
+  }
+
+  // Keep the local account entry too — Team Chat and employee badges still read from
+  // this list locally (not migrated to Supabase yet), independent of the real login above.
   var acc = { id:"acc"+Date.now(), name:nameClean, email:emailClean, pw:hashPassword(newEmp.pw), role:newEmp.isAdmin?"admin":"employee", eid:emp.id };
   setEmps(function(p){ return p.concat([emp]); });
   setAccounts(function(p){ return p.concat([acc]); });
   setNewEmp({ name:"", role:"", avail:[], max:40, email:"", pw:"", isAdmin:false, dept:"" });
   setAddEmpOpen(false);
-  showT(nameClean+" added");
+  showT(loginCreated ? nameClean+" added — they can log in now" : nameClean+" added");
  }
 
  function toggleAdmin(accId) {
