@@ -1149,7 +1149,7 @@ function App() {
      body: JSON.stringify({ name: nameClean, email: emailClean, password: newEmp.pw, role: newEmp.isAdmin?"admin":"employee", employeeId: emp.id }),
     });
     var apiData = await apiRes.json();
-    if (!apiRes.ok) { console.error("login creation failed:", apiData.error); showT("Employee saved, but login creation failed: " + apiData.error, "error"); }
+    if (!apiRes.ok) { console.error("login creation failed:", apiData); showT("Employee saved, but login creation failed: " + apiData.error, "error"); }
     else { loginCreated = true; }
    } catch (err) {
     console.error("login creation request failed:", err);
