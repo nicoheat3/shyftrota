@@ -1135,6 +1135,13 @@ function App() {
    .then(function(res){ if (res.error) console.error("schedule delete sync failed:", res.error); });
  }
 
+ // Resolves a shift's real color theme (set when it was created in Shift Types)
+ // instead of assuming the shift's own name/id happens to match a preset color name.
+ function shiftColor(shiftId) {
+  var def = shiftDefs.find(function(d){ return d.id === shiftId; });
+  return (def && SC[def.color]) || SC[shiftId] || SC["Day 9-5"];
+ }
+
  function assignShift(day, eid, shift) {
  if (isPastWeek) { showT("Past schedules are locked and cannot be changed","error"); return; }
  setSched(function(p) {
@@ -1623,7 +1630,7 @@ function App() {
        {onToday.length > 0 ? (
          <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
            {onToday.map(function(e){
-             var shift = todayShifts[e.id]; var sc = SC[shift] || {};
+             var shift = todayShifts[e.id]; var sc = shift ? shiftColor(shift) : {};
              var isIn = clockedInToday.some(function(c){ return c.id===e.id; });
              return (
                <div key={e.id} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", borderRadius:20, background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)" }}>
@@ -1680,7 +1687,7 @@ function App() {
                 </div>
  <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:16 }}>
  {shiftDefs.map(function(s) {
- var c = SC[s.id] || SC["Day 9-5"];
+ var c = shiftColor(s.id);
  return (
  <div key={s.id} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", borderRadius:20, background:c.bg, border:"1px solid "+c.border }}>
  <div style={{ width:6, height:6, borderRadius:"50%", background:c.dot }} />
@@ -1704,7 +1711,7 @@ function App() {
        {onS.length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:28 }}>Nobody scheduled today. Hit Auto-Generate or assign shifts manually.</div>}
        <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
          {onS.map(function(emp){
-           var sh=todayS[emp.id]; var sc=SC[sh]||{};
+           var sh=todayS[emp.id]; var sc=sh?shiftColor(sh):{};
            var dept=depts.find(function(d){return d.id===emp.dept;});
            var lastP=timeclock.slice().reverse().find(function(p){return p.eid===emp.id;});
            var isIn=lastP&&lastP.type==="in"&&new Date(lastP.ts).toDateString()===new Date().toDateString();
@@ -1790,8 +1797,8 @@ function App() {
  return (
  <td key={d} className={isPastWeek?"":"hv"} onClick={function(){if(!isPastWeek)setSelCell(isSel?null:{day:d,eid:emp.id});}} style={{ padding:"6px 4px", textAlign:"center", background:cellBg, position:"relative", transition:"background .1s" }}>
  {shift ? (
- <div style={{ display:"inline-flex", alignItems:"center", gap:3, padding:"3px 7px", borderRadius:20, fontSize:10, fontWeight:600, background:(SC[shift]||SC["Day 9-5"]).bg, color:(SC[shift]||SC["Day 9-5"]).text, border:"1px solid "+(SC[shift]||SC["Day 9-5"]).border, whiteSpace:"nowrap" }}>
- <span style={{ width:5, height:5, borderRadius:"50%", background:(SC[shift]||SC["Day 9-5"]).dot, display:"inline-block", flexShrink:0 }} />
+ <div style={{ display:"inline-flex", alignItems:"center", gap:3, padding:"3px 7px", borderRadius:20, fontSize:10, fontWeight:600, background:shiftColor(shift).bg, color:shiftColor(shift).text, border:"1px solid "+shiftColor(shift).border, whiteSpace:"nowrap" }}>
+ <span style={{ width:5, height:5, borderRadius:"50%", background:shiftColor(shift).dot, display:"inline-block", flexShrink:0 }} />
  {(function(){
  var ovKey = overrideKey(weekOff,d,emp.id);
  var ov = shiftOverrides[ovKey];
@@ -1810,7 +1817,7 @@ function App() {
  {isSel && (
  <div style={{ position:"absolute", top:"100%", left:"50%", transform:"translateX(-50%)", zIndex:100, background:T.surface, border:"1px solid "+T.border, borderRadius:10, padding:8, minWidth:165, boxShadow:"0 8px 24px rgba(0,0,0,0.12)", marginTop:4 }}>
  {shiftDefs.map(function(s) {
- var c = SC[s.id] || SC["Day 9-5"];
+ var c = shiftColor(s.id);
  return (
  <div key={s.id} className="hv2" onClick={function(e){e.stopPropagation();assignShift(d,emp.id,s.id);}} style={{ display:"flex", alignItems:"center", gap:7, padding:"6px 10px", borderRadius:7, fontSize:12, color:c.text, marginBottom:2, cursor:"pointer" }}>
  <span style={{ width:7, height:7, borderRadius:"50%", background:c.dot }} />{s.label} <span style={{ fontSize:10, color:c.text, opacity:0.7 }}>{to12(s.start)}-{to12(s.end)}</span>
@@ -2145,7 +2152,7 @@ function App() {
  <div>
  <div style={{ display:"flex", gap:6, marginBottom:5, flexWrap:"wrap" }}>
  <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:600 }}>{s.day}</span>
- <span style={{ padding:"3px 9px", borderRadius:20, background:(SC[s.shift]&&SC[s.shift].bg)||T.bg, color:(SC[s.shift]&&SC[s.shift].text)||T.muted, fontSize:12, fontWeight:600 }}>{s.shift}</span>
+ <span style={{ padding:"3px 9px", borderRadius:20, background:shiftColor(s.shift).bg, color:shiftColor(s.shift).text, fontSize:12, fontWeight:600 }}>{s.shift}</span>
  {s.role && <span style={{ padding:"3px 9px", borderRadius:20, background:T.bg, color:T.muted, fontSize:12 }}>{s.role}</span>}
  </div>
  {s.claimedBy && <div style={{ fontSize:12, color:T.muted }}>Claimed by: <strong>{s.claimedName}</strong></div>}
@@ -2320,7 +2327,7 @@ function App() {
  </div>
  <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
  <span style={{ padding:"2px 8px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:11, fontWeight:500 }}>{req.day}</span>
- <span style={{ padding:"2px 8px", borderRadius:20, background:(SC[req.shift]&&SC[req.shift].bg)||T.bg, color:(SC[req.shift]&&SC[req.shift].text)||T.muted, fontSize:11 }}>{(function(){ var _sd=shiftDefs.find(function(d){return d.id===req.shift;}); return _sd?(_sd.label+" "+to12(_sd.start)+"-"+to12(_sd.end)):req.shift; })()}</span>
+ <span style={{ padding:"2px 8px", borderRadius:20, background:shiftColor(req.shift).bg, color:shiftColor(req.shift).text, fontSize:11 }}>{(function(){ var _sd=shiftDefs.find(function(d){return d.id===req.shift;}); return _sd?(_sd.label+" "+to12(_sd.start)+"-"+to12(_sd.end)):req.shift; })()}</span>
  </div>
  {req.reason && <div style={{ marginTop:5, fontSize:12, color:T.muted }}>{req.reason}</div>}
  </div>
@@ -2399,7 +2406,7 @@ function App() {
 
  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:14, marginBottom:20 }}>
  {shiftDefs.map(function(s, i){
- var c = SC[s.color] || SC[s.id] || SC["Morning 6-2"];
+ var c = shiftColor(s.id);
  return (
  <div key={s.id} style={{ ...CARD, border:"2px solid "+c.border, background:c.bg+"44" }}>
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
@@ -2519,11 +2526,11 @@ function App() {
  var pto = ptos.find(function(r){return r.eid===user.eid&&r.status==="approved";});
  var dd = getDayDate(di, weekOff);
  return (
- <div key={d} style={{ ...CARD, padding:12, textAlign:"center", background:shift?(SC[shift]&&SC[shift].bg)||T.surface:T.surface, border:"1px solid "+(shift?(SC[shift]&&SC[shift].border)||T.border:T.border) }}>
+ <div key={d} style={{ ...CARD, padding:12, textAlign:"center", background:shift?shiftColor(shift).bg:T.surface, border:"1px solid "+(shift?shiftColor(shift).border:T.border) }}>
  <div style={{ fontSize:9, color:T.faint, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.04em" }}>{d}</div>
  <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:4 }}>{dd}</div>
  {pto ? <div style={{ fontSize:10, fontWeight:600, color:"#5B21B6" }}>PTO</div>
- : shift ? (function(){ var def=shiftDefs.find(function(d){return d.id===shift;}); var label=def?def.label:(shift.split(" ")[0]); var hours=def?(to12(def.start)+"-"+to12(def.end)):shift.split(" ").slice(1).join(" "); return <><div style={{ fontSize:11, fontWeight:700, color:(SC[shift]&&SC[shift].text)||T.text }}>{label}</div><div style={{ fontSize:9, color:((SC[shift]&&SC[shift].text)||T.text)+"99" }}>{hours}</div></>; })()
+ : shift ? (function(){ var def=shiftDefs.find(function(d){return d.id===shift;}); var label=def?def.label:(shift.split(" ")[0]); var hours=def?(to12(def.start)+"-"+to12(def.end)):shift.split(" ").slice(1).join(" "); return <><div style={{ fontSize:11, fontWeight:700, color:shiftColor(shift).text }}>{label}</div><div style={{ fontSize:9, color:shiftColor(shift).text+"99" }}>{hours}</div></>; })()
  : avail ? <div style={{ fontSize:11, color:T.border }}>—</div>
  : <div style={{ fontSize:11, color:T.faint }}>Off</div>}
  </div>
@@ -2577,7 +2584,7 @@ function App() {
                         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))", gap:8 }}>
                           {workingToday.map(function(e){
                             var shift = weekSched[todayDay][e.id];
-                            var sc    = SC[shift] || SC["Day 9-5"];
+                            var sc    = shiftColor(shift);
                             var isMe  = e.id===user.eid;
                             return (
                               <div key={e.id} style={{ ...CARD, padding:14, border:"1px solid "+(isMe?dept.color:T.border), background:isMe?(dept.color+"0D"):T.surface }}>
@@ -2611,7 +2618,7 @@ function App() {
  <div key={s.id} style={{ ...CARD, border:"2px solid "+T.accentL }}>
  <div style={{ display:"flex", gap:6, marginBottom:9, flexWrap:"wrap" }}>
  <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:600 }}>{s.day}</span>
- <span style={{ padding:"3px 9px", borderRadius:20, background:(SC[s.shift]&&SC[s.shift].bg)||T.bg, color:(SC[s.shift]&&SC[s.shift].text)||T.muted, fontSize:12, fontWeight:600 }}>{s.shift}</span>
+ <span style={{ padding:"3px 9px", borderRadius:20, background:shiftColor(s.shift).bg, color:shiftColor(s.shift).text, fontSize:12, fontWeight:600 }}>{s.shift}</span>
  </div>
  {s.role && <div style={{ fontSize:12, color:T.muted, marginBottom:5 }}>Role: {s.role}</div>}
  {s.note && <div style={{ fontSize:12, color:T.faint, marginBottom:9 }}>{s.note}</div>}
@@ -2631,7 +2638,7 @@ function App() {
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
  <div style={{ display:"flex", gap:6 }}>
  <span style={{ padding:"2px 8px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:11 }}>{s.day}</span>
- <span style={{ padding:"2px 8px", borderRadius:20, background:(SC[s.shift]&&SC[s.shift].bg)||T.bg, color:(SC[s.shift]&&SC[s.shift].text)||T.muted, fontSize:11 }}>{s.shift}</span>
+ <span style={{ padding:"2px 8px", borderRadius:20, background:shiftColor(s.shift).bg, color:shiftColor(s.shift).text, fontSize:11 }}>{s.shift}</span>
  </div>
  <Badge status={s.status==="filled"?"approved":"pending"} />
  </div>
@@ -2695,7 +2702,7 @@ function App() {
 
  {(function(){
    var myShift = weekSched[swapForm.day] && weekSched[swapForm.day][user.eid];
-   var sc = myShift ? (SC[myShift]||SC["Day 9-5"]) : null;
+   var sc = myShift ? shiftColor(myShift) : null;
    return (
      <div style={{ marginBottom:14 }}>
        <label style={LBL}>Your shift on {swapForm.day}</label>
@@ -2717,7 +2724,7 @@ function App() {
  {swapForm.toId ? (function(){
    var toEmp      = emps.find(function(e){ return e.id===Number(swapForm.toId); });
    var theirShift = weekSched[swapForm.day] && weekSched[swapForm.day][Number(swapForm.toId)];
-   var sc2 = theirShift ? (SC[theirShift]||SC["Day 9-5"]) : null;
+   var sc2 = theirShift ? shiftColor(theirShift) : null;
    return (
      <div style={{ marginBottom:14 }}>
        <label style={LBL}>{toEmp ? toEmp.name.split(" ")[0] : "Their"} shift on {swapForm.day}</label>
@@ -2816,7 +2823,7 @@ function App() {
               function clockOut() { setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"out",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked out! See you next time."); }
               var now = new Date();
               var hr = now.getHours(); var mn = String(now.getMinutes()).padStart(2,"0"); var ap = hr>=12?"PM":"AM"; hr=hr%12||12;
-              var sc = todayShift ? (SC[todayShift]||SC["Day 9-5"]) : null;
+              var sc = todayShift ? shiftColor(todayShift) : null;
               return (
                 <div style={{ maxWidth:400 }}>
                   <div style={{ marginBottom:16 }}>
@@ -3136,7 +3143,7 @@ function App() {
                     <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:10 }}>{d}</div>
                     <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
                       {shiftDefs.map(function(s){
-                        var sc = SC[s.id] || SC["Day 9-5"];
+                        var sc = shiftColor(s.id);
                         var checked = dayShifts.indexOf(s.id) >= 0;
                         return (
                           <button key={s.id} onClick={function(){
