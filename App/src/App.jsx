@@ -194,6 +194,21 @@ const SEED_DEPTS = [
 function ld(k, fb) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch(e) { return fb; } }
 function sv(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) {} }
 
+function isoDate(d) {
+ var y = d.getFullYear();
+ var m = String(d.getMonth()+1).padStart(2,"0");
+ var dd = String(d.getDate()).padStart(2,"0");
+ return y+"-"+m+"-"+dd;
+}
+
+function dayToISODate(weekOffset, day) {
+ var dayIdx = DAYS.indexOf(day);
+ var weekStart = getWeekStart(weekOffset);
+ var d = new Date(weekStart);
+ d.setDate(weekStart.getDate() + dayIdx);
+ return isoDate(d);
+}
+
 function getWeekStart(offset) {
  var now = new Date();
  var day = now.getDay();
@@ -957,7 +972,7 @@ function App() {
     } else { console.error("load shift_defs failed:", res.error); }
    });
   }, [user && user.property_id]);
- var [sched, setSched] = useState(function(){ var s = ld("sr_sch", null); return s && typeof s === "object" && !s["Mon"] ? s : { 0: ld("sr_sch", SEED_SCHED) }; });
+ var [sched, setSched] = useState({});
  var [swaps, setSwaps] = useState(function(){ return ld("sr_swp", SEED_SWAPS); });
  var [ptos, setPtos] = useState(function(){ return ld("sr_pto", []); });
  var [opens, setOpens] = useState(function(){ return ld("sr_open", []); });
@@ -966,6 +981,33 @@ function App() {
  var [overruled, setOverruled] = useState(function(){ return ld("sr_ovr", []); });
  var [shiftDefs, setShiftDefs] = useState([]);
  var [weekOff, setWeekOff] = useState(0);
+
+ // Load the real schedule for whichever week is currently in view.
+ useEffect(function(){
+  if (!user || !user.property_id) return;
+  var weekStart = getWeekStart(weekOff);
+  var weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+  var startStr = isoDate(weekStart);
+  var endStr = isoDate(weekEnd);
+  supabase.from("schedule_entries").select("*")
+   .eq("property_id", user.property_id)
+   .gte("work_date", startStr)
+   .lte("work_date", endStr)
+   .then(function(res){
+    if (res.data) {
+     var weekData = {};
+     DAYS.forEach(function(d){ weekData[d] = {}; });
+     res.data.forEach(function(row){
+      var rowDate = new Date(row.work_date + "T00:00:00");
+      var dayIdx = Math.round((rowDate - weekStart) / 86400000);
+      var dayName = DAYS[dayIdx];
+      if (dayName) weekData[dayName][row.employee_id] = row.shift_id;
+     });
+     setSched(function(p){ var n={...p}; n[weekOff]=weekData; return n; });
+    } else { console.error("load schedule failed:", res.error); }
+   });
+ }, [user && user.property_id, weekOff]);
  var [tab, setTab] = useState("schedule");
  var [selCell, setSelCell] = useState(null);
  var [addEmpOpen, setAddEmpOpen]= useState(false);
@@ -1000,7 +1042,6 @@ function App() {
  var [toast, setToast] = useState(null);
 
  useEffect(function(){ sv("sr_acc", accounts); }, [accounts]);
- useEffect(function(){ sv("sr_sch", sched); }, [sched]);
  useEffect(function(){ sv("sr_swp", swaps); }, [swaps]);
  useEffect(function(){ sv("sr_pto", ptos); }, [ptos]);
  useEffect(function(){ sv("sr_open", opens); }, [opens]);
@@ -1076,6 +1117,24 @@ function App() {
   return function(){ clearInterval(id); };
  }, [user]);
 
+ function syncScheduleCell(weekOffArg, day, eid, shiftId) {
+  var dateStr = dayToISODate(weekOffArg, day);
+  supabase.from("schedule_entries").upsert({
+   property_id: user.property_id,
+   work_date: dateStr,
+   employee_id: eid,
+   shift_id: shiftId,
+  }, { onConflict: "property_id,work_date,employee_id" }).then(function(res){
+   if (res.error) { console.error("schedule sync failed:", res.error); showT("Saved locally, but the server save failed","error"); }
+  });
+ }
+ function syncScheduleCellDelete(weekOffArg, day, eid) {
+  var dateStr = dayToISODate(weekOffArg, day);
+  supabase.from("schedule_entries").delete()
+   .eq("property_id", user.property_id).eq("work_date", dateStr).eq("employee_id", eid)
+   .then(function(res){ if (res.error) console.error("schedule delete sync failed:", res.error); });
+ }
+
  function assignShift(day, eid, shift) {
  if (isPastWeek) { showT("Past schedules are locked and cannot be changed","error"); return; }
  setSched(function(p) {
@@ -1087,6 +1146,7 @@ function App() {
  return n;
  });
  setSelCell(null); showT("Shift assigned");
+ syncScheduleCell(weekOff, day, eid, shift);
  }
  function removeShift(day, eid) {
  if (isPastWeek) { showT("Past schedules are locked and cannot be changed","error"); return; }
@@ -1099,6 +1159,7 @@ function App() {
  return n;
  });
  showT("Shift removed","info");
+ syncScheduleCellDelete(weekOff, day, eid);
  }
 
  function doRemove(emp) {
@@ -1178,6 +1239,8 @@ function App() {
  setSched(function(p){ var n={...p}; var w={...(n[weekOff]||{})}; w[req.day]={...(w[req.day]||{})}; delete w[req.day][from.id]; w[req.day][to.id]=req.shift; n[weekOff]=w; return n; });
  setSwaps(function(p){return p.map(function(r){return r.id===req.id?{...r,status:"approved"}:r;});});
  showT("Swap approved"); writeAudit("SWAP_APPROVED","swap approved",user.id);
+ syncScheduleCellDelete(weekOff, req.day, from.id);
+ syncScheduleCell(weekOff, req.day, to.id, req.shift);
  }
  function setSwapStatus(id, status) { setSwaps(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});}); showT("Swap "+status); writeAudit("SWAP_STATUS_CHANGE","status="+status,user.id); }
 
@@ -1214,6 +1277,7 @@ function App() {
  setSched(function(p){ var n={...p}; var w={...(n[weekOff]||{})}; w[s.day]={...(w[s.day]||{})}; w[s.day][s.claimedBy]=s.shift; n[weekOff]=w; return n; });
  setOpens(function(p){return p.map(function(o){return o.id===s.id?{...o,status:"filled"}:o;});});
  showT("Open shift approved");
+ syncScheduleCell(weekOff, s.day, s.claimedBy, s.shift);
  }
  function declineOpen(id) { setOpens(function(p){return p.map(function(s){return s.id===id?{...s,status:"open",claimedBy:null,claimedName:""}:s;});}); }
  function removeOpen(id) { setOpens(function(p){return p.filter(function(s){return s.id!==id;});}); showT("Open shift removed","info"); }
@@ -1237,6 +1301,11 @@ function App() {
  return n;
  });
  showT("Week cleared - start fresh!", "info");
+ var weekStart = getWeekStart(weekOff);
+ var weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate()+6);
+ supabase.from("schedule_entries").delete()
+  .eq("property_id", user.property_id).gte("work_date", isoDate(weekStart)).lte("work_date", isoDate(weekEnd))
+  .then(function(res){ if (res.error) console.error("clear week sync failed:", res.error); });
  }
 
  function autoGenerate() {
@@ -1309,6 +1378,24 @@ function App() {
  if (unscheduled.length>0) insights.push(unscheduled.length+" available employee"+(unscheduled.length>1?"s":"")+" not scheduled");
 
  setSched(function(p) { var n={...p}; n[weekOff]=gen; return n; });
+
+ var genWeekStart = getWeekStart(weekOff);
+ var genWeekEnd = new Date(genWeekStart); genWeekEnd.setDate(genWeekStart.getDate()+6);
+ var genRows = [];
+ DAYS.forEach(function(d){
+  Object.keys(gen[d]).forEach(function(empId){
+   genRows.push({ property_id: user.property_id, work_date: dayToISODate(weekOff, d), employee_id: Number(empId), shift_id: gen[d][empId] });
+  });
+ });
+ supabase.from("schedule_entries").delete()
+  .eq("property_id", user.property_id).gte("work_date", isoDate(genWeekStart)).lte("work_date", isoDate(genWeekEnd))
+  .then(function(delRes){
+   if (delRes.error) { console.error("autoGenerate clear failed:", delRes.error); return; }
+   if (genRows.length === 0) return;
+   supabase.from("schedule_entries").insert(genRows).then(function(insRes){
+    if (insRes.error) { console.error("autoGenerate save failed:", insRes.error); showT("Generated locally, but the server save failed","error"); }
+   });
+  });
 
  var base = skipped.length>0 ? "Generated! PTO excluded: "+skipped.join(", ") : "Schedule generated!";
  if (insights.length>0) {
@@ -1703,7 +1790,7 @@ function App() {
  return (
  <td key={d} className={isPastWeek?"":"hv"} onClick={function(){if(!isPastWeek)setSelCell(isSel?null:{day:d,eid:emp.id});}} style={{ padding:"6px 4px", textAlign:"center", background:cellBg, position:"relative", transition:"background .1s" }}>
  {shift ? (
- <div style={{ display:"inline-flex", alignItems:"center", gap:3, padding:"3px 7px", borderRadius:20, fontSize:10, fontWeight:600, background:SC[shift].bg, color:SC[shift].text, border:"1px solid "+SC[shift].border, whiteSpace:"nowrap" }}>
+ <div style={{ display:"inline-flex", alignItems:"center", gap:3, padding:"3px 7px", borderRadius:20, fontSize:10, fontWeight:600, background:(SC[shift]||SC["Day 9-5"]).bg, color:(SC[shift]||SC["Day 9-5"]).text, border:"1px solid "+(SC[shift]||SC["Day 9-5"]).border, whiteSpace:"nowrap" }}>
  <span style={{ width:5, height:5, borderRadius:"50%", background:(SC[shift]||SC["Day 9-5"]).dot, display:"inline-block", flexShrink:0 }} />
  {(function(){
  var ovKey = overrideKey(weekOff,d,emp.id);
@@ -2608,7 +2695,7 @@ function App() {
 
  {(function(){
    var myShift = weekSched[swapForm.day] && weekSched[swapForm.day][user.eid];
-   var sc = myShift ? SC[myShift] : null;
+   var sc = myShift ? (SC[myShift]||SC["Day 9-5"]) : null;
    return (
      <div style={{ marginBottom:14 }}>
        <label style={LBL}>Your shift on {swapForm.day}</label>
@@ -2630,7 +2717,7 @@ function App() {
  {swapForm.toId ? (function(){
    var toEmp      = emps.find(function(e){ return e.id===Number(swapForm.toId); });
    var theirShift = weekSched[swapForm.day] && weekSched[swapForm.day][Number(swapForm.toId)];
-   var sc2 = theirShift ? SC[theirShift] : null;
+   var sc2 = theirShift ? (SC[theirShift]||SC["Day 9-5"]) : null;
    return (
      <div style={{ marginBottom:14 }}>
        <label style={LBL}>{toEmp ? toEmp.name.split(" ")[0] : "Their"} shift on {swapForm.day}</label>
@@ -2729,7 +2816,7 @@ function App() {
               function clockOut() { setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"out",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked out! See you next time."); }
               var now = new Date();
               var hr = now.getHours(); var mn = String(now.getMinutes()).padStart(2,"0"); var ap = hr>=12?"PM":"AM"; hr=hr%12||12;
-              var sc = todayShift ? SC[todayShift] : null;
+              var sc = todayShift ? (SC[todayShift]||SC["Day 9-5"]) : null;
               return (
                 <div style={{ maxWidth:400 }}>
                   <div style={{ marginBottom:16 }}>
