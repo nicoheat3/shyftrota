@@ -973,14 +973,53 @@ function App() {
    });
   }, [user && user.property_id]);
  var [sched, setSched] = useState({});
- var [swaps, setSwaps] = useState(function(){ return ld("sr_swp", SEED_SWAPS); });
- var [ptos, setPtos] = useState(function(){ return ld("sr_pto", []); });
+ var [swaps, setSwaps] = useState([]);
+ var [ptos, setPtos] = useState([]);
  var [opens, setOpens] = useState(function(){ return ld("sr_open", []); });
- var [callins, setCallins] = useState(function(){ return ld("sr_call", []); });
- var [timeclock, setTimeclock] = useState(function(){ return ld("sr_tc", []); }); // array of punch records
+ var [callins, setCallins] = useState([]);
+ var [timeclock, setTimeclock] = useState([]); // array of punch records
  var [overruled, setOverruled] = useState(function(){ return ld("sr_ovr", []); });
  var [shiftDefs, setShiftDefs] = useState([]);
  var [weekOff, setWeekOff] = useState(0);
+
+ // Load swaps, PTO, call-ins, and time clock history — these aren't week-scoped
+ // like the schedule, so we load a reasonable recent window once per session.
+ useEffect(function(){
+  if (!user || !user.property_id) return;
+  supabase.from("swap_requests").select("*").eq("property_id", user.property_id).order("created_at",{ascending:false}).then(function(res){
+   if (res.data) {
+    setSwaps(res.data.map(function(r){
+     var fromEmp = emps.find(function(e){return e.id===r.from_employee_id;});
+     var toEmp = emps.find(function(e){return e.id===r.to_employee_id;});
+     return { id:r.id, fromId:r.from_employee_id, from:fromEmp?fromEmp.name:"", toId:r.to_employee_id, to:toEmp?toEmp.name:"", workDate:r.work_date, day:DAYS[(function(){var d=new Date(r.work_date+"T00:00:00");var wd=d.getDay();return wd===0?6:wd-1;})()], shift:r.shift_id, myShift:r.shift_id, reason:r.reason||"", status:r.status };
+    }));
+   } else { console.error("load swaps failed:", res.error); }
+  });
+  supabase.from("pto_requests").select("*").eq("property_id", user.property_id).order("created_at",{ascending:false}).then(function(res){
+   if (res.data) {
+    setPtos(res.data.map(function(r){
+     var emp = emps.find(function(e){return e.id===r.employee_id;});
+     return { id:r.id, eid:r.employee_id, ename:emp?emp.name:"", type:r.pto_type, startDate:r.start_date, endDate:r.end_date, note:r.reason||"", status:r.status };
+    }));
+   } else { console.error("load PTO failed:", res.error); }
+  });
+  supabase.from("callins").select("*").eq("property_id", user.property_id).order("created_at",{ascending:false}).then(function(res){
+   if (res.data) {
+    setCallins(res.data.map(function(r){
+     var emp = emps.find(function(e){return e.id===r.employee_id;});
+     return { id:r.id, eid:r.employee_id, ename:emp?emp.name:"", type:r.reason_type, note:r.note||"", ts:new Date(r.created_at).getTime(), status:r.status||"pending" };
+    }));
+   } else { console.error("load call-ins failed:", res.error); }
+  });
+  supabase.from("timeclock_punches").select("*").eq("property_id", user.property_id).order("punched_at",{ascending:false}).limit(500).then(function(res){
+   if (res.data) {
+    setTimeclock(res.data.map(function(r){
+     var emp = emps.find(function(e){return e.id===r.employee_id;});
+     return { id:r.id, eid:r.employee_id, ename:emp?emp.name:"", type:r.punch_type, ts:new Date(r.punched_at).getTime(), shift:"", overrideBy:r.is_override?"admin":null, note:r.note||"" };
+    }));
+   } else { console.error("load timeclock failed:", res.error); }
+  });
+ }, [user && user.property_id, emps.length]);
 
  // Load the real schedule for whichever week is currently in view.
  useEffect(function(){
@@ -1042,11 +1081,7 @@ function App() {
  var [toast, setToast] = useState(null);
 
  useEffect(function(){ sv("sr_acc", accounts); }, [accounts]);
- useEffect(function(){ sv("sr_swp", swaps); }, [swaps]);
- useEffect(function(){ sv("sr_pto", ptos); }, [ptos]);
  useEffect(function(){ sv("sr_open", opens); }, [opens]);
- useEffect(function(){ sv("sr_call", callins); }, [callins]);
- useEffect(function(){ sv("sr_tc", timeclock); }, [timeclock]);
  useEffect(function(){ sv("sr_ovr", overruled); }, [overruled]);
  useEffect(function(){ sv("sr_ind", industry); }, [industry]);
   useEffect(function(){ sv("sr_payroll", payroll);   }, [payroll]);
@@ -1117,8 +1152,7 @@ function App() {
   return function(){ clearInterval(id); };
  }, [user]);
 
- function syncScheduleCell(weekOffArg, day, eid, shiftId) {
-  var dateStr = dayToISODate(weekOffArg, day);
+ function syncScheduleCellByDate(dateStr, eid, shiftId) {
   supabase.from("schedule_entries").upsert({
    property_id: user.property_id,
    work_date: dateStr,
@@ -1128,11 +1162,55 @@ function App() {
    if (res.error) { console.error("schedule sync failed:", res.error); showT("Saved locally, but the server save failed","error"); }
   });
  }
- function syncScheduleCellDelete(weekOffArg, day, eid) {
-  var dateStr = dayToISODate(weekOffArg, day);
+ function syncScheduleCellDeleteByDate(dateStr, eid) {
   supabase.from("schedule_entries").delete()
    .eq("property_id", user.property_id).eq("work_date", dateStr).eq("employee_id", eid)
    .then(function(res){ if (res.error) console.error("schedule delete sync failed:", res.error); });
+ }
+ function syncScheduleCell(weekOffArg, day, eid, shiftId) {
+  syncScheduleCellByDate(dayToISODate(weekOffArg, day), eid, shiftId);
+ }
+ function syncScheduleCellDelete(weekOffArg, day, eid) {
+  syncScheduleCellDeleteByDate(dayToISODate(weekOffArg, day), eid);
+ }
+ // Applies a schedule change to whichever locally-cached week actually contains
+ // this real date — used when approving a swap that may not be for the week
+ // currently on screen.
+ function applyLocalScheduleChange(dateStr, fromEid, toEid, shiftId) {
+  setSched(function(p) {
+   var n = {...p};
+   Object.keys(n).forEach(function(wk) {
+    var wkStart = getWeekStart(Number(wk));
+    var wkEnd = new Date(wkStart); wkEnd.setDate(wkStart.getDate()+6);
+    if (dateStr >= isoDate(wkStart) && dateStr <= isoDate(wkEnd)) {
+     var dayIdx = Math.round((new Date(dateStr+"T00:00:00") - wkStart) / 86400000);
+     var dayName = DAYS[dayIdx];
+     if (dayName) {
+      var w = {...(n[wk]||{})};
+      w[dayName] = {...(w[dayName]||{})};
+      if (fromEid != null) delete w[dayName][fromEid];
+      if (toEid != null) w[dayName][toEid] = shiftId;
+      n[wk] = w;
+     }
+    }
+   });
+   return n;
+  });
+ }
+
+ // Inserts a real timeclock punch and returns its id (or null on failure), so
+ // callers can put the real database id in local state instead of a fake one.
+ async function syncPunchInsert(eid, type, tsMillis, isOverride) {
+  var res = await supabase.from("timeclock_punches").insert({
+   property_id: user.property_id,
+   employee_id: eid,
+   punch_type: type,
+   punched_at: new Date(tsMillis).toISOString(),
+   is_override: !!isOverride,
+   overridden_by: isOverride ? user.id : null,
+  }).select().single();
+  if (res.error || !res.data) { console.error("timeclock insert failed:", res.error); showT("Saved locally, but the server save failed","error"); return null; }
+  return res.data.id;
  }
 
  // Resolves a shift's real color theme (set when it was created in Shift Types)
@@ -1243,32 +1321,59 @@ function App() {
  function approveSwap(req) {
  var to=emps.find(function(e){return e.id===req.toId;}); var from=emps.find(function(e){return e.id===req.fromId;});
  if(!to||!from) return;
- setSched(function(p){ var n={...p}; var w={...(n[weekOff]||{})}; w[req.day]={...(w[req.day]||{})}; delete w[req.day][from.id]; w[req.day][to.id]=req.shift; n[weekOff]=w; return n; });
+ var dateStr = req.workDate || dayToISODate(weekOff, req.day);
+ applyLocalScheduleChange(dateStr, from.id, to.id, req.shift);
  setSwaps(function(p){return p.map(function(r){return r.id===req.id?{...r,status:"approved"}:r;});});
  showT("Swap approved"); writeAudit("SWAP_APPROVED","swap approved",user.id);
- syncScheduleCellDelete(weekOff, req.day, from.id);
- syncScheduleCell(weekOff, req.day, to.id, req.shift);
+ syncScheduleCellDeleteByDate(dateStr, from.id);
+ syncScheduleCellByDate(dateStr, to.id, req.shift);
+ supabase.from("swap_requests").update({ status:"approved" }).eq("id", req.id).then(function(res){
+  if (res.error) console.error("swap status sync failed:", res.error);
+ });
  }
- function setSwapStatus(id, status) { setSwaps(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});}); showT("Swap "+status); writeAudit("SWAP_STATUS_CHANGE","status="+status,user.id); }
+ function setSwapStatus(id, status) {
+  setSwaps(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});});
+  showT("Swap "+status); writeAudit("SWAP_STATUS_CHANGE","status="+status,user.id);
+  supabase.from("swap_requests").update({ status: status }).eq("id", id).then(function(res){
+   if (res.error) console.error("swap status sync failed:", res.error);
+  });
+ }
 
- function submitSwap() {
+ async function submitSwap() {
  if (!swapForm.toId) { showT("Select a colleague","error"); return; }
  var toEmp=emps.find(function(e){return e.id===Number(swapForm.toId);}); var myEmp=emps.find(function(e){return e.id===user.eid;});
     var theirActualShift = (weekSched[swapForm.day] && weekSched[swapForm.day][Number(swapForm.toId)]) || swapForm.shift;
     var myActualShift = (weekSched[swapForm.day] && weekSched[swapForm.day][user.eid]) || swapForm.shift;
- setSwaps(function(p){return p.concat([{id:Date.now(),fromId:user.eid,from:(myEmp&&myEmp.name)||user.name,toId:Number(swapForm.toId),to:(toEmp&&toEmp.name)||"",day:swapForm.day,shift:theirActualShift,myShift:myActualShift,reason:sanitize(swapForm.reason),status:"pending"}]);});
+    var workDate = dayToISODate(weekOff, swapForm.day);
+    var res = await supabase.from("swap_requests").insert({
+     property_id: user.property_id, from_employee_id: user.eid, to_employee_id: Number(swapForm.toId),
+     work_date: workDate, shift_id: theirActualShift, reason: sanitize(swapForm.reason), status: "pending",
+    }).select().single();
+    if (res.error || !res.data) { console.error("swap submit failed:", res.error); showT("Couldn't submit swap request — check connection","error"); return; }
+ setSwaps(function(p){return p.concat([{id:res.data.id,fromId:user.eid,from:(myEmp&&myEmp.name)||user.name,toId:Number(swapForm.toId),to:(toEmp&&toEmp.name)||"",day:swapForm.day,workDate:workDate,shift:theirActualShift,myShift:myActualShift,reason:sanitize(swapForm.reason),status:"pending"}]);});
  setSwapForm({toId:"",day:DAYS[0],shift:"",reason:""});
  showT("Swap request submitted");
  }
 
- function submitPTO() {
+ async function submitPTO() {
  if (!ptoDate) { showT("Select a date","error"); return; }
  var myEmp=emps.find(function(e){return e.id===user.eid;});
- setPtos(function(p){return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:ptoType,startDate:ptoDate,endDate:ptoEnd||ptoDate,note:sanitize(ptoNote),status:"pending"}]);});
+ var res = await supabase.from("pto_requests").insert({
+  property_id: user.property_id, employee_id: user.eid, pto_type: ptoType,
+  start_date: ptoDate, end_date: ptoEnd||ptoDate, reason: sanitize(ptoNote), status: "pending",
+ }).select().single();
+ if (res.error || !res.data) { console.error("PTO submit failed:", res.error); showT("Couldn't submit request — check connection","error"); return; }
+ setPtos(function(p){return p.concat([{id:res.data.id,eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:ptoType,startDate:ptoDate,endDate:ptoEnd||ptoDate,note:sanitize(ptoNote),status:"pending"}]);});
  setPtoDate(null); setPtoEnd(null); setPtoNote("");
  showT("Time-off request submitted");
  }
- function setPTOStatus(id, status) { setPtos(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});}); showT("PTO "+status); writeAudit("PTO_STATUS_CHANGE","status="+status,user.id); }
+ function setPTOStatus(id, status) {
+  setPtos(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});});
+  showT("PTO "+status); writeAudit("PTO_STATUS_CHANGE","status="+status,user.id);
+  supabase.from("pto_requests").update({ status: status }).eq("id", id).then(function(res){
+   if (res.error) console.error("PTO status sync failed:", res.error);
+  });
+ }
 
  function postOpen() {
  setOpens(function(p){return p.concat([{id:Date.now(),day:openForm.day,shift:openForm.shift,role:openForm.role,note:sanitize(openForm.note),postedBy:user.name,claimedBy:null,claimedName:"",status:"open"}]);});
@@ -1289,12 +1394,22 @@ function App() {
  function declineOpen(id) { setOpens(function(p){return p.map(function(s){return s.id===id?{...s,status:"open",claimedBy:null,claimedName:""}:s;});}); }
  function removeOpen(id) { setOpens(function(p){return p.filter(function(s){return s.id!==id;});}); showT("Open shift removed","info"); }
 
- function submitCallin() {
+ async function submitCallin() {
  var myEmp=emps.find(function(e){return e.id===user.eid;});
- setCallins(function(p){return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:callType,note:sanitize(callNote),ts:Date.now(),status:"pending"}]);});
+ var res = await supabase.from("callins").insert({
+  property_id: user.property_id, employee_id: user.eid, work_date: isoDate(new Date()),
+  reason_type: callType, note: sanitize(callNote), status: "pending",
+ }).select().single();
+ if (res.error || !res.data) { console.error("call-in submit failed:", res.error); showT("Couldn't submit notice — check connection","error"); return; }
+ setCallins(function(p){return p.concat([{id:res.data.id,eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:callType,note:sanitize(callNote),ts:Date.now(),status:"pending"}]);});
  setCallNote(""); showT("Attendance notice submitted");
  }
- function ackCallin(id) { setCallins(function(p){return p.map(function(c){return c.id===id?{...c,status:"acknowledged"}:c;});}); }
+ function ackCallin(id) {
+  setCallins(function(p){return p.map(function(c){return c.id===id?{...c,status:"acknowledged"}:c;});});
+  supabase.from("callins").update({ status: "acknowledged" }).eq("id", id).then(function(res){
+   if (res.error) console.error("callin ack sync failed:", res.error);
+  });
+ }
 
  function overrule(c) { setOverruled(function(p){return p.concat([c]);}); showT("Conflict overruled","info"); }
 
@@ -2819,8 +2934,8 @@ function App() {
               var lastPunch = timeclock.slice().reverse().find(function(p){ return p.eid===user.eid; });
               var isClockedIn = lastPunch && lastPunch.type==="in";
               var todayPunches = timeclock.filter(function(p){ return p.eid===user.eid && new Date(p.ts).toDateString()===new Date().toDateString(); });
-              function clockIn()  { setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"in",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked in! Have a great shift."); }
-              function clockOut() { setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"out",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked out! See you next time."); }
+              async function clockIn()  { var realId = await syncPunchInsert(user.eid, "in", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"in",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked in! Have a great shift."); }
+              async function clockOut() { var realId = await syncPunchInsert(user.eid, "out", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"out",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked out! See you next time."); }
               var now = new Date();
               var hr = now.getHours(); var mn = String(now.getMinutes()).padStart(2,"0"); var ap = hr>=12?"PM":"AM"; hr=hr%12||12;
               var sc = todayShift ? shiftColor(todayShift) : null;
@@ -2849,9 +2964,9 @@ function App() {
                         <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
                           <button onClick={clockOut} style={{ ...BTN, width:"100%", padding:"13px", fontSize:15, fontWeight:700, background:"linear-gradient(135deg,#EF4444,#DC2626)", borderRadius:12 }}>&#9209; Clock Out</button>
                           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
-                            <button onClick={function(){ setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_out",ts:Date.now(),shift:todayShift||""}]); }); showT("Lunch started - enjoy your break!"); }}
+                            <button onClick={async function(){ var realId = await syncPunchInsert(user.eid, "lunch_out", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_out",ts:Date.now(),shift:todayShift||""}]); }); showT("Lunch started - enjoy your break!"); }}
                               style={{ ...BTN, padding:"10px", fontSize:13, fontWeight:600, background:"linear-gradient(135deg,#F59E0B,#D97706)", borderRadius:10 }}>&#127829; Lunch Out</button>
-                            <button onClick={function(){ setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_in",ts:Date.now(),shift:todayShift||""}]); }); showT("Back from lunch!"); }}
+                            <button onClick={async function(){ var realId = await syncPunchInsert(user.eid, "lunch_in", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_in",ts:Date.now(),shift:todayShift||""}]); }); showT("Back from lunch!"); }}
                               style={{ ...BTN, padding:"10px", fontSize:13, fontWeight:600, background:"linear-gradient(135deg,#3B82F6,#2563EB)", borderRadius:10 }}>&#127829; Lunch In</button>
                           </div>
                         </div>
@@ -2921,29 +3036,33 @@ function App() {
                 a.download = "ShyftRota_Paychex.csv";
                 a.click();
               }
-              function addOverridePunch() {
+              async function addOverridePunch() {
                 if (!overrideEid || !overrideTime) { showT("Select employee and time","error"); return; }
                 var emp = emps.find(function(e){ return e.id===overrideEid; });
                 var dtStr = overrideDate + "T" + overrideTime + ":00";
                 var ts = new Date(dtStr).getTime();
                 if (isNaN(ts)) { showT("Invalid date or time","error"); return; }
-                setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:overrideEid,ename:emp?emp.name:"",type:overrideType,ts:ts,shift:"",overrideBy:user.name}]); });
+                var realId = await syncPunchInsert(overrideEid, overrideType, ts, true);
+                setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:overrideEid,ename:emp?emp.name:"",type:overrideType,ts:ts,shift:"",overrideBy:user.name}]); });
                 setOverrideEid(null);
   var rn=new Date(); setOverrideTime(String(rn.getHours()).padStart(2,"0")+":"+String(rn.getMinutes()).padStart(2,"0"));
   setOverrideDate(new Date().toISOString().slice(0,10));
                 showT("Punch added for "+(emp?emp.name:"employee"),"info");
               }
 
-              function forceClockOut(eid, ename) {
+              async function forceClockOut(eid, ename) {
                 var now = new Date();
-                var timeStr = String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
-                setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:eid,ename:ename,type:"out",ts:Date.now(),shift:"",overrideBy:user.name}]); });
+                var realId = await syncPunchInsert(eid, "out", now.getTime(), true);
+                setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:eid,ename:ename,type:"out",ts:now.getTime(),shift:"",overrideBy:user.name}]); });
                 showT(ename+" clocked out by admin","info");
               }
 
               function deletePunch(id) {
                 setTimeclock(function(p){ return p.filter(function(x){ return x.id!==id; }); });
                 showT("Punch deleted","info");
+                supabase.from("timeclock_punches").delete().eq("id", id).then(function(res){
+                 if (res.error) console.error("punch delete sync failed:", res.error);
+                });
               }
 
               function saveEditPunch(id) {
@@ -2954,6 +3073,9 @@ function App() {
                 setTimeclock(function(p){ return p.map(function(x){ return x.id===id ? {...x, ts:ts, editedBy:user.name} : x; }); });
                 setEditingPunchId(null);
                 showT("Punch updated","info");
+                supabase.from("timeclock_punches").update({ punched_at: new Date(ts).toISOString(), is_override: true, overridden_by: user.id }).eq("id", id).then(function(res){
+                 if (res.error) console.error("punch edit sync failed:", res.error);
+                });
               }
 
               var providerLabel = (PAYROLL_PROVIDERS.find(function(p){return p.id===payroll;})||{label:"Payroll"}).label;
