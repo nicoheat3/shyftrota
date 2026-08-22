@@ -1050,6 +1050,7 @@ function App() {
  var [tab, setTab] = useState("schedule");
  var [selCell, setSelCell] = useState(null);
  var [addEmpOpen, setAddEmpOpen]= useState(false);
+ var [addingEmp, setAddingEmp] = useState(false);
  var [confirmRm, setConfirmRm] = useState(null);
  var [editShift, setEditShift] = useState(null); // object: {idx,id,label,start,end,color} or null
  var [addingShift, setAddingShift] = useState(false);
@@ -1103,6 +1104,10 @@ function App() {
  DAYS.forEach(function(d){
   if (!weekSched[d] || !weekSched[d][e.id]) return;
   var shift = weekSched[d][e.id];
+  var dateStr = dayToISODate(weekOff, d);
+  // Check approved time off first — this is the strongest conflict
+  var onApprovedPTO = ptos.some(function(p){ return p.eid===e.id && p.status==="approved" && dateStr>=p.startDate && dateStr<=(p.endDate||p.startDate); });
+  if (onApprovedPTO) { allConflicts.push(e.name+" on "+d+" (approved time off)"); return; }
   // Check day-level availability
   if (e.avail.indexOf(d) < 0) { allConflicts.push(e.name+" on "+d+" (unavailable day)"); return; }
   // Check shift-window availability
@@ -1259,6 +1264,7 @@ function App() {
  }
 
  async function addEmp() {
+  if (addingEmp) return;
   var nameClean  = sanitize(newEmp.name.trim());
   var emailClean = newEmp.email.toLowerCase().trim();
   if (!nameClean)  { showT("Name required","error"); return; }
@@ -1266,6 +1272,7 @@ function App() {
   if (!newEmp.pw.trim()) { showT("Password required","error"); return; }
   if (newEmp.pw.length < 8) { showT("Password must be at least 8 characters","error"); return; }
   if (accounts.find(function(a){ return a.email.toLowerCase()===emailClean; })) { showT("Email already exists","error"); return; }
+  setAddingEmp(true);
   var res = await supabase.from("employees").insert({
    property_id: user.property_id,
    name: nameClean,
@@ -1278,6 +1285,7 @@ function App() {
   if (res.error || !res.data) {
    console.error("employee insert failed:", res.error);
    showT("Couldn't save employee to the server — check connection","error");
+   setAddingEmp(false);
    return;
   }
   var emp = { id:res.data.id, name:nameClean, role:res.data.role, avail:newEmp.avail, shiftAvail:{}, max:newEmp.max, dept:newEmp.dept||"" };
@@ -1311,6 +1319,7 @@ function App() {
   setNewEmp({ name:"", role:"", avail:[], max:40, email:"", pw:"", isAdmin:false, dept:"" });
   setAddEmpOpen(false);
   showT(loginCreated ? nameClean+" added — they can log in now" : nameClean+" added");
+  setAddingEmp(false);
  }
 
  function toggleAdmin(accId) {
@@ -1904,8 +1913,10 @@ function App() {
  {DAYS.map(function(d) {
  var shift = weekSched[d] && weekSched[d][emp.id];
  var avail = emp.avail.indexOf(d) >= 0;
- var cKey = emp.name+" on "+d+" (unavailable)";
- var conflict = shift && !avail;
+ var cellDateStr = dayToISODate(weekOff, d);
+ var onApprovedPTO = ptos.some(function(p){ return p.eid===emp.id && p.status==="approved" && cellDateStr>=p.startDate && cellDateStr<=(p.endDate||p.startDate); });
+ var cKey = onApprovedPTO ? (emp.name+" on "+d+" (approved time off)") : (emp.name+" on "+d+" (unavailable)");
+ var conflict = shift && (onApprovedPTO || !avail);
  var isOvr = conflict && overruled.indexOf(cKey) >= 0;
  var isSel = selCell && selCell.day===d && selCell.eid===emp.id;
  var cellBg = isSel?"#FDF0ED":(conflict&&!isOvr)?"#FEF2F2":(!avail?"#F8FAFC":"inherit");
@@ -2057,7 +2068,7 @@ function App() {
  </label>
  </div>
  <div style={{ display:"flex", gap:8 }}>
- <button onClick={addEmp} style={BTN}>Add Employee</button>
+ <button onClick={addEmp} disabled={addingEmp} style={{ ...BTN, opacity:addingEmp?0.6:1, cursor:addingEmp?"default":"pointer" }}>{addingEmp ? "Adding…" : "Add Employee"}</button>
  <button onClick={function(){setAddEmpOpen(false);}} style={GBTN}>Cancel</button>
  </div>
  </div>
