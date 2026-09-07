@@ -201,8 +201,24 @@ function isoDate(d) {
  return y+"-"+m+"-"+dd;
 }
 
+// The property's configured first-day-of-week, as a JS Date.getDay() number
+// (0=Sun..6=Sat). Defaults to Monday (1), matching the app's original
+// behavior. The component keeps this in sync with the loaded property
+// setting on every render — see APP_WEEK_START_DOW = weekStartDow below.
+var APP_WEEK_START_DOW = 1;
+var DOW_TO_DAYNAME = {0:"Sun",1:"Mon",2:"Tue",3:"Wed",4:"Thu",5:"Fri",6:"Sat"};
+
+// DAYS rotated so index 0 matches the property's configured start day.
+// For the default Monday start this is identical to DAYS itself.
+function orderedDays() {
+ var startName = DOW_TO_DAYNAME[APP_WEEK_START_DOW] || "Mon";
+ var i = DAYS.indexOf(startName);
+ if (i < 0) i = 0;
+ return DAYS.slice(i).concat(DAYS.slice(0, i));
+}
+
 function dayToISODate(weekOffset, day) {
- var dayIdx = DAYS.indexOf(day);
+ var dayIdx = orderedDays().indexOf(day);
  var weekStart = getWeekStart(weekOffset);
  var d = new Date(weekStart);
  d.setDate(weekStart.getDate() + dayIdx);
@@ -212,11 +228,11 @@ function dayToISODate(weekOffset, day) {
 function getWeekStart(offset) {
  var now = new Date();
  var day = now.getDay();
- var diff = day === 0 ? -6 : 1 - day;
- var mon = new Date(now);
- mon.setDate(now.getDate() + diff + (offset || 0) * 7);
- mon.setHours(0, 0, 0, 0);
- return mon;
+ var diff = (day - APP_WEEK_START_DOW + 7) % 7;
+ var start = new Date(now);
+ start.setDate(now.getDate() - diff + (offset || 0) * 7);
+ start.setHours(0, 0, 0, 0);
+ return start;
 }
 
 function fmtWeekRange(offset) {
@@ -957,6 +973,11 @@ function App() {
   // as soon as we know which property this user belongs to.
   useEffect(function(){
    if (!user || !user.property_id) return;
+   supabase.from("properties").select("week_start").eq("id", user.property_id).single().then(function(res){
+    if (res.data) {
+     setWeekStartDow(res.data.week_start === "Sun" ? 0 : 1);
+    } else if (res.error) { console.error("load property settings failed:", res.error); }
+   });
    supabase.from("employees").select("*").eq("property_id", user.property_id).then(function(res){
     if (res.data) {
      setEmps(res.data.map(function(r){
@@ -984,6 +1005,8 @@ function App() {
  var [overruled, setOverruled] = useState(function(){ return ld("sr_ovr", []); });
  var [shiftDefs, setShiftDefs] = useState([]);
  var [weekOff, setWeekOff] = useState(0);
+ var [weekStartDow, setWeekStartDow] = useState(1); // 0=Sun, 1=Mon — this property's first day of week
+ APP_WEEK_START_DOW = weekStartDow; // keep the module-level date-math functions in sync every render
 
  // Load swaps, PTO, call-ins, and time clock history — these aren't week-scoped
  // like the schedule, so we load a reasonable recent window once per session.
@@ -1043,7 +1066,7 @@ function App() {
      res.data.forEach(function(row){
       var rowDate = new Date(row.work_date + "T00:00:00");
       var dayIdx = Math.round((rowDate - weekStart) / 86400000);
-      var dayName = DAYS[dayIdx];
+      var dayName = orderedDays()[dayIdx];
       if (dayName) weekData[dayName][row.employee_id] = row.shift_id;
      });
      setSched(function(p){ var n={...p}; n[weekOff]=weekData; return n; });
@@ -1208,7 +1231,7 @@ function App() {
     var wkEnd = new Date(wkStart); wkEnd.setDate(wkStart.getDate()+6);
     if (dateStr >= isoDate(wkStart) && dateStr <= isoDate(wkEnd)) {
      var dayIdx = Math.round((new Date(dateStr+"T00:00:00") - wkStart) / 86400000);
-     var dayName = DAYS[dayIdx];
+     var dayName = orderedDays()[dayIdx];
      if (dayName) {
       var w = {...(n[wk]||{})};
       w[dayName] = {...(w[dayName]||{})};
@@ -1658,6 +1681,7 @@ function App() {
 
   var ADMIN_TABS = [
     {id:"schedule",   label:"Schedule"},
+    {id:"myschedule", label:"My Schedule"},
     {id:"employees",  label:"Employees"},
     {id:"depts",      label:"Departments"},
     {id:"openShifts", label:"Open Shifts"},
@@ -1913,6 +1937,17 @@ function App() {
  </div>
  </div>
  <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+  <select value={weekStartDow===0?"Sun":"Mon"} onChange={function(e){
+   var newDow = e.target.value==="Sun" ? 0 : 1;
+   setWeekStartDow(newDow);
+   supabase.from("properties").update({ week_start: e.target.value }).eq("id", user.property_id).then(function(res){
+    if (res.error) { console.error("week_start save failed:", res.error); showT("Couldn't save — check connection","error"); }
+    else showT("Week now starts on "+e.target.value+"day");
+   });
+  }} title="Which day this schedule's week starts on" style={{ ...INP, width:"auto", padding:"6px 10px", fontSize:11 }}>
+   <option value="Mon">Week starts Mon</option>
+   <option value="Sun">Week starts Sun</option>
+  </select>
   <div style={{ display:"flex", background:T.bg, border:"1px solid "+T.border, borderRadius:8, padding:2 }}>
    <button onClick={function(){setSchedView("week");}} style={{ padding:"5px 12px", borderRadius:6, border:"none", background:schedView==="week"?T.surface:"transparent", color:schedView==="week"?T.text:T.faint, fontSize:11, fontWeight:schedView==="week"?700:400, cursor:"pointer", fontFamily:"inherit" }}>Week</button>
    <button onClick={function(){setSchedView("day");}} style={{ padding:"5px 12px", borderRadius:6, border:"none", background:schedView==="day"?T.surface:"transparent", color:schedView==="day"?T.text:T.faint, fontSize:11, fontWeight:schedView==="day"?700:400, cursor:"pointer", fontFamily:"inherit" }}>Today</button>
@@ -2002,7 +2037,7 @@ function App() {
  <thead>
  <tr style={{ background:T.bg }}>
  <th style={{ padding:"10px 14px", textAlign:"left", color:T.faint, fontSize:10, fontWeight:600, borderBottom:"1px solid "+T.border, width:150, letterSpacing:"0.04em", textTransform:"uppercase" }}>Employee</th>
- {DAYS.map(function(d, di) {
+ {orderedDays().map(function(d, di) {
  var dd = getDayDate(di, weekOff);
  return (
  <th key={d} style={{ padding:"8px 4px", textAlign:"center", color:T.faint, fontSize:10, fontWeight:600, borderBottom:"1px solid "+T.border }}>
@@ -2029,7 +2064,7 @@ function App() {
  </div>
  </div>
  </td>
- {DAYS.map(function(d) {
+ {orderedDays().map(function(d) {
  var shift = weekSched[d] && weekSched[d][emp.id];
  var avail = emp.avail.indexOf(d) >= 0;
  var cellDateStr = dayToISODate(weekOff, d);
@@ -2173,7 +2208,7 @@ function App() {
                     </div>
  <label style={LBL}>Availability</label>
  <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
- {DAYS.map(function(d) {
+ {orderedDays().map(function(d) {
  var on = newEmp.avail.indexOf(d)>=0;
  return <button key={d} onClick={function(){setNewEmp(function(p){return {...p,avail:on?p.avail.filter(function(x){return x!==d;}):[...p.avail,d]};});}} style={{ padding:"5px 11px", borderRadius:20, border:"1px solid "+(on?T.accent:T.border), background:on?T.accentL:T.surface, color:on?T.accent:T.muted, fontSize:12, cursor:"pointer" }}>{d}</button>;
  })}
@@ -2267,7 +2302,7 @@ function App() {
    <button onClick={function(){ setShiftAvailEmp(emp.id); }} style={{ fontSize:10, color:T.accent, background:T.accentL, border:"1px solid rgba(200,75,49,0.2)", borderRadius:20, padding:"2px 8px", cursor:"pointer", fontWeight:600, fontFamily:"inherit" }}>&#9998; Edit shifts</button>
  </div>
  <div style={{ display:"flex", gap:3, flexWrap:"wrap" }}>
- {DAYS.map(function(d){
+ {orderedDays().map(function(d){
    var avail = emp.avail.indexOf(d)>=0;
    var shiftWins = emp.shiftAvail && emp.shiftAvail[d];
    var hasRestriction = avail && shiftWins && shiftWins.length > 0 && shiftWins.length < shiftDefs.length;
@@ -2388,7 +2423,7 @@ function App() {
  <div style={{ display:"grid", gridTemplateColumns:"360px 1fr", gap:20, marginBottom:24 }} className="two-col">
  <div style={CARD}>
  <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>Post an Open Shift</div>
- <div style={{ marginBottom:11 }}><label style={LBL}>Day</label><select value={openForm.day} onChange={function(e){setOpenForm(function(p){return {...p,day:e.target.value};});}} style={INP}>{DAYS.map(function(d){return <option key={d}>{d}</option>;})}</select></div>
+ <div style={{ marginBottom:11 }}><label style={LBL}>Day</label><select value={openForm.day} onChange={function(e){setOpenForm(function(p){return {...p,day:e.target.value};});}} style={INP}>{orderedDays().map(function(d){return <option key={d}>{d}</option>;})}</select></div>
  <div style={{ marginBottom:11 }}><label style={LBL}>Shift</label><select value={openForm.shift} onChange={function(e){setOpenForm(function(p){return {...p,shift:e.target.value};});}} style={INP}>{shiftDefs.map(function(s){return <option key={s.id} value={s.id}>{s.label} ({to12(s.start)}-{to12(s.end)})</option>;})}</select></div>
  <div style={{ marginBottom:11 }}><label style={LBL}>Role needed</label><input value={openForm.role} onChange={function(e){setOpenForm(function(p){return {...p,role:e.target.value};});}} placeholder="Any role" list="role-list2" style={INP} /><datalist id="role-list2">{indRoles.map(function(r){return <option key={r} value={r} />;})}</datalist></div>
  <div style={{ marginBottom:16 }}><label style={LBL}>Note</label><input value={openForm.note} onChange={function(e){setOpenForm(function(p){return {...p,note:e.target.value};});}} placeholder="Details for employees" style={INP} /></div>
@@ -2742,7 +2777,7 @@ function App() {
  )}
 
  {/* EMPLOYEE: MY SCHEDULE */}
- {tab==="myschedule" && !isAdmin && (function(){
+ {tab==="myschedule" && (function(){
  var me = emps.find(function(e){return e.id===user.eid;});
  if (!me) return <div style={{ color:T.faint, padding:28, textAlign:"center" }}>No schedule found.</div>;
  // Shift reminder
@@ -2778,7 +2813,7 @@ function App() {
  <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{me.name} - {me.role}</p>
  </div>
  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(100px,1fr))", gap:9, marginBottom:18 }}>
- {DAYS.map(function(d, di){
+ {orderedDays().map(function(d, di){
  var shift = weekSched[d] && weekSched[d][me.id];
  var avail = me.avail.indexOf(d) >= 0;
  var pto = ptos.find(function(r){return r.eid===user.eid&&r.status==="approved";});
@@ -2977,7 +3012,7 @@ function App() {
 
  <div style={{ marginBottom:11 }}><label style={LBL}>Swap with</label><select value={swapForm.toId} onChange={function(e){setSwapForm(function(p){return {...p,toId:e.target.value};});}} style={INP}><option value="">Select a colleague...</option>{emps.filter(function(e){return e.id!==user.eid;}).map(function(e){return <option key={e.id} value={e.id}>{e.name} — {e.role}</option>; })}</select></div>
 
- <div style={{ marginBottom:11 }}><label style={LBL}>Day</label><select value={swapForm.day} onChange={function(e){setSwapForm(function(p){return {...p,day:e.target.value};});}} style={INP}>{DAYS.map(function(d){return <option key={d}>{d}</option>;})}</select></div>
+ <div style={{ marginBottom:11 }}><label style={LBL}>Day</label><select value={swapForm.day} onChange={function(e){setSwapForm(function(p){return {...p,day:e.target.value};});}} style={INP}>{orderedDays().map(function(d){return <option key={d}>{d}</option>;})}</select></div>
 
  {swapForm.toId ? (function(){
    var toEmp      = emps.find(function(e){ return e.id===Number(swapForm.toId); });
