@@ -194,21 +194,6 @@ const SEED_DEPTS = [
 function ld(k, fb) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch(e) { return fb; } }
 function sv(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) {} }
 
-function isoDate(d) {
- var y = d.getFullYear();
- var m = String(d.getMonth()+1).padStart(2,"0");
- var dd = String(d.getDate()).padStart(2,"0");
- return y+"-"+m+"-"+dd;
-}
-
-function dayToISODate(weekOffset, day) {
- var dayIdx = DAYS.indexOf(day);
- var weekStart = getWeekStart(weekOffset);
- var d = new Date(weekStart);
- d.setDate(weekStart.getDate() + dayIdx);
- return isoDate(d);
-}
-
 function getWeekStart(offset) {
  var now = new Date();
  var day = now.getDay();
@@ -972,85 +957,18 @@ function App() {
     } else { console.error("load shift_defs failed:", res.error); }
    });
   }, [user && user.property_id]);
- var [sched, setSched] = useState({});
- var [swaps, setSwaps] = useState([]);
- var [ptos, setPtos] = useState([]);
+ var [sched, setSched] = useState(function(){ var s = ld("sr_sch", null); return s && typeof s === "object" && !s["Mon"] ? s : { 0: ld("sr_sch", SEED_SCHED) }; });
+ var [swaps, setSwaps] = useState(function(){ return ld("sr_swp", SEED_SWAPS); });
+ var [ptos, setPtos] = useState(function(){ return ld("sr_pto", []); });
  var [opens, setOpens] = useState(function(){ return ld("sr_open", []); });
- var [callins, setCallins] = useState([]);
- var [timeclock, setTimeclock] = useState([]); // array of punch records
+ var [callins, setCallins] = useState(function(){ return ld("sr_call", []); });
+ var [timeclock, setTimeclock] = useState(function(){ return ld("sr_tc", []); }); // array of punch records
  var [overruled, setOverruled] = useState(function(){ return ld("sr_ovr", []); });
  var [shiftDefs, setShiftDefs] = useState([]);
  var [weekOff, setWeekOff] = useState(0);
-
- // Load swaps, PTO, call-ins, and time clock history — these aren't week-scoped
- // like the schedule, so we load a reasonable recent window once per session.
- useEffect(function(){
-  if (!user || !user.property_id) return;
-  supabase.from("swap_requests").select("*").eq("property_id", user.property_id).order("created_at",{ascending:false}).then(function(res){
-   if (res.data) {
-    setSwaps(res.data.map(function(r){
-     var fromEmp = emps.find(function(e){return e.id===r.from_employee_id;});
-     var toEmp = emps.find(function(e){return e.id===r.to_employee_id;});
-     return { id:r.id, fromId:r.from_employee_id, from:fromEmp?fromEmp.name:"", toId:r.to_employee_id, to:toEmp?toEmp.name:"", workDate:r.work_date, day:DAYS[(function(){var d=new Date(r.work_date+"T00:00:00");var wd=d.getDay();return wd===0?6:wd-1;})()], shift:r.shift_id, myShift:r.shift_id, reason:r.reason||"", status:r.status };
-    }));
-   } else { console.error("load swaps failed:", res.error); }
-  });
-  supabase.from("pto_requests").select("*").eq("property_id", user.property_id).order("created_at",{ascending:false}).then(function(res){
-   if (res.data) {
-    setPtos(res.data.map(function(r){
-     var emp = emps.find(function(e){return e.id===r.employee_id;});
-     return { id:r.id, eid:r.employee_id, ename:emp?emp.name:"", type:r.pto_type, startDate:r.start_date, endDate:r.end_date, note:r.reason||"", status:r.status };
-    }));
-   } else { console.error("load PTO failed:", res.error); }
-  });
-  supabase.from("callins").select("*").eq("property_id", user.property_id).order("created_at",{ascending:false}).then(function(res){
-   if (res.data) {
-    setCallins(res.data.map(function(r){
-     var emp = emps.find(function(e){return e.id===r.employee_id;});
-     return { id:r.id, eid:r.employee_id, ename:emp?emp.name:"", type:r.reason_type, note:r.note||"", ts:new Date(r.created_at).getTime(), status:r.status||"pending" };
-    }));
-   } else { console.error("load call-ins failed:", res.error); }
-  });
-  supabase.from("timeclock_punches").select("*").eq("property_id", user.property_id).order("punched_at",{ascending:false}).limit(500).then(function(res){
-   if (res.data) {
-    setTimeclock(res.data.map(function(r){
-     var emp = emps.find(function(e){return e.id===r.employee_id;});
-     return { id:r.id, eid:r.employee_id, ename:emp?emp.name:"", type:r.punch_type, ts:new Date(r.punched_at).getTime(), shift:"", overrideBy:r.is_override?"admin":null, note:r.note||"" };
-    }));
-   } else { console.error("load timeclock failed:", res.error); }
-  });
- }, [user && user.property_id, emps.length]);
-
- // Load the real schedule for whichever week is currently in view.
- useEffect(function(){
-  if (!user || !user.property_id) return;
-  var weekStart = getWeekStart(weekOff);
-  var weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekStart.getDate() + 6);
-  var startStr = isoDate(weekStart);
-  var endStr = isoDate(weekEnd);
-  supabase.from("schedule_entries").select("*")
-   .eq("property_id", user.property_id)
-   .gte("work_date", startStr)
-   .lte("work_date", endStr)
-   .then(function(res){
-    if (res.data) {
-     var weekData = {};
-     DAYS.forEach(function(d){ weekData[d] = {}; });
-     res.data.forEach(function(row){
-      var rowDate = new Date(row.work_date + "T00:00:00");
-      var dayIdx = Math.round((rowDate - weekStart) / 86400000);
-      var dayName = DAYS[dayIdx];
-      if (dayName) weekData[dayName][row.employee_id] = row.shift_id;
-     });
-     setSched(function(p){ var n={...p}; n[weekOff]=weekData; return n; });
-    } else { console.error("load schedule failed:", res.error); }
-   });
- }, [user && user.property_id, weekOff]);
  var [tab, setTab] = useState("schedule");
  var [selCell, setSelCell] = useState(null);
  var [addEmpOpen, setAddEmpOpen]= useState(false);
- var [addingEmp, setAddingEmp] = useState(false);
  var [confirmRm, setConfirmRm] = useState(null);
  var [editShift, setEditShift] = useState(null); // object: {idx,id,label,start,end,color} or null
  var [addingShift, setAddingShift] = useState(false);
@@ -1082,7 +1000,12 @@ function App() {
  var [toast, setToast] = useState(null);
 
  useEffect(function(){ sv("sr_acc", accounts); }, [accounts]);
+ useEffect(function(){ sv("sr_sch", sched); }, [sched]);
+ useEffect(function(){ sv("sr_swp", swaps); }, [swaps]);
+ useEffect(function(){ sv("sr_pto", ptos); }, [ptos]);
  useEffect(function(){ sv("sr_open", opens); }, [opens]);
+ useEffect(function(){ sv("sr_call", callins); }, [callins]);
+ useEffect(function(){ sv("sr_tc", timeclock); }, [timeclock]);
  useEffect(function(){ sv("sr_ovr", overruled); }, [overruled]);
  useEffect(function(){ sv("sr_ind", industry); }, [industry]);
   useEffect(function(){ sv("sr_payroll", payroll);   }, [payroll]);
@@ -1104,10 +1027,6 @@ function App() {
  DAYS.forEach(function(d){
   if (!weekSched[d] || !weekSched[d][e.id]) return;
   var shift = weekSched[d][e.id];
-  var dateStr = dayToISODate(weekOff, d);
-  // Check approved time off first — this is the strongest conflict
-  var onApprovedPTO = ptos.some(function(p){ return p.eid===e.id && p.status==="approved" && dateStr>=p.startDate && dateStr<=(p.endDate||p.startDate); });
-  if (onApprovedPTO) { allConflicts.push(e.name+" on "+d+" (approved time off)"); return; }
   // Check day-level availability
   if (e.avail.indexOf(d) < 0) { allConflicts.push(e.name+" on "+d+" (unavailable day)"); return; }
   // Check shift-window availability
@@ -1157,74 +1076,6 @@ function App() {
   return function(){ clearInterval(id); };
  }, [user]);
 
- function syncScheduleCellByDate(dateStr, eid, shiftId) {
-  supabase.from("schedule_entries").upsert({
-   property_id: user.property_id,
-   work_date: dateStr,
-   employee_id: eid,
-   shift_id: shiftId,
-  }, { onConflict: "property_id,work_date,employee_id" }).then(function(res){
-   if (res.error) { console.error("schedule sync failed:", res.error); showT("Saved locally, but the server save failed","error"); }
-  });
- }
- function syncScheduleCellDeleteByDate(dateStr, eid) {
-  supabase.from("schedule_entries").delete()
-   .eq("property_id", user.property_id).eq("work_date", dateStr).eq("employee_id", eid)
-   .then(function(res){ if (res.error) console.error("schedule delete sync failed:", res.error); });
- }
- function syncScheduleCell(weekOffArg, day, eid, shiftId) {
-  syncScheduleCellByDate(dayToISODate(weekOffArg, day), eid, shiftId);
- }
- function syncScheduleCellDelete(weekOffArg, day, eid) {
-  syncScheduleCellDeleteByDate(dayToISODate(weekOffArg, day), eid);
- }
- // Applies a schedule change to whichever locally-cached week actually contains
- // this real date — used when approving a swap that may not be for the week
- // currently on screen.
- function applyLocalScheduleChange(dateStr, fromEid, toEid, shiftId) {
-  setSched(function(p) {
-   var n = {...p};
-   Object.keys(n).forEach(function(wk) {
-    var wkStart = getWeekStart(Number(wk));
-    var wkEnd = new Date(wkStart); wkEnd.setDate(wkStart.getDate()+6);
-    if (dateStr >= isoDate(wkStart) && dateStr <= isoDate(wkEnd)) {
-     var dayIdx = Math.round((new Date(dateStr+"T00:00:00") - wkStart) / 86400000);
-     var dayName = DAYS[dayIdx];
-     if (dayName) {
-      var w = {...(n[wk]||{})};
-      w[dayName] = {...(w[dayName]||{})};
-      if (fromEid != null) delete w[dayName][fromEid];
-      if (toEid != null) w[dayName][toEid] = shiftId;
-      n[wk] = w;
-     }
-    }
-   });
-   return n;
-  });
- }
-
- // Inserts a real timeclock punch and returns its id (or null on failure), so
- // callers can put the real database id in local state instead of a fake one.
- async function syncPunchInsert(eid, type, tsMillis, isOverride) {
-  var res = await supabase.from("timeclock_punches").insert({
-   property_id: user.property_id,
-   employee_id: eid,
-   punch_type: type,
-   punched_at: new Date(tsMillis).toISOString(),
-   is_override: !!isOverride,
-   overridden_by: isOverride ? user.id : null,
-  }).select().single();
-  if (res.error || !res.data) { console.error("timeclock insert failed:", res.error); showT("Saved locally, but the server save failed","error"); return null; }
-  return res.data.id;
- }
-
- // Resolves a shift's real color theme (set when it was created in Shift Types)
- // instead of assuming the shift's own name/id happens to match a preset color name.
- function shiftColor(shiftId) {
-  var def = shiftDefs.find(function(d){ return d.id === shiftId; });
-  return (def && SC[def.color]) || SC[shiftId] || SC["Day 9-5"];
- }
-
  function assignShift(day, eid, shift) {
  if (isPastWeek) { showT("Past schedules are locked and cannot be changed","error"); return; }
  setSched(function(p) {
@@ -1236,7 +1087,6 @@ function App() {
  return n;
  });
  setSelCell(null); showT("Shift assigned");
- syncScheduleCell(weekOff, day, eid, shift);
  }
  function removeShift(day, eid) {
  if (isPastWeek) { showT("Past schedules are locked and cannot be changed","error"); return; }
@@ -1249,7 +1099,6 @@ function App() {
  return n;
  });
  showT("Shift removed","info");
- syncScheduleCellDelete(weekOff, day, eid);
  }
 
  function doRemove(emp) {
@@ -1264,7 +1113,6 @@ function App() {
  }
 
  async function addEmp() {
-  if (addingEmp) return;
   var nameClean  = sanitize(newEmp.name.trim());
   var emailClean = newEmp.email.toLowerCase().trim();
   if (!nameClean)  { showT("Name required","error"); return; }
@@ -1272,7 +1120,6 @@ function App() {
   if (!newEmp.pw.trim()) { showT("Password required","error"); return; }
   if (newEmp.pw.length < 8) { showT("Password must be at least 8 characters","error"); return; }
   if (accounts.find(function(a){ return a.email.toLowerCase()===emailClean; })) { showT("Email already exists","error"); return; }
-  setAddingEmp(true);
   var res = await supabase.from("employees").insert({
    property_id: user.property_id,
    name: nameClean,
@@ -1285,7 +1132,6 @@ function App() {
   if (res.error || !res.data) {
    console.error("employee insert failed:", res.error);
    showT("Couldn't save employee to the server — check connection","error");
-   setAddingEmp(false);
    return;
   }
   var emp = { id:res.data.id, name:nameClean, role:res.data.role, avail:newEmp.avail, shiftAvail:{}, max:newEmp.max, dept:newEmp.dept||"" };
@@ -1303,7 +1149,7 @@ function App() {
      body: JSON.stringify({ name: nameClean, email: emailClean, password: newEmp.pw, role: newEmp.isAdmin?"admin":"employee", employeeId: emp.id }),
     });
     var apiData = await apiRes.json();
-    if (!apiRes.ok) { console.error("login creation failed:", apiData); showT("Employee saved, but login creation failed: " + apiData.error, "error"); }
+    if (!apiRes.ok) { console.error("login creation failed:", apiData.error); showT("Employee saved, but login creation failed: " + apiData.error, "error"); }
     else { loginCreated = true; }
    } catch (err) {
     console.error("login creation request failed:", err);
@@ -1319,7 +1165,6 @@ function App() {
   setNewEmp({ name:"", role:"", avail:[], max:40, email:"", pw:"", isAdmin:false, dept:"" });
   setAddEmpOpen(false);
   showT(loginCreated ? nameClean+" added — they can log in now" : nameClean+" added");
-  setAddingEmp(false);
  }
 
  function toggleAdmin(accId) {
@@ -1330,59 +1175,30 @@ function App() {
  function approveSwap(req) {
  var to=emps.find(function(e){return e.id===req.toId;}); var from=emps.find(function(e){return e.id===req.fromId;});
  if(!to||!from) return;
- var dateStr = req.workDate || dayToISODate(weekOff, req.day);
- applyLocalScheduleChange(dateStr, from.id, to.id, req.shift);
+ setSched(function(p){ var n={...p}; var w={...(n[weekOff]||{})}; w[req.day]={...(w[req.day]||{})}; delete w[req.day][from.id]; w[req.day][to.id]=req.shift; n[weekOff]=w; return n; });
  setSwaps(function(p){return p.map(function(r){return r.id===req.id?{...r,status:"approved"}:r;});});
  showT("Swap approved"); writeAudit("SWAP_APPROVED","swap approved",user.id);
- syncScheduleCellDeleteByDate(dateStr, from.id);
- syncScheduleCellByDate(dateStr, to.id, req.shift);
- supabase.from("swap_requests").update({ status:"approved" }).eq("id", req.id).then(function(res){
-  if (res.error) console.error("swap status sync failed:", res.error);
- });
  }
- function setSwapStatus(id, status) {
-  setSwaps(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});});
-  showT("Swap "+status); writeAudit("SWAP_STATUS_CHANGE","status="+status,user.id);
-  supabase.from("swap_requests").update({ status: status }).eq("id", id).then(function(res){
-   if (res.error) console.error("swap status sync failed:", res.error);
-  });
- }
+ function setSwapStatus(id, status) { setSwaps(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});}); showT("Swap "+status); writeAudit("SWAP_STATUS_CHANGE","status="+status,user.id); }
 
- async function submitSwap() {
+ function submitSwap() {
  if (!swapForm.toId) { showT("Select a colleague","error"); return; }
  var toEmp=emps.find(function(e){return e.id===Number(swapForm.toId);}); var myEmp=emps.find(function(e){return e.id===user.eid;});
     var theirActualShift = (weekSched[swapForm.day] && weekSched[swapForm.day][Number(swapForm.toId)]) || swapForm.shift;
     var myActualShift = (weekSched[swapForm.day] && weekSched[swapForm.day][user.eid]) || swapForm.shift;
-    var workDate = dayToISODate(weekOff, swapForm.day);
-    var res = await supabase.from("swap_requests").insert({
-     property_id: user.property_id, from_employee_id: user.eid, to_employee_id: Number(swapForm.toId),
-     work_date: workDate, shift_id: theirActualShift, reason: sanitize(swapForm.reason), status: "pending",
-    }).select().single();
-    if (res.error || !res.data) { console.error("swap submit failed:", res.error); showT("Couldn't submit swap request — check connection","error"); return; }
- setSwaps(function(p){return p.concat([{id:res.data.id,fromId:user.eid,from:(myEmp&&myEmp.name)||user.name,toId:Number(swapForm.toId),to:(toEmp&&toEmp.name)||"",day:swapForm.day,workDate:workDate,shift:theirActualShift,myShift:myActualShift,reason:sanitize(swapForm.reason),status:"pending"}]);});
+ setSwaps(function(p){return p.concat([{id:Date.now(),fromId:user.eid,from:(myEmp&&myEmp.name)||user.name,toId:Number(swapForm.toId),to:(toEmp&&toEmp.name)||"",day:swapForm.day,shift:theirActualShift,myShift:myActualShift,reason:sanitize(swapForm.reason),status:"pending"}]);});
  setSwapForm({toId:"",day:DAYS[0],shift:"",reason:""});
  showT("Swap request submitted");
  }
 
- async function submitPTO() {
+ function submitPTO() {
  if (!ptoDate) { showT("Select a date","error"); return; }
  var myEmp=emps.find(function(e){return e.id===user.eid;});
- var res = await supabase.from("pto_requests").insert({
-  property_id: user.property_id, employee_id: user.eid, pto_type: ptoType,
-  start_date: ptoDate, end_date: ptoEnd||ptoDate, reason: sanitize(ptoNote), status: "pending",
- }).select().single();
- if (res.error || !res.data) { console.error("PTO submit failed:", res.error); showT("Couldn't submit request — check connection","error"); return; }
- setPtos(function(p){return p.concat([{id:res.data.id,eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:ptoType,startDate:ptoDate,endDate:ptoEnd||ptoDate,note:sanitize(ptoNote),status:"pending"}]);});
+ setPtos(function(p){return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:ptoType,startDate:ptoDate,endDate:ptoEnd||ptoDate,note:sanitize(ptoNote),status:"pending"}]);});
  setPtoDate(null); setPtoEnd(null); setPtoNote("");
  showT("Time-off request submitted");
  }
- function setPTOStatus(id, status) {
-  setPtos(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});});
-  showT("PTO "+status); writeAudit("PTO_STATUS_CHANGE","status="+status,user.id);
-  supabase.from("pto_requests").update({ status: status }).eq("id", id).then(function(res){
-   if (res.error) console.error("PTO status sync failed:", res.error);
-  });
- }
+ function setPTOStatus(id, status) { setPtos(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});}); showT("PTO "+status); writeAudit("PTO_STATUS_CHANGE","status="+status,user.id); }
 
  function postOpen() {
  setOpens(function(p){return p.concat([{id:Date.now(),day:openForm.day,shift:openForm.shift,role:openForm.role,note:sanitize(openForm.note),postedBy:user.name,claimedBy:null,claimedName:"",status:"open"}]);});
@@ -1398,27 +1214,16 @@ function App() {
  setSched(function(p){ var n={...p}; var w={...(n[weekOff]||{})}; w[s.day]={...(w[s.day]||{})}; w[s.day][s.claimedBy]=s.shift; n[weekOff]=w; return n; });
  setOpens(function(p){return p.map(function(o){return o.id===s.id?{...o,status:"filled"}:o;});});
  showT("Open shift approved");
- syncScheduleCell(weekOff, s.day, s.claimedBy, s.shift);
  }
  function declineOpen(id) { setOpens(function(p){return p.map(function(s){return s.id===id?{...s,status:"open",claimedBy:null,claimedName:""}:s;});}); }
  function removeOpen(id) { setOpens(function(p){return p.filter(function(s){return s.id!==id;});}); showT("Open shift removed","info"); }
 
- async function submitCallin() {
+ function submitCallin() {
  var myEmp=emps.find(function(e){return e.id===user.eid;});
- var res = await supabase.from("callins").insert({
-  property_id: user.property_id, employee_id: user.eid, work_date: isoDate(new Date()),
-  reason_type: callType, note: sanitize(callNote), status: "pending",
- }).select().single();
- if (res.error || !res.data) { console.error("call-in submit failed:", res.error); showT("Couldn't submit notice — check connection","error"); return; }
- setCallins(function(p){return p.concat([{id:res.data.id,eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:callType,note:sanitize(callNote),ts:Date.now(),status:"pending"}]);});
+ setCallins(function(p){return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:callType,note:sanitize(callNote),ts:Date.now(),status:"pending"}]);});
  setCallNote(""); showT("Attendance notice submitted");
  }
- function ackCallin(id) {
-  setCallins(function(p){return p.map(function(c){return c.id===id?{...c,status:"acknowledged"}:c;});});
-  supabase.from("callins").update({ status: "acknowledged" }).eq("id", id).then(function(res){
-   if (res.error) console.error("callin ack sync failed:", res.error);
-  });
- }
+ function ackCallin(id) { setCallins(function(p){return p.map(function(c){return c.id===id?{...c,status:"acknowledged"}:c;});}); }
 
  function overrule(c) { setOverruled(function(p){return p.concat([c]);}); showT("Conflict overruled","info"); }
 
@@ -1432,11 +1237,6 @@ function App() {
  return n;
  });
  showT("Week cleared - start fresh!", "info");
- var weekStart = getWeekStart(weekOff);
- var weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate()+6);
- supabase.from("schedule_entries").delete()
-  .eq("property_id", user.property_id).gte("work_date", isoDate(weekStart)).lte("work_date", isoDate(weekEnd))
-  .then(function(res){ if (res.error) console.error("clear week sync failed:", res.error); });
  }
 
  function autoGenerate() {
@@ -1509,24 +1309,6 @@ function App() {
  if (unscheduled.length>0) insights.push(unscheduled.length+" available employee"+(unscheduled.length>1?"s":"")+" not scheduled");
 
  setSched(function(p) { var n={...p}; n[weekOff]=gen; return n; });
-
- var genWeekStart = getWeekStart(weekOff);
- var genWeekEnd = new Date(genWeekStart); genWeekEnd.setDate(genWeekStart.getDate()+6);
- var genRows = [];
- DAYS.forEach(function(d){
-  Object.keys(gen[d]).forEach(function(empId){
-   genRows.push({ property_id: user.property_id, work_date: dayToISODate(weekOff, d), employee_id: Number(empId), shift_id: gen[d][empId] });
-  });
- });
- supabase.from("schedule_entries").delete()
-  .eq("property_id", user.property_id).gte("work_date", isoDate(genWeekStart)).lte("work_date", isoDate(genWeekEnd))
-  .then(function(delRes){
-   if (delRes.error) { console.error("autoGenerate clear failed:", delRes.error); return; }
-   if (genRows.length === 0) return;
-   supabase.from("schedule_entries").insert(genRows).then(function(insRes){
-    if (insRes.error) { console.error("autoGenerate save failed:", insRes.error); showT("Generated locally, but the server save failed","error"); }
-   });
-  });
 
  var base = skipped.length>0 ? "Generated! PTO excluded: "+skipped.join(", ") : "Schedule generated!";
  if (insights.length>0) {
@@ -1754,7 +1536,7 @@ function App() {
        {onToday.length > 0 ? (
          <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
            {onToday.map(function(e){
-             var shift = todayShifts[e.id]; var sc = shift ? shiftColor(shift) : {};
+             var shift = todayShifts[e.id]; var sc = SC[shift] || {};
              var isIn = clockedInToday.some(function(c){ return c.id===e.id; });
              return (
                <div key={e.id} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", borderRadius:20, background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)" }}>
@@ -1811,7 +1593,7 @@ function App() {
                 </div>
  <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:16 }}>
  {shiftDefs.map(function(s) {
- var c = shiftColor(s.id);
+ var c = SC[s.id] || SC["Day 9-5"];
  return (
  <div key={s.id} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", borderRadius:20, background:c.bg, border:"1px solid "+c.border }}>
  <div style={{ width:6, height:6, borderRadius:"50%", background:c.dot }} />
@@ -1835,7 +1617,7 @@ function App() {
        {onS.length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:28 }}>Nobody scheduled today. Hit Auto-Generate or assign shifts manually.</div>}
        <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
          {onS.map(function(emp){
-           var sh=todayS[emp.id]; var sc=sh?shiftColor(sh):{};
+           var sh=todayS[emp.id]; var sc=SC[sh]||{};
            var dept=depts.find(function(d){return d.id===emp.dept;});
            var lastP=timeclock.slice().reverse().find(function(p){return p.eid===emp.id;});
            var isIn=lastP&&lastP.type==="in"&&new Date(lastP.ts).toDateString()===new Date().toDateString();
@@ -1913,18 +1695,16 @@ function App() {
  {DAYS.map(function(d) {
  var shift = weekSched[d] && weekSched[d][emp.id];
  var avail = emp.avail.indexOf(d) >= 0;
- var cellDateStr = dayToISODate(weekOff, d);
- var onApprovedPTO = ptos.some(function(p){ return p.eid===emp.id && p.status==="approved" && cellDateStr>=p.startDate && cellDateStr<=(p.endDate||p.startDate); });
- var cKey = onApprovedPTO ? (emp.name+" on "+d+" (approved time off)") : (emp.name+" on "+d+" (unavailable)");
- var conflict = shift && (onApprovedPTO || !avail);
+ var cKey = emp.name+" on "+d+" (unavailable)";
+ var conflict = shift && !avail;
  var isOvr = conflict && overruled.indexOf(cKey) >= 0;
  var isSel = selCell && selCell.day===d && selCell.eid===emp.id;
  var cellBg = isSel?"#FDF0ED":(conflict&&!isOvr)?"#FEF2F2":(!avail?"#F8FAFC":"inherit");
  return (
  <td key={d} className={isPastWeek?"":"hv"} onClick={function(){if(!isPastWeek)setSelCell(isSel?null:{day:d,eid:emp.id});}} style={{ padding:"6px 4px", textAlign:"center", background:cellBg, position:"relative", transition:"background .1s" }}>
  {shift ? (
- <div style={{ display:"inline-flex", alignItems:"center", gap:3, padding:"3px 7px", borderRadius:20, fontSize:10, fontWeight:600, background:shiftColor(shift).bg, color:shiftColor(shift).text, border:"1px solid "+shiftColor(shift).border, whiteSpace:"nowrap" }}>
- <span style={{ width:5, height:5, borderRadius:"50%", background:shiftColor(shift).dot, display:"inline-block", flexShrink:0 }} />
+ <div style={{ display:"inline-flex", alignItems:"center", gap:3, padding:"3px 7px", borderRadius:20, fontSize:10, fontWeight:600, background:SC[shift].bg, color:SC[shift].text, border:"1px solid "+SC[shift].border, whiteSpace:"nowrap" }}>
+ <span style={{ width:5, height:5, borderRadius:"50%", background:(SC[shift]||SC["Day 9-5"]).dot, display:"inline-block", flexShrink:0 }} />
  {(function(){
  var ovKey = overrideKey(weekOff,d,emp.id);
  var ov = shiftOverrides[ovKey];
@@ -1943,7 +1723,7 @@ function App() {
  {isSel && (
  <div style={{ position:"absolute", top:"100%", left:"50%", transform:"translateX(-50%)", zIndex:100, background:T.surface, border:"1px solid "+T.border, borderRadius:10, padding:8, minWidth:165, boxShadow:"0 8px 24px rgba(0,0,0,0.12)", marginTop:4 }}>
  {shiftDefs.map(function(s) {
- var c = shiftColor(s.id);
+ var c = SC[s.id] || SC["Day 9-5"];
  return (
  <div key={s.id} className="hv2" onClick={function(e){e.stopPropagation();assignShift(d,emp.id,s.id);}} style={{ display:"flex", alignItems:"center", gap:7, padding:"6px 10px", borderRadius:7, fontSize:12, color:c.text, marginBottom:2, cursor:"pointer" }}>
  <span style={{ width:7, height:7, borderRadius:"50%", background:c.dot }} />{s.label} <span style={{ fontSize:10, color:c.text, opacity:0.7 }}>{to12(s.start)}-{to12(s.end)}</span>
@@ -2068,7 +1848,7 @@ function App() {
  </label>
  </div>
  <div style={{ display:"flex", gap:8 }}>
- <button onClick={addEmp} disabled={addingEmp} style={{ ...BTN, opacity:addingEmp?0.6:1, cursor:addingEmp?"default":"pointer" }}>{addingEmp ? "Adding…" : "Add Employee"}</button>
+ <button onClick={addEmp} style={BTN}>Add Employee</button>
  <button onClick={function(){setAddEmpOpen(false);}} style={GBTN}>Cancel</button>
  </div>
  </div>
@@ -2232,13 +2012,13 @@ function App() {
                       <div style={{ fontSize:13, fontWeight:600, color:T.muted, marginBottom:4 }}>Add Department</div>
                       <input value={newDeptName} onChange={function(e){setNewDeptName(e.target.value);}} placeholder="e.g. Front Desk" style={{ ...INP, textAlign:"center" }} />
                       <button onClick={function(){
-                        var nm = newDeptName.trim();
+                                                var nm  = (inp&&inp.value||"").trim();
                         if (!nm) { showT("Name required","error"); return; }
                         var colors = ["#1A1714","#10B981","#F59E0B","#EF4444","#2E2A26","#3B82F6","#EC4899","#14B8A6"];
                         var col = colors[depts.length % colors.length];
                         var id  = nm.toLowerCase().replace(/[^a-z0-9]+/g,"-") + "_" + Date.now();
                         setDepts(function(p){ return p.concat([{id:id,name:nm,color:col,linked:[]}]); });
-                        setNewDeptName("");
+                        if (inp) inp.value = "";
                         showT(nm+" department created");
                         supabase.from("departments").insert({ id:id, property_id:user.property_id, name:nm, color:col, linked:[] }).then(function(res){
                          if (res.error) { console.error("department insert failed:", res.error); showT("Saved locally, but the server save failed","error"); }
@@ -2278,7 +2058,7 @@ function App() {
  <div>
  <div style={{ display:"flex", gap:6, marginBottom:5, flexWrap:"wrap" }}>
  <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:600 }}>{s.day}</span>
- <span style={{ padding:"3px 9px", borderRadius:20, background:shiftColor(s.shift).bg, color:shiftColor(s.shift).text, fontSize:12, fontWeight:600 }}>{s.shift}</span>
+ <span style={{ padding:"3px 9px", borderRadius:20, background:(SC[s.shift]&&SC[s.shift].bg)||T.bg, color:(SC[s.shift]&&SC[s.shift].text)||T.muted, fontSize:12, fontWeight:600 }}>{s.shift}</span>
  {s.role && <span style={{ padding:"3px 9px", borderRadius:20, background:T.bg, color:T.muted, fontSize:12 }}>{s.role}</span>}
  </div>
  {s.claimedBy && <div style={{ fontSize:12, color:T.muted }}>Claimed by: <strong>{s.claimedName}</strong></div>}
@@ -2453,7 +2233,7 @@ function App() {
  </div>
  <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
  <span style={{ padding:"2px 8px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:11, fontWeight:500 }}>{req.day}</span>
- <span style={{ padding:"2px 8px", borderRadius:20, background:shiftColor(req.shift).bg, color:shiftColor(req.shift).text, fontSize:11 }}>{(function(){ var _sd=shiftDefs.find(function(d){return d.id===req.shift;}); return _sd?(_sd.label+" "+to12(_sd.start)+"-"+to12(_sd.end)):req.shift; })()}</span>
+ <span style={{ padding:"2px 8px", borderRadius:20, background:(SC[req.shift]&&SC[req.shift].bg)||T.bg, color:(SC[req.shift]&&SC[req.shift].text)||T.muted, fontSize:11 }}>{(function(){ var _sd=shiftDefs.find(function(d){return d.id===req.shift;}); return _sd?(_sd.label+" "+to12(_sd.start)+"-"+to12(_sd.end)):req.shift; })()}</span>
  </div>
  {req.reason && <div style={{ marginTop:5, fontSize:12, color:T.muted }}>{req.reason}</div>}
  </div>
@@ -2532,7 +2312,7 @@ function App() {
 
  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:14, marginBottom:20 }}>
  {shiftDefs.map(function(s, i){
- var c = shiftColor(s.id);
+ var c = SC[s.color] || SC[s.id] || SC["Morning 6-2"];
  return (
  <div key={s.id} style={{ ...CARD, border:"2px solid "+c.border, background:c.bg+"44" }}>
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
@@ -2652,11 +2432,11 @@ function App() {
  var pto = ptos.find(function(r){return r.eid===user.eid&&r.status==="approved";});
  var dd = getDayDate(di, weekOff);
  return (
- <div key={d} style={{ ...CARD, padding:12, textAlign:"center", background:shift?shiftColor(shift).bg:T.surface, border:"1px solid "+(shift?shiftColor(shift).border:T.border) }}>
+ <div key={d} style={{ ...CARD, padding:12, textAlign:"center", background:shift?(SC[shift]&&SC[shift].bg)||T.surface:T.surface, border:"1px solid "+(shift?(SC[shift]&&SC[shift].border)||T.border:T.border) }}>
  <div style={{ fontSize:9, color:T.faint, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.04em" }}>{d}</div>
  <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:4 }}>{dd}</div>
  {pto ? <div style={{ fontSize:10, fontWeight:600, color:"#5B21B6" }}>PTO</div>
- : shift ? (function(){ var def=shiftDefs.find(function(d){return d.id===shift;}); var label=def?def.label:(shift.split(" ")[0]); var hours=def?(to12(def.start)+"-"+to12(def.end)):shift.split(" ").slice(1).join(" "); return <><div style={{ fontSize:11, fontWeight:700, color:shiftColor(shift).text }}>{label}</div><div style={{ fontSize:9, color:shiftColor(shift).text+"99" }}>{hours}</div></>; })()
+ : shift ? (function(){ var def=shiftDefs.find(function(d){return d.id===shift;}); var label=def?def.label:(shift.split(" ")[0]); var hours=def?(to12(def.start)+"-"+to12(def.end)):shift.split(" ").slice(1).join(" "); return <><div style={{ fontSize:11, fontWeight:700, color:(SC[shift]&&SC[shift].text)||T.text }}>{label}</div><div style={{ fontSize:9, color:((SC[shift]&&SC[shift].text)||T.text)+"99" }}>{hours}</div></>; })()
  : avail ? <div style={{ fontSize:11, color:T.border }}>—</div>
  : <div style={{ fontSize:11, color:T.faint }}>Off</div>}
  </div>
@@ -2710,7 +2490,7 @@ function App() {
                         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))", gap:8 }}>
                           {workingToday.map(function(e){
                             var shift = weekSched[todayDay][e.id];
-                            var sc    = shiftColor(shift);
+                            var sc    = SC[shift] || SC["Day 9-5"];
                             var isMe  = e.id===user.eid;
                             return (
                               <div key={e.id} style={{ ...CARD, padding:14, border:"1px solid "+(isMe?dept.color:T.border), background:isMe?(dept.color+"0D"):T.surface }}>
@@ -2744,7 +2524,7 @@ function App() {
  <div key={s.id} style={{ ...CARD, border:"2px solid "+T.accentL }}>
  <div style={{ display:"flex", gap:6, marginBottom:9, flexWrap:"wrap" }}>
  <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:600 }}>{s.day}</span>
- <span style={{ padding:"3px 9px", borderRadius:20, background:shiftColor(s.shift).bg, color:shiftColor(s.shift).text, fontSize:12, fontWeight:600 }}>{s.shift}</span>
+ <span style={{ padding:"3px 9px", borderRadius:20, background:(SC[s.shift]&&SC[s.shift].bg)||T.bg, color:(SC[s.shift]&&SC[s.shift].text)||T.muted, fontSize:12, fontWeight:600 }}>{s.shift}</span>
  </div>
  {s.role && <div style={{ fontSize:12, color:T.muted, marginBottom:5 }}>Role: {s.role}</div>}
  {s.note && <div style={{ fontSize:12, color:T.faint, marginBottom:9 }}>{s.note}</div>}
@@ -2764,7 +2544,7 @@ function App() {
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
  <div style={{ display:"flex", gap:6 }}>
  <span style={{ padding:"2px 8px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:11 }}>{s.day}</span>
- <span style={{ padding:"2px 8px", borderRadius:20, background:shiftColor(s.shift).bg, color:shiftColor(s.shift).text, fontSize:11 }}>{s.shift}</span>
+ <span style={{ padding:"2px 8px", borderRadius:20, background:(SC[s.shift]&&SC[s.shift].bg)||T.bg, color:(SC[s.shift]&&SC[s.shift].text)||T.muted, fontSize:11 }}>{s.shift}</span>
  </div>
  <Badge status={s.status==="filled"?"approved":"pending"} />
  </div>
@@ -2828,7 +2608,7 @@ function App() {
 
  {(function(){
    var myShift = weekSched[swapForm.day] && weekSched[swapForm.day][user.eid];
-   var sc = myShift ? shiftColor(myShift) : null;
+   var sc = myShift ? SC[myShift] : null;
    return (
      <div style={{ marginBottom:14 }}>
        <label style={LBL}>Your shift on {swapForm.day}</label>
@@ -2850,7 +2630,7 @@ function App() {
  {swapForm.toId ? (function(){
    var toEmp      = emps.find(function(e){ return e.id===Number(swapForm.toId); });
    var theirShift = weekSched[swapForm.day] && weekSched[swapForm.day][Number(swapForm.toId)];
-   var sc2 = theirShift ? shiftColor(theirShift) : null;
+   var sc2 = theirShift ? SC[theirShift] : null;
    return (
      <div style={{ marginBottom:14 }}>
        <label style={LBL}>{toEmp ? toEmp.name.split(" ")[0] : "Their"} shift on {swapForm.day}</label>
@@ -2945,11 +2725,11 @@ function App() {
               var lastPunch = timeclock.slice().reverse().find(function(p){ return p.eid===user.eid; });
               var isClockedIn = lastPunch && lastPunch.type==="in";
               var todayPunches = timeclock.filter(function(p){ return p.eid===user.eid && new Date(p.ts).toDateString()===new Date().toDateString(); });
-              async function clockIn()  { var realId = await syncPunchInsert(user.eid, "in", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"in",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked in! Have a great shift."); }
-              async function clockOut() { var realId = await syncPunchInsert(user.eid, "out", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"out",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked out! See you next time."); }
+              function clockIn()  { setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"in",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked in! Have a great shift."); }
+              function clockOut() { setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"out",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked out! See you next time."); }
               var now = new Date();
               var hr = now.getHours(); var mn = String(now.getMinutes()).padStart(2,"0"); var ap = hr>=12?"PM":"AM"; hr=hr%12||12;
-              var sc = todayShift ? shiftColor(todayShift) : null;
+              var sc = todayShift ? SC[todayShift] : null;
               return (
                 <div style={{ maxWidth:400 }}>
                   <div style={{ marginBottom:16 }}>
@@ -2975,9 +2755,9 @@ function App() {
                         <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
                           <button onClick={clockOut} style={{ ...BTN, width:"100%", padding:"13px", fontSize:15, fontWeight:700, background:"linear-gradient(135deg,#EF4444,#DC2626)", borderRadius:12 }}>&#9209; Clock Out</button>
                           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
-                            <button onClick={async function(){ var realId = await syncPunchInsert(user.eid, "lunch_out", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_out",ts:Date.now(),shift:todayShift||""}]); }); showT("Lunch started - enjoy your break!"); }}
+                            <button onClick={function(){ setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_out",ts:Date.now(),shift:todayShift||""}]); }); showT("Lunch started - enjoy your break!"); }}
                               style={{ ...BTN, padding:"10px", fontSize:13, fontWeight:600, background:"linear-gradient(135deg,#F59E0B,#D97706)", borderRadius:10 }}>&#127829; Lunch Out</button>
-                            <button onClick={async function(){ var realId = await syncPunchInsert(user.eid, "lunch_in", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_in",ts:Date.now(),shift:todayShift||""}]); }); showT("Back from lunch!"); }}
+                            <button onClick={function(){ setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_in",ts:Date.now(),shift:todayShift||""}]); }); showT("Back from lunch!"); }}
                               style={{ ...BTN, padding:"10px", fontSize:13, fontWeight:600, background:"linear-gradient(135deg,#3B82F6,#2563EB)", borderRadius:10 }}>&#127829; Lunch In</button>
                           </div>
                         </div>
@@ -3047,33 +2827,29 @@ function App() {
                 a.download = "ShyftRota_Paychex.csv";
                 a.click();
               }
-              async function addOverridePunch() {
+              function addOverridePunch() {
                 if (!overrideEid || !overrideTime) { showT("Select employee and time","error"); return; }
                 var emp = emps.find(function(e){ return e.id===overrideEid; });
                 var dtStr = overrideDate + "T" + overrideTime + ":00";
                 var ts = new Date(dtStr).getTime();
                 if (isNaN(ts)) { showT("Invalid date or time","error"); return; }
-                var realId = await syncPunchInsert(overrideEid, overrideType, ts, true);
-                setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:overrideEid,ename:emp?emp.name:"",type:overrideType,ts:ts,shift:"",overrideBy:user.name}]); });
+                setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:overrideEid,ename:emp?emp.name:"",type:overrideType,ts:ts,shift:"",overrideBy:user.name}]); });
                 setOverrideEid(null);
   var rn=new Date(); setOverrideTime(String(rn.getHours()).padStart(2,"0")+":"+String(rn.getMinutes()).padStart(2,"0"));
   setOverrideDate(new Date().toISOString().slice(0,10));
                 showT("Punch added for "+(emp?emp.name:"employee"),"info");
               }
 
-              async function forceClockOut(eid, ename) {
+              function forceClockOut(eid, ename) {
                 var now = new Date();
-                var realId = await syncPunchInsert(eid, "out", now.getTime(), true);
-                setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:eid,ename:ename,type:"out",ts:now.getTime(),shift:"",overrideBy:user.name}]); });
+                var timeStr = String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
+                setTimeclock(function(p){ return p.concat([{id:Date.now(),eid:eid,ename:ename,type:"out",ts:Date.now(),shift:"",overrideBy:user.name}]); });
                 showT(ename+" clocked out by admin","info");
               }
 
               function deletePunch(id) {
                 setTimeclock(function(p){ return p.filter(function(x){ return x.id!==id; }); });
                 showT("Punch deleted","info");
-                supabase.from("timeclock_punches").delete().eq("id", id).then(function(res){
-                 if (res.error) console.error("punch delete sync failed:", res.error);
-                });
               }
 
               function saveEditPunch(id) {
@@ -3084,9 +2860,6 @@ function App() {
                 setTimeclock(function(p){ return p.map(function(x){ return x.id===id ? {...x, ts:ts, editedBy:user.name} : x; }); });
                 setEditingPunchId(null);
                 showT("Punch updated","info");
-                supabase.from("timeclock_punches").update({ punched_at: new Date(ts).toISOString(), is_override: true, overridden_by: user.id }).eq("id", id).then(function(res){
-                 if (res.error) console.error("punch edit sync failed:", res.error);
-                });
               }
 
               var providerLabel = (PAYROLL_PROVIDERS.find(function(p){return p.id===payroll;})||{label:"Payroll"}).label;
@@ -3276,7 +3049,7 @@ function App() {
                     <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:10 }}>{d}</div>
                     <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
                       {shiftDefs.map(function(s){
-                        var sc = shiftColor(s.id);
+                        var sc = SC[s.id] || SC["Day 9-5"];
                         var checked = dayShifts.indexOf(s.id) >= 0;
                         return (
                           <button key={s.id} onClick={function(){
