@@ -960,7 +960,7 @@ function App() {
    supabase.from("employees").select("*").eq("property_id", user.property_id).then(function(res){
     if (res.data) {
      setEmps(res.data.map(function(r){
-      return { id:r.id, name:r.name, role:r.role, avail:r.avail||[], max:r.max_hours, dept:r.dept_id||"", shiftAvail:r.shift_avail||{} };
+      return { id:r.id, name:r.name, role:r.role, avail:r.avail||[], max:r.max_hours, dept:r.dept_id||"", shiftAvail:r.shift_avail||{}, color:r.color||"" };
      }));
     } else { console.error("load employees failed:", res.error); }
    });
