@@ -1346,6 +1346,14 @@ function App() {
   return (e && e.color) || avatarBg(id);
  }
 
+ // Looks up an employee's name live from current emps, instead of trusting a
+ // name cached at load time — fixes requests showing blank if PTO/swaps
+ // finished loading before the employees list did.
+ function empName(eid, cachedName) {
+  var e = emps.find(function(x){ return String(x.id)===String(eid); });
+  return (e && e.name) || cachedName || "Unknown employee";
+ }
+
  async function setEmpColor(emp, color) {
   setEmps(function(p){ return p.map(function(e){ return e.id===emp.id ? {...e,color:color} : e; }); });
   setColorPickerFor(null);
@@ -2513,7 +2521,7 @@ function App() {
  <div key={c.id} style={CARD}>
  <div style={{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:9 }}>
  <div>
- <div style={{ fontWeight:600, fontSize:13, marginBottom:4 }}>{c.ename}</div>
+ <div style={{ fontWeight:600, fontSize:13, marginBottom:4 }}>{empName(c.eid, c.ename)}</div>
  <span style={{ padding:"2px 8px", borderRadius:20, background:T.dangerL, color:T.danger, fontSize:11, fontWeight:600 }}>{c.type}</span>
  {c.note && <div style={{ fontSize:12, color:T.muted, marginTop:5 }}>{c.note}</div>}
  <div style={{ fontSize:10, color:T.faint, marginTop:4 }}>{fmtAgo(c.ts)}</div>
@@ -2535,7 +2543,7 @@ function App() {
  <div key={req.id} style={{ ...CARD, border:"1px solid "+(req.status==="approved"?"#6EE7B7":req.status==="rejected"?"#FCA5A5":T.border) }}>
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:9 }}>
  <div>
- <div style={{ fontWeight:600, fontSize:14, marginBottom:6 }}>{req.ename}</div>
+ <div style={{ fontWeight:600, fontSize:14, marginBottom:6 }}>{empName(req.eid, req.ename)}</div>
  <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
  <span style={{ padding:"3px 9px", borderRadius:20, background:"#EDE9FE", color:"#5B21B6", fontSize:12, fontWeight:500 }}>{req.type}</span>
  <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:500 }}>{req.startDate}{req.endDate&&req.endDate!==req.startDate?" to "+req.endDate:""}</span>
@@ -2571,9 +2579,9 @@ function App() {
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:9 }}>
  <div>
  <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:6 }}>
- <span style={{ fontWeight:600, fontSize:13 }}>{req.from}</span>
+ <span style={{ fontWeight:600, fontSize:13 }}>{empName(req.fromId, req.from)}</span>
  <span style={{ color:T.faint }}>&#8594;</span>
- <span style={{ fontWeight:600, fontSize:13 }}>{req.to}</span>
+ <span style={{ fontWeight:600, fontSize:13 }}>{empName(req.toId, req.to)}</span>
  </div>
  <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
  <span style={{ padding:"2px 8px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:11, fontWeight:500 }}>{req.day}</span>
@@ -3003,7 +3011,7 @@ function App() {
  <span style={{ fontSize:12, fontWeight:600 }}>{req.day} - {(function(){ var _sd=shiftDefs.find(function(d){return d.id===req.shift;}); return _sd?(_sd.label+" "+to12(_sd.start)+"-"+to12(_sd.end)):req.shift; })()}</span>
  <Badge status={req.status} />
  </div>
- <div style={{ fontSize:12, color:T.muted }}>To: {req.to}</div>
+ <div style={{ fontSize:12, color:T.muted }}>To: {empName(req.toId, req.to)}</div>
  </div>
  );
  })}
@@ -3316,7 +3324,7 @@ function App() {
                               <div style={{ display:"flex", alignItems:"center", gap:9 }}>
                                 <div style={{ width:32, height:32, borderRadius:"50%", background:colorFor(s.eid), display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:"white" }}>{emp?initials(emp.name):s.ename[0]}</div>
                                 <div>
-                                  <div style={{ fontSize:13, fontWeight:600 }}>{s.ename}</div>
+                                  <div style={{ fontSize:13, fontWeight:600 }}>{emp?emp.name:s.ename}</div>
                                   <div style={{ fontSize:11, color:T.faint }}>{emp&&emp.role}</div>
                                 </div>
                               </div>
