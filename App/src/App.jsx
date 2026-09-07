@@ -1903,7 +1903,7 @@ function App() {
                <div key={e.id} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", borderRadius:20, background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)" }}>
                  <div style={{ width:6, height:6, borderRadius:"50%", background:isIn?"#34D399":"rgba(255,255,255,0.2)", flexShrink:0 }} />
                  <span style={{ fontSize:11, color:"white", fontWeight:500 }}>{e.name.split(" ")[0]}</span>
-                 {sc.bg && <span style={{ fontSize:10, color:sc.text, background:sc.bg, padding:"1px 5px", borderRadius:8, fontWeight:600 }}>{(function(){ var def=shiftDefs.find(function(d){return d.id===shift;}); return def?to12(def.start)+"-"+to12(def.end):shift.split(" ")[0]; })()}</span>}
+                 {sc.bg && <span style={{ fontSize:10, color:sc.text, background:sc.bg, padding:"1px 5px", borderRadius:8, fontWeight:600 }}>{(function(){ var def=shiftDefs.find(function(d){return d.id===shift;}); var ov=shiftOverrides[overrideKey(0,todayDay,e.id)]; if(ov) return to12(ov.start)+"-"+to12(ov.end); return def?to12(def.start)+"-"+to12(def.end):shift.split(" ")[0]; })()}</span>}
                </div>
              );
            })}
@@ -2007,7 +2007,7 @@ function App() {
                </div>
                <div style={{ display:"flex", alignItems:"center", gap:7, flexShrink:0 }}>
                  <div style={{ width:8,height:8,borderRadius:"50%",background:isIn?"#34D399":T.faint }} />
-                 {sc.bg && <span style={{ fontSize:11, fontWeight:700, padding:"4px 10px", borderRadius:20, background:sc.bg, color:sc.text, border:"1px solid "+(sc.border||T.border) }}>{(function(){ var def=shiftDefs.find(function(d){return d.id===sh;}); return def?(def.label+" "+to12(def.start)+"-"+to12(def.end)):sh; })()}</span>}
+                 {sc.bg && <span style={{ fontSize:11, fontWeight:700, padding:"4px 10px", borderRadius:20, background:sc.bg, color:sc.text, border:"1px solid "+(sc.border||T.border) }}>{(function(){ var def=shiftDefs.find(function(d){return d.id===sh;}); var ov=shiftOverrides[overrideKey(weekOff,todayD,emp.id)]; if(ov) return def?(def.label+" "+to12(ov.start)+"-"+to12(ov.end)):(to12(ov.start)+"-"+to12(ov.end)); return def?(def.label+" "+to12(def.start)+"-"+to12(def.end)):sh; })()}</span>}
                </div>
              </div>
            );
@@ -2785,17 +2785,20 @@ function App() {
  var todayDay = dayNames[new Date().getDay()];
  var todayShift = weekOff===0 && weekSched[todayDay] && weekSched[todayDay][me.id];
  var shiftDef = todayShift ? shiftDefs.find(function(d){ return d.id===todayShift; }) : null;
+ var todayOv = todayShift ? shiftOverrides[overrideKey(weekOff, todayDay, me.id)] : null;
+ var effStart = todayOv ? todayOv.start : (shiftDef ? shiftDef.start : null);
+ var effEnd = todayOv ? todayOv.end : (shiftDef ? shiftDef.end : null);
  var reminderMsg = null; var reminderType = "info";
- if (todayShift && shiftDef) {
+ if (todayShift && effStart) {
    var nowT = new Date();
-   var sp = shiftDef.start.split(":").map(Number);
+   var sp = effStart.split(":").map(Number);
    var shiftStart = new Date(); shiftStart.setHours(sp[0], sp[1], 0, 0);
    var minsUntil = Math.round((shiftStart - nowT) / 60000);
    var lastP = timeclock.slice().reverse().find(function(p){ return p.eid===user.eid && new Date(p.ts).toDateString()===new Date().toDateString(); });
    var isClockedIn = lastP && lastP.type==="in";
    if (isClockedIn) { reminderMsg = "You are clocked in. Have a great shift!"; reminderType = "success"; }
-  else if (minsUntil > 0 && minsUntil <= 60) { reminderMsg = "Your " + (shiftDef?shiftDef.label:todayShift) + " shift (" + to12(shiftDef?shiftDef.start:"") + ") starts in " + minsUntil + " min. Remember to clock in!"; reminderType = "warning"; }
-  else if (minsUntil > 60 && minsUntil <= 180) { reminderMsg = "Heads up — your " + (shiftDef?shiftDef.label:todayShift) + " shift starts at " + to12(shiftDef?shiftDef.start:"") + " (" + Math.round(minsUntil/60*10)/10 + " hrs away)."; reminderType = "info"; }
+  else if (minsUntil > 0 && minsUntil <= 60) { reminderMsg = "Your " + (shiftDef?shiftDef.label:todayShift) + " shift (" + to12(effStart) + ") starts in " + minsUntil + " min. Remember to clock in!"; reminderType = "warning"; }
+  else if (minsUntil > 60 && minsUntil <= 180) { reminderMsg = "Heads up — your " + (shiftDef?shiftDef.label:todayShift) + " shift starts at " + to12(effStart) + " (" + Math.round(minsUntil/60*10)/10 + " hrs away)."; reminderType = "info"; }
    else if (minsUntil <= 0 && minsUntil > -60 && !isClockedIn) { reminderMsg = "Your shift started " + Math.abs(minsUntil) + " min ago — clock in now!"; reminderType = "danger"; }
  }
  var RC = { success:{ bg:T.successL, border:"#6EE7B7", color:T.success, icon:"&#9989;" }, warning:{ bg:T.warningL, border:"#FDE68A", color:"#92400E", icon:"&#9200;" }, danger:{ bg:T.dangerL, border:"#FCA5A5", color:T.danger, icon:"&#9888;" }, info:{ bg:T.accentL, border:"#F0A898", color:T.accent, icon:"&#128197;" } };
@@ -2823,7 +2826,7 @@ function App() {
  <div style={{ fontSize:9, color:T.faint, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.04em" }}>{d}</div>
  <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:4 }}>{dd}</div>
  {pto ? <div style={{ fontSize:10, fontWeight:600, color:"#5B21B6" }}>PTO</div>
- : shift ? (function(){ var def=shiftDefs.find(function(d){return d.id===shift;}); var label=def?def.label:(shift.split(" ")[0]); var hours=def?(to12(def.start)+"-"+to12(def.end)):shift.split(" ").slice(1).join(" "); return <><div style={{ fontSize:11, fontWeight:700, color:shiftColor(shift).text }}>{label}</div><div style={{ fontSize:9, color:shiftColor(shift).text+"99" }}>{hours}</div></>; })()
+ : shift ? (function(){ var def=shiftDefs.find(function(dd2){return dd2.id===shift;}); var ov=shiftOverrides[overrideKey(weekOff,d,me.id)]; var label=def?def.label:(shift.split(" ")[0]); var hours=ov?(to12(ov.start)+"-"+to12(ov.end)):(def?(to12(def.start)+"-"+to12(def.end)):shift.split(" ").slice(1).join(" ")); return <><div style={{ fontSize:11, fontWeight:700, color:shiftColor(shift).text }}>{label}</div><div style={{ fontSize:9, color:shiftColor(shift).text+"99" }}>{hours}</div></>; })()
  : avail ? <div style={{ fontSize:11, color:T.border }}>—</div>
  : <div style={{ fontSize:11, color:T.faint }}>Off</div>}
  </div>
@@ -2888,7 +2891,7 @@ function App() {
                                     <div style={{ fontSize:10, color:T.faint, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.role}</div>
                                   </div>
                                 </div>
-                                {sc && <span style={{ padding:"3px 9px", borderRadius:20, background:sc.bg, color:sc.text, border:"1px solid "+sc.border, fontSize:11, fontWeight:600 }}>{(function(){ var def=shiftDefs.find(function(d){return d.id===shift;}); return def?(def.label+" "+to12(def.start)+"-"+to12(def.end)):shift; })()}</span>}
+                                {sc && <span style={{ padding:"3px 9px", borderRadius:20, background:sc.bg, color:sc.text, border:"1px solid "+sc.border, fontSize:11, fontWeight:600 }}>{(function(){ var def=shiftDefs.find(function(d){return d.id===shift;}); var ov=shiftOverrides[overrideKey(0,todayDay,e.id)]; if(ov) return def?(def.label+" "+to12(ov.start)+"-"+to12(ov.end)):(to12(ov.start)+"-"+to12(ov.end)); return def?(def.label+" "+to12(def.start)+"-"+to12(def.end)):shift; })()}</span>}
                               </div>
                             );
                           })}
