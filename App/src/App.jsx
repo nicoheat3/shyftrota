@@ -1051,6 +1051,7 @@ function App() {
  useEffect(function(){
   if (!user || !user.property_id) return;
   var weekStart = getWeekStart(weekOff);
+  var ordered = orderedDays(); // capture together with weekStart so they can never drift apart, even if the property's week-start setting finishes loading while this request is still in flight
   var weekEnd = new Date(weekStart);
   weekEnd.setDate(weekStart.getDate() + 6);
   var startStr = isoDate(weekStart);
@@ -1066,7 +1067,7 @@ function App() {
      res.data.forEach(function(row){
       var rowDate = new Date(row.work_date + "T00:00:00");
       var dayIdx = Math.round((rowDate - weekStart) / 86400000);
-      var dayName = orderedDays()[dayIdx];
+      var dayName = ordered[dayIdx];
       if (dayName) weekData[dayName][row.employee_id] = row.shift_id;
      });
      setSched(function(p){ var n={...p}; n[weekOff]=weekData; return n; });
@@ -1087,7 +1088,7 @@ function App() {
      });
     } else { console.error("load shift overrides failed:", res.error); }
    });
- }, [user && user.property_id, weekOff]);
+ }, [user && user.property_id, weekOff, weekStartDow]);
  var [tab, setTab] = useState("schedule");
  var [selCell, setSelCell] = useState(null);
  var [addEmpOpen, setAddEmpOpen]= useState(false);
