@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabaseClient.js";
-import { VolumePanel, CoverBadge, suggestCover, coverageForDay, seedThresholds, DEFAULT_THRESHOLDS } from "./volume.js";
-import { Settings } from "./settings.js";
+import { VolumePanel, CoverBadge, suggestCover, coverageForDay, seedThresholds, DEFAULT_THRESHOLDS } from "./volume.jsx";
+import { Settings } from "./settings.jsx";
 
 // ── localStorage polyfill (safety net for restrictive environments) ──
 (function() {
