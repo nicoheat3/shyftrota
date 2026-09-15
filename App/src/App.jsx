@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabaseClient.js";
 import { VolumePanel, CoverBadge, suggestCover, coverageForDay, seedThresholds, DEFAULT_THRESHOLDS } from "./volume.jsx";
 import { Settings } from "./settings.jsx";
+import { PublishBar, NotPosted } from "./publish.jsx";
 
 // ── localStorage polyfill (safety net for restrictive environments) ──
 (function() {
@@ -1027,6 +1028,8 @@ function App() {
  var [overruled, setOverruled] = useState(function(){ return ld("sr_ovr", []); });
  var [shiftDefs, setShiftDefs] = useState([]);
  var [weekOff, setWeekOff] = useState(0);
+ var [publishMap, setPublishMap] = useState({});   // { "2026-09-14": {publishedAt, editedSince} }
+ var [publishBusy, setPublishBusy] = useState(false);
  var [dailyVol, setDailyVol] = useState({});           // { "2026-09-14": {arrivals, departures, occupancy} }
  var [volOpen, setVolOpen] = useState(false);
  var [roomCount, setRoomCount] = useState(null);
@@ -1114,6 +1117,19 @@ function App() {
      });
     } else { console.error("load shift overrides failed:", res.error); }
    });
+ supabase.from("schedule_publish").select("*")
+   .eq("property_id", user.property_id)
+   .eq("week_start", startStr)
+   .maybeSingle()
+   .then(function(res){
+    setPublishMap(function(p){
+     var n = {...p};
+     if (res.data) n[startStr] = { publishedAt: res.data.published_at, editedSince: res.data.edited_since };
+     else delete n[startStr];
+     return n;
+    });
+    if (res.error) console.error("load publish state failed:", res.error);
+   });
  supabase.from("daily_volume").select("*")
    .eq("property_id", user.property_id)
    .gte("work_date", startStr)
@@ -1180,6 +1196,10 @@ function App() {
  // Derived week data - must be before allConflicts
  var weekLabel = fmtWeekRange(weekOff);
  var weekSched = (sched[weekOff] && typeof sched[weekOff] === "object") ? sched[weekOff] : { Mon:{}, Tue:{}, Wed:{}, Thu:{}, Fri:{}, Sat:{}, Sun:{} };
+ var weekKey = isoDate(getWeekStart(weekOff));
+ var weekPub = publishMap[weekKey] || null;
+ var isPublished = !!weekPub;
+ var editedSince = weekPub && weekPub.editedSince;
  var isPastWeek = weekOff < 0;
  var isFutureWeek = weekOff > 0;
 
@@ -1264,6 +1284,49 @@ function App() {
   }, { onConflict: "property_id,work_date" }).then(function(res){
    if (res.error) { console.error("daily volume save failed:", res.error); showT("Saved locally, but the server save failed","error"); }
   });
+ }
+ function publishWeek() {
+  setPublishBusy(true);
+  var now = new Date().toISOString();
+  supabase.from("schedule_publish").upsert({
+   property_id: user.property_id,
+   week_start: weekKey,
+   published_at: now,
+   published_by: user.id,
+   edited_since: null,
+  }, { onConflict: "property_id,week_start" }).then(function(res){
+   setPublishBusy(false);
+   if (res.error) { console.error("publish failed:", res.error); showT("Couldn't post the schedule — check connection","error"); return; }
+   setPublishMap(function(p){ var n={...p}; n[weekKey]={publishedAt:now, editedSince:null}; return n; });
+   writeAudit("SCHEDULE_PUBLISHED", weekKey, user.id);
+   showT("Schedule posted — your team can see it now");
+  });
+ }
+ function unpublishWeek() {
+  setPublishBusy(true);
+  supabase.from("schedule_publish").delete()
+   .eq("property_id", user.property_id).eq("week_start", weekKey)
+   .then(function(res){
+    setPublishBusy(false);
+    if (res.error) { console.error("unpublish failed:", res.error); showT("Couldn't unpost — check connection","error"); return; }
+    setPublishMap(function(p){ var n={...p}; delete n[weekKey]; return n; });
+    writeAudit("SCHEDULE_UNPUBLISHED", weekKey, user.id);
+    showT("Schedule unposted — hidden from your team again","info");
+   });
+ }
+ // A posted week that changes stays visible, but the admin gets a nudge to
+ // tell the team. Only writes the flag once per round of edits.
+ function markWeekEdited() {
+  if (!isPublished || editedSince) return;
+  var now = new Date().toISOString();
+  setPublishMap(function(p){
+   var n={...p};
+   if (n[weekKey]) n[weekKey] = { publishedAt:n[weekKey].publishedAt, editedSince:now };
+   return n;
+  });
+  supabase.from("schedule_publish").update({ edited_since: now })
+   .eq("property_id", user.property_id).eq("week_start", weekKey)
+   .then(function(res){ if (res.error) console.error("mark edited failed:", res.error); });
  }
  function saveWeekStart(dow) {
   var name = DOW_TO_DAYNAME[dow] || "Mon";
@@ -1398,7 +1461,7 @@ function App() {
  n[weekOff] = w;
  return n;
  });
- setSelCell(null); showT("Shift assigned");
+ setSelCell(null); markWeekEdited(); showT("Shift assigned");
  syncScheduleCell(weekOff, day, eid, shift);
  }
  function removeShift(day, eid) {
@@ -1411,6 +1474,7 @@ function App() {
  n[weekOff] = w;
  return n;
  });
+ markWeekEdited();
  showT("Shift removed","info");
  syncScheduleCellDelete(weekOff, day, eid);
  }
@@ -1636,6 +1700,7 @@ function App() {
  n[weekOff] = cleared;
  return n;
  });
+ markWeekEdited();
  showT("Week cleared - start fresh!", "info");
  var weekStart = getWeekStart(weekOff);
  var weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate()+6);
@@ -1746,6 +1811,7 @@ function App() {
    });
   });
 
+ markWeekEdited();
  var base = skipped.length>0 ? "Generated! PTO excluded: "+skipped.join(", ") : "Schedule generated!";
  if (insights.length>0) {
   showT(base+" | "+insights[0]+(insights.length>1?" (+"+(insights.length-1)+" more)":""), "info");
@@ -1794,6 +1860,7 @@ function App() {
    else syncScheduleCellDelete(weekOff, d, emp.id);
   });
 
+  markWeekEdited();
   var filledCount = Object.keys(picks).length;
   if (filledCount === 0) showT(emp.name+" has no available days this week (PTO or unavailability)","info");
   else showT(emp.name+"'s week filled ("+filledCount+" day"+(filledCount>1?"s":"")+")");
@@ -2037,6 +2104,15 @@ function App() {
      </div>
    );
  })()}
+
+ <PublishBar
+   publishedAt={weekPub && weekPub.publishedAt}
+   editedSince={editedSince}
+   onPublish={publishWeek}
+   onUnpublish={unpublishWeek}
+   isPastWeek={isPastWeek}
+   busy={publishBusy}
+ />
 
  {/* Past week banner */}
  {isPastWeek && (
@@ -2937,6 +3013,15 @@ function App() {
  {tab==="myschedule" && (function(){
  var me = emps.find(function(e){return e.id===user.eid;});
  if (!me) return <div style={{ color:T.faint, padding:28, textAlign:"center" }}>No schedule found.</div>;
+ if (!isAdmin && !isPublished) return (
+   <div>
+     <div style={{ marginBottom:14 }}>
+       <h2 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:18 }}>My Schedule</h2>
+       <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{weekLabel}</p>
+     </div>
+     <NotPosted weekLabel={weekLabel} />
+   </div>
+ );
  // Shift reminder
  var dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
  var todayDay = dayNames[new Date().getDay()];
@@ -3012,6 +3097,14 @@ function App() {
               var visibleDepts = depts.filter(function(d){ return visibleIds.indexOf(d.id)>=0; });
               var dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
               var todayDay = dayNames[new Date().getDay()];
+              if (!isPublished) return (
+                <div>
+                  <div style={{ marginBottom:18 }}>
+                    <h2 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:18 }}>Who's Working Today</h2>
+                  </div>
+                  <NotPosted weekLabel={weekLabel} />
+                </div>
+              );
               return (
                 <div>
                   <div style={{ marginBottom:18 }}>
@@ -3149,6 +3242,8 @@ function App() {
  <h2 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:18 }}>Shift Swap</h2>
  <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Request a swap with a colleague</p>
  </div>
+ {!isPublished && <div style={{ marginBottom:16 }}><NotPosted weekLabel={weekLabel} compact /></div>}
+ {isPublished && (
  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, maxWidth:640 }} className="two-col">
  <div style={CARD}>
  <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>New Request</div>
@@ -3213,6 +3308,7 @@ function App() {
  </div>
  </div>
  </div>
+ )}
  </div>
  )}
 
