@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabaseClient.js";
+import { VolumePanel, CoverBadge, suggestCover, coverageForDay, seedThresholds, DEFAULT_THRESHOLDS } from "./volume.js";
+import { Settings } from "./settings.js";
 
 // ── localStorage polyfill (safety net for restrictive environments) ──
 (function() {
@@ -548,7 +550,7 @@ function incAIUsage(uid) {
   } catch(e) {}
 }
 
-function AIChat({ emps, sched, user }) {
+function AIChat({ emps, sched, user, volSummary }) {
   var [msgs, setMsgs] = useState([{ role:"assistant", text:"Hi " + user.name.split(" ")[0] + "! I can help with scheduling conflicts, coverage suggestions, and staffing decisions. What do you need?" }]);
   var [input, setInput] = useState("");
   var [loading, setLoading] = useState(false);
@@ -568,7 +570,7 @@ function AIChat({ emps, sched, user }) {
     var newUsage = getAIUsage(user.id);
     setUsage(newUsage);
     setMsgs(function(p){ return p.concat([{role:"user",text:msg}]); });
-    var ctx = "You are an AI scheduling assistant for a hospitality/healthcare business. Employees: " + JSON.stringify(emps.map(function(e){return{name:e.name,role:e.role,avail:e.avail,max:e.max};})) + ". Be concise and practical.";
+    var ctx = "You are an AI scheduling assistant for a hospitality/healthcare business. Employees: " + JSON.stringify(emps.map(function(e){return{name:e.name,role:e.role,avail:e.avail,max:e.max};})) + ". Be concise and practical." + (volSummary ? " This week's expected volume and the cover it calls for: " + volSummary + "." : "");
     var history = msgs.slice(1).map(function(m){ return {role:m.role==="user"?"user":"assistant",content:m.text}; }).concat([{role:"user",content:msg}]);
     fetch("https://api.anthropic.com/v1/messages", {
       method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:800,system:ctx,messages:history})
@@ -775,6 +777,7 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  var [name, setName] = useState("");
  var [ind, setInd] = useState("general");
   var [payrollPick, setPayrollPick] = useState("paychex");
+  var [rooms, setRooms] = useState("");
  var [err, setErr] = useState("");
 
  var [loggingIn, setLoggingIn] = useState(false);
@@ -807,7 +810,13 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  var pwErr = validatePassword(pw);
  if (pwErr) { setErr(pwErr); return; }
  if (accounts.find(function(a){return a.email.toLowerCase()===email.toLowerCase().trim();})) { setErr("Email already in use."); return; }
- onSignup({ name:name, email:email, pw:pw, industry:ind, payroll:payrollPick });
+ var roomNum = null;
+ if (ind === "hospitality") {
+  if (!String(rooms).trim()) { setErr("Enter how many rooms this property has — it sets your staffing baseline."); return; }
+  roomNum = Number(rooms);
+  if (isNaN(roomNum) || roomNum < 1) { setErr("Room count must be a number of 1 or more."); return; }
+ }
+ onSignup({ name:name, email:email, pw:pw, industry:ind, payroll:payrollPick, rooms:roomNum });
  }
 
  if (mode === "login") return (
@@ -873,6 +882,15 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  </div>
  </div>
  {err && <div style={{ background:T.dangerL, border:"1px solid #FCA5A5", borderRadius:8, padding:"9px 12px", color:"#991B1B", fontSize:13, marginBottom:13 }}>{err}</div>}
+          {ind === "hospitality" && (
+            <div style={{ marginBottom:16 }}>
+              <label style={LBL}>Rooms at this property</label>
+              <input type="number" min={1} value={rooms} onChange={function(e){setRooms(e.target.value);setErr("");}} placeholder="259" style={INP} />
+              <div style={{ fontSize:11, color:T.faint, marginTop:5, lineHeight:1.5 }}>
+                Sets your starting staffing levels for arrivals and departures. You can fine-tune them later under Staffing rules.
+              </div>
+            </div>
+          )}
           <div style={{ marginBottom:16 }}>
             <label style={LBL}>Payroll provider</label>
             <select value={payrollPick} onChange={function(e){setPayrollPick(e.target.value);}} style={INP}>
@@ -973,9 +991,13 @@ function App() {
   // as soon as we know which property this user belongs to.
   useEffect(function(){
    if (!user || !user.property_id) return;
-   supabase.from("properties").select("week_start").eq("id", user.property_id).single().then(function(res){
+   supabase.from("properties").select("week_start, room_count, vol_thresholds").eq("id", user.property_id).single().then(function(res){
     if (res.data) {
-     setWeekStartDow(res.data.week_start === "Sun" ? 0 : 1);
+     var dayNameToDow = {Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6};
+     var loadedDow = dayNameToDow[res.data.week_start];
+     setWeekStartDow(typeof loadedDow === "number" ? loadedDow : 1);
+     setRoomCount(res.data.room_count || null);
+     setVolThresholds(res.data.vol_thresholds || (res.data.room_count ? seedThresholds(res.data.room_count) : DEFAULT_THRESHOLDS));
     } else if (res.error) { console.error("load property settings failed:", res.error); }
    });
    supabase.from("employees").select("*").eq("property_id", user.property_id).then(function(res){
@@ -1005,6 +1027,10 @@ function App() {
  var [overruled, setOverruled] = useState(function(){ return ld("sr_ovr", []); });
  var [shiftDefs, setShiftDefs] = useState([]);
  var [weekOff, setWeekOff] = useState(0);
+ var [dailyVol, setDailyVol] = useState({});           // { "2026-09-14": {arrivals, departures, occupancy} }
+ var [volOpen, setVolOpen] = useState(false);
+ var [roomCount, setRoomCount] = useState(null);
+ var [volThresholds, setVolThresholds] = useState(DEFAULT_THRESHOLDS);
  var [weekStartDow, setWeekStartDow] = useState(1); // 0=Sun, 1=Mon — this property's first day of week
  APP_WEEK_START_DOW = weekStartDow; // keep the module-level date-math functions in sync every render
 
@@ -1088,6 +1114,21 @@ function App() {
      });
     } else { console.error("load shift overrides failed:", res.error); }
    });
+ supabase.from("daily_volume").select("*")
+   .eq("property_id", user.property_id)
+   .gte("work_date", startStr)
+   .lte("work_date", endStr)
+   .then(function(res){
+    if (res.data) {
+     setDailyVol(function(p){
+      var n = {...p};
+      res.data.forEach(function(row){
+       n[row.work_date] = { arrivals:row.arrivals, departures:row.departures, occupancy:row.occupancy };
+      });
+      return n;
+     });
+    } else { console.error("load daily volume failed:", res.error); }
+   });
  }, [user && user.property_id, weekOff, weekStartDow]);
  var [tab, setTab] = useState("schedule");
  var [selCell, setSelCell] = useState(null);
@@ -1164,6 +1205,12 @@ function App() {
  });
  var conflicts = allConflicts.filter(function(c){ return overruled.indexOf(c)<0; });
 
+ var volSummary = orderedDays().map(function(d){
+  var v = dailyVol[dayToISODate(weekOff, d)];
+  var s = suggestCover(v, volThresholds);
+  if (!s) return null;
+  return d+": "+(v.arrivals||0)+" arrivals, "+(v.departures||0)+" departures, "+(v.occupancy||0)+"% occupancy — needs "+s.am+" morning"+(s.mid?", "+s.mid+" mid":"")+", "+s.pm+" evening";
+ }).filter(Boolean).join(" | ");
  var pendingSwaps = swaps.filter(function(r){return r.status==="pending";}).length;
  var pendingPTO = ptos.filter(function(r){return r.status==="pending";}).length;
  var pendingCall = callins.filter(function(r){return r.status==="pending";}).length;
@@ -1175,6 +1222,7 @@ function App() {
  setAccounts(function(p){return p.concat([acc]);});
  setIndustry(d.industry);
     if (d.payroll) setPayroll(d.payroll);
+    if (d.rooms) { setRoomCount(d.rooms); setVolThresholds(seedThresholds(d.rooms)); }
  setUser(acc);
  showT("Workspace created! Welcome, "+d.name.split(" ")[0]+".");
  }
@@ -1200,6 +1248,78 @@ function App() {
   return function(){ clearInterval(id); };
  }, [user]);
 
+ function saveVolume(dateStr, field, value) {
+  var v = value === "" ? null : Number(value);
+  if (v !== null && (isNaN(v) || v < 0)) { showT("Enter a number of 0 or more","error"); return; }
+  if (field === "occupancy" && v !== null && v > 100) { showT("Occupancy is a percentage — 0 to 100","error"); return; }
+  var next = {...(dailyVol[dateStr] || {})};
+  next[field] = v;
+  setDailyVol(function(p){ var n={...p}; n[dateStr]=next; return n; });
+  supabase.from("daily_volume").upsert({
+   property_id: user.property_id,
+   work_date: dateStr,
+   arrivals: next.arrivals === undefined ? null : next.arrivals,
+   departures: next.departures === undefined ? null : next.departures,
+   occupancy: next.occupancy === undefined ? null : next.occupancy,
+  }, { onConflict: "property_id,work_date" }).then(function(res){
+   if (res.error) { console.error("daily volume save failed:", res.error); showT("Saved locally, but the server save failed","error"); }
+  });
+ }
+ function saveWeekStart(dow) {
+  var name = DOW_TO_DAYNAME[dow] || "Mon";
+  setWeekStartDow(dow);
+  supabase.from("properties").update({ week_start: name }).eq("id", user.property_id).then(function(res){
+   if (res.error) { console.error("week_start save failed:", res.error); showT("Couldn't save — check connection","error"); }
+   else showT("Week now starts on "+name+"day");
+  });
+ }
+ async function changeOwnPassword() {
+  var pw = window.prompt("New password (min 8 characters, with an uppercase letter, a number and a symbol):");
+  if (!pw) return;
+  var pwErr = validatePassword(pw);
+  if (pwErr) { showT(pwErr, "error"); return; }
+  var res = await supabase.auth.updateUser({ password: pw });
+  if (res.error) { console.error("password change failed:", res.error); showT("Couldn't change password: "+res.error.message, "error"); }
+  else { showT("Password updated"); writeAudit("PASSWORD_CHANGED", "self", user.id); }
+ }
+ async function deleteOwnAccount(done) {
+  var sessionRes = await supabase.auth.getSession();
+  var accessToken = sessionRes.data.session ? sessionRes.data.session.access_token : null;
+  if (!accessToken) { showT("Not signed in — can't delete account","error"); if (done) done(); return; }
+  try {
+   var apiRes = await fetch("/api/delete-account", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + accessToken },
+   });
+   var apiData = await apiRes.json();
+   if (!apiRes.ok) {
+    console.error("account deletion failed:", apiData);
+    showT(apiData.error || "Couldn't delete your account", "error");
+    if (done) done();
+    return;
+   }
+   writeAudit("ACCOUNT_DELETED", "self", user.id);
+   showT("Your account has been deleted.");
+   setTimeout(function(){ logout(); }, 1800);
+  } catch (err) {
+   console.error("account deletion request failed:", err);
+   showT("Couldn't reach the server — try again","error");
+   if (done) done();
+  }
+ }
+ function saveThresholds(next) {
+  setVolThresholds(next);
+  supabase.from("properties").update({ vol_thresholds: next }).eq("id", user.property_id).then(function(res){
+   if (res.error) { console.error("thresholds save failed:", res.error); showT("Couldn't save staffing rules — check connection","error"); }
+   else showT("Staffing rules updated");
+  });
+ }
+ function saveRoomCount(n) {
+  setRoomCount(n);
+  supabase.from("properties").update({ room_count: n }).eq("id", user.property_id).then(function(res){
+   if (res.error) console.error("room count save failed:", res.error);
+  });
+ }
  function syncScheduleCellByDate(dateStr, eid, shiftId) {
   supabase.from("schedule_entries").upsert({
    property_id: user.property_id,
@@ -1691,6 +1811,7 @@ function App() {
     {id:"shifts",     label:"Shift Types"},
     {id:"chat",       label:"Team Chat"},
     {id:"ai",         label:"AI"},
+    {id:"settings",   label:"Settings"},
   ];
   var EMP_TABS = [
     {id:"myschedule",label:"My Schedule"},
@@ -1701,9 +1822,10 @@ function App() {
     {id:"callin",    label:"Call In"},
     {id:"clockin",   label:"Clock In"},
     {id:"chat",      label:"Team Chat"},
+    {id:"settings",  label:"Settings"},
   ];
  var TABS = isAdmin ? ADMIN_TABS : EMP_TABS;
-  var TAB_ICONS = {schedule:"📅",employees:"👥",depts:"🏢",openShifts:"📌",requests:"📋",timeclock:"🕐",shifts:"⏱",chat:"💬",ai:"✦",myschedule:"📅",today:"👀",timeoff:"🏖",swap:"🔄",callin:"📞",clockin:"👊"};
+  var TAB_ICONS = {schedule:"📅",employees:"👥",depts:"🏢",openShifts:"📌",requests:"📋",timeclock:"🕐",shifts:"⏱",chat:"💬",ai:"✦",myschedule:"📅",today:"👀",timeoff:"🏖",swap:"🔄",callin:"📞",clockin:"👊",settings:"⚙"};
 
  if (authLoading) return (
   <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"#F8F6F3", color:"#8A8478", fontFamily:"'Inter',sans-serif", fontSize:14 }}>
@@ -1938,25 +2060,35 @@ function App() {
  </div>
  </div>
  <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
-  <select value={weekStartDow===0?"Sun":"Mon"} onChange={function(e){
-   var newDow = e.target.value==="Sun" ? 0 : 1;
-   setWeekStartDow(newDow);
-   supabase.from("properties").update({ week_start: e.target.value }).eq("id", user.property_id).then(function(res){
-    if (res.error) { console.error("week_start save failed:", res.error); showT("Couldn't save — check connection","error"); }
-    else showT("Week now starts on "+e.target.value+"day");
-   });
-  }} title="Which day this schedule's week starts on" style={{ ...INP, width:"auto", padding:"6px 10px", fontSize:11 }}>
-   <option value="Mon">Week starts Mon</option>
-   <option value="Sun">Week starts Sun</option>
-  </select>
   <div style={{ display:"flex", background:T.bg, border:"1px solid "+T.border, borderRadius:8, padding:2 }}>
    <button onClick={function(){setSchedView("week");}} style={{ padding:"5px 12px", borderRadius:6, border:"none", background:schedView==="week"?T.surface:"transparent", color:schedView==="week"?T.text:T.faint, fontSize:11, fontWeight:schedView==="week"?700:400, cursor:"pointer", fontFamily:"inherit" }}>Week</button>
    <button onClick={function(){setSchedView("day");}} style={{ padding:"5px 12px", borderRadius:6, border:"none", background:schedView==="day"?T.surface:"transparent", color:schedView==="day"?T.text:T.faint, fontSize:11, fontWeight:schedView==="day"?700:400, cursor:"pointer", fontFamily:"inherit" }}>Today</button>
   </div>
-  {!isPastWeek && <button onClick={clearWeek} style={{ ...GBTN, fontSize:12, display:"flex", alignItems:"center", gap:6, color:T.danger, borderColor:"#FCA5A5" }}>&#128465; Clear</button>}
+  <button onClick={function(){setVolOpen(!volOpen);}} style={{ ...GBTN, fontSize:12, color:volOpen?T.accent:T.muted, borderColor:volOpen?T.accent:T.border }}>{volOpen?"Hide volume":"Volume"}</button>
+ {!isPastWeek && <button onClick={clearWeek} style={{ ...GBTN, fontSize:12, display:"flex", alignItems:"center", gap:6, color:T.danger, borderColor:"#FCA5A5" }}>&#128465; Clear</button>}
   {!isPastWeek && <button onClick={autoGenerate} style={{ ...BTN, fontSize:12, display:"flex", alignItems:"center", gap:6, background:"linear-gradient(135deg,#C84B31,#E05C40)" }}>&#10024; Auto-Generate</button>}
  </div>
  </div>
+
+ {volOpen && (function(){
+   var vDays = orderedDays();
+   var vEmps = emps.filter(function(e){ return deptFilter==="all" || e.dept===deptFilter; });
+   return (
+     <VolumePanel
+       days={vDays}
+       dates={vDays.map(function(d){ return dayToISODate(weekOff, d); })}
+       labels={vDays.map(function(d, di){ return getDayDate(di, weekOff); })}
+       volumes={dailyVol}
+       onChange={saveVolume}
+       thresholds={volThresholds}
+       onThresholds={saveThresholds}
+       roomCount={roomCount}
+       onRoomCount={saveRoomCount}
+       coverage={vDays.map(function(d){ return coverageForDay(vEmps, weekSched[d]||{}, shiftDefs); })}
+       readOnly={isPastWeek}
+     />
+   );
+ })()}
 
  {/* Shift legend */}
                 <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:10, alignItems:"center" }}>
@@ -2044,6 +2176,7 @@ function App() {
  <th key={d} style={{ padding:"8px 4px", textAlign:"center", color:T.faint, fontSize:10, fontWeight:600, borderBottom:"1px solid "+T.border }}>
  <div style={{ fontSize:9, textTransform:"uppercase" }}>{d}</div>
  <div style={{ color:T.text, fontWeight:700, fontSize:11, marginTop:1 }}>{dd}</div>
+ <div><CoverBadge vol={dailyVol[dayToISODate(weekOff, d)]} thresholds={volThresholds} actual={coverageForDay(emps.filter(function(e){ return deptFilter==="all" || e.dept===deptFilter; }), weekSched[d]||{}, shiftDefs)} /></div>
  </th>
  );
  })}
@@ -2729,6 +2862,29 @@ function App() {
  </div>
  )}
 
+ {/* SETTINGS */}
+ {tab==="settings" && (
+   <Settings
+     user={user}
+     isAdmin={isAdmin}
+     weekStartDow={weekStartDow}
+     onWeekStart={saveWeekStart}
+     industry={industry}
+     onIndustry={function(v){ setIndustry(v); showT("Industry updated"); }}
+     industries={INDUSTRIES}
+     payroll={payroll}
+     onPayroll={function(v){ setPayroll(v); showT("Payroll provider updated"); }}
+     payrollProviders={PAYROLL_PROVIDERS}
+     roomCount={roomCount}
+     onRoomCount={saveRoomCount}
+     thresholds={volThresholds}
+     onThresholds={saveThresholds}
+     onChangePassword={changeOwnPassword}
+     onDeleteAccount={deleteOwnAccount}
+     onLogout={logout}
+   />
+ )}
+
  {/* CHAT */}
  {tab==="chat" && <TeamChat user={user} accounts={accounts} />}
 
@@ -2740,7 +2896,7 @@ function App() {
  <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Scheduling intelligence powered by Claude</p>
  </div>
  <div style={{ display:"grid", gridTemplateColumns:"1fr 220px", gap:14, minHeight:460 }} className="two-col">
- <AIChat emps={emps} sched={sched} user={user} />
+ <AIChat emps={emps} sched={sched} user={user} volSummary={volSummary} />
  <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
  <div style={CARD}>
  <div style={{ fontSize:10, color:T.faint, fontWeight:600, letterSpacing:"0.05em", textTransform:"uppercase", marginBottom:9 }}>Quick Prompts</div>
