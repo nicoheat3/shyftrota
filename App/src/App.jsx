@@ -531,8 +531,8 @@ function Confirm({ show, title, body, onOk, onCancel }) {
 
 // ── Badge ─────────────────────────────────────────────
 function Badge({ status }) {
- var map = { pending:{bg:"#FEF9C3",color:"#854D0E"}, approved:{bg:T.successL,color:"#065F46"}, rejected:{bg:T.dangerL,color:"#991B1B"}, expired:{bg:"#F1EFEC",color:"#6B6460"} };
- var labels = { rejected:"Declined", denied:"Declined", expired:"Expired" };
+ var map = { pending:{bg:"#FEF9C3",color:"#854D0E"}, approved:{bg:T.successL,color:"#065F46"}, rejected:{bg:T.dangerL,color:"#991B1B"}, expired:{bg:"#F1EFEC",color:"#6B6460"}, cancelled:{bg:"#F1EFEC",color:"#6B6460"} };
+ var labels = { rejected:"Declined", denied:"Declined", expired:"Expired", cancelled:"Cancelled" };
  var s = map[status] || map.pending;
  return <span style={{ padding:"2px 8px", borderRadius:20, fontSize:11, fontWeight:600, background:s.bg, color:s.color, textTransform:"capitalize" }}>{labels[status] || status}</span>;
 }
@@ -1240,6 +1240,10 @@ function App() {
  var [ptoDate, setPtoDate] = useState(null);
  var [ptoEnd, setPtoEnd] = useState(null);
  var [ptoNote, setPtoNote] = useState("");
+ var [adminPtoOpen, setAdminPtoOpen] = useState(false);
+ var [adminPto, setAdminPto] = useState({ eid:"", type:PTO_TYPES[0], start:"", end:"", note:"" });
+ var [adminPtoSaving, setAdminPtoSaving] = useState(false);
+ var [cancelPtoId, setCancelPtoId] = useState(null);
  var [callType, setCallType] = useState(ATTEND[0]);
  var [callNote, setCallNote] = useState("");
  var [openForm, setOpenForm] = useState({ day:DAYS[0], shift:"", role:"", note:"" });
@@ -1698,7 +1702,29 @@ function App() {
    return true;
   });
  }
- var STATUS_WORD = { approved:"approved", rejected:"declined", pending:"reopened" };
+ var STATUS_WORD = { approved:"approved", rejected:"declined", pending:"reopened", cancelled:"cancelled" };
+ // Admins add time off directly (for themselves or anyone) — it's approved
+ // on the spot, so auto-generate and the grid skip those days right away.
+ async function addAdminPTO() {
+  var eid = Number(adminPto.eid || user.eid);
+  if (!eid) { showT("Pick who the time off is for","error"); return; }
+  if (!adminPto.start) { showT("Pick a start date","error"); return; }
+  var end = adminPto.end || adminPto.start;
+  if (end < adminPto.start) { showT("End date is before the start date","error"); return; }
+  setAdminPtoSaving(true);
+  var res = await supabase.from("pto_requests").insert({
+   property_id: user.property_id, employee_id: eid, pto_type: adminPto.type,
+   start_date: adminPto.start, end_date: end, reason: sanitize(adminPto.note), status: "approved",
+  }).select().single();
+  setAdminPtoSaving(false);
+  if (res.error || !res.data) { console.error("admin PTO add failed:", res.error); showT(res.error ? ("Couldn't save — "+res.error.message) : "Couldn't save time off","error"); return; }
+  var emp = emps.find(function(e){ return Number(e.id)===eid; });
+  setPtos(function(p){ return [{ id:res.data.id, eid:eid, ename:emp?emp.name:"", type:adminPto.type, startDate:adminPto.start, endDate:end, note:sanitize(adminPto.note), status:"approved" }].concat(p); });
+  writeAudit("PTO_ADDED_BY_ADMIN", "employee="+eid+" "+adminPto.start+" to "+end, user.id);
+  setAdminPto({ eid:"", type:PTO_TYPES[0], start:"", end:"", note:"" });
+  setAdminPtoOpen(false);
+  showT("Time off added — "+(emp?emp.name.split(" ")[0]:"they")+" won't be scheduled those days");
+ }
  function approveSwap(req) {
  var to=emps.find(function(e){return e.id===req.toId;}); var from=emps.find(function(e){return e.id===req.fromId;});
  if(!to||!from) { showT("Couldn't find one of the employees on this swap","error"); return; }
@@ -2867,6 +2893,35 @@ function App() {
   })}
  </div>
  {reqView==="current" ? (<>
+ <div style={{ marginBottom:18 }}>
+  {!adminPtoOpen ? (
+   <button onClick={function(){ setAdminPto({ eid:String(user.eid||""), type:PTO_TYPES[0], start:"", end:"", note:"" }); setAdminPtoOpen(true); }} style={{ ...GBTN, fontSize:13, padding:"8px 14px", color:T.text }}>+ Add time off</button>
+  ) : (
+   <div style={{ ...CARD, border:"1px solid "+T.border }}>
+    <div style={{ fontSize:14, fontWeight:700, marginBottom:4 }}>Add time off</div>
+    <div style={{ fontSize:12, color:T.muted, marginBottom:14, lineHeight:1.5 }}>Saved as approved right away. That person won't be scheduled on these days, including by Auto-Generate.</div>
+    <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(160px, 1fr))", gap:10, marginBottom:10 }}>
+     <div><label style={LBL}>Who</label>
+      <select value={adminPto.eid} onChange={function(e){ setAdminPto({ ...adminPto, eid:e.target.value }); }} style={INP}>
+       <option value="">Select…</option>
+       {emps.slice().sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); }).map(function(e){ return <option key={e.id} value={e.id}>{e.name}{Number(e.id)===Number(user.eid)?" (you)":""}</option>; })}
+      </select></div>
+     <div><label style={LBL}>Type</label>
+      <select value={adminPto.type} onChange={function(e){ setAdminPto({ ...adminPto, type:e.target.value }); }} style={INP}>{PTO_TYPES.map(function(t){ return <option key={t}>{t}</option>; })}</select></div>
+     <div><label style={LBL}>First day off</label>
+      <input type="date" value={adminPto.start} onChange={function(e){ setAdminPto({ ...adminPto, start:e.target.value, end:(adminPto.end && adminPto.end >= e.target.value) ? adminPto.end : e.target.value }); }} style={INP} /></div>
+     <div><label style={LBL}>Last day off</label>
+      <input type="date" value={adminPto.end} min={adminPto.start||undefined} onChange={function(e){ setAdminPto({ ...adminPto, end:e.target.value }); }} style={INP} /></div>
+    </div>
+    <div style={{ marginBottom:12 }}><label style={LBL}>Note (optional)</label>
+     <input value={adminPto.note} onChange={function(e){ setAdminPto({ ...adminPto, note:e.target.value }); }} placeholder="e.g. Family trip" style={INP} /></div>
+    <div style={{ display:"flex", gap:8 }}>
+     <button onClick={addAdminPTO} disabled={adminPtoSaving} style={{ ...BTN, opacity:adminPtoSaving?0.6:1 }}>{adminPtoSaving ? "Saving…" : "Add time off"}</button>
+     <button onClick={function(){ setAdminPtoOpen(false); }} style={GBTN}>Cancel</button>
+    </div>
+   </div>
+  )}
+ </div>
  {callins.length > 0 && (
  <div style={{ marginBottom:24 }}>
  <div style={{ fontSize:13, fontWeight:600, color:T.danger, marginBottom:10 }}>📞 Attendance Notices</div>
@@ -2912,9 +2967,17 @@ function App() {
  <button onClick={function(){setPTOStatus(req.id,"rejected");}} style={{ ...GBTN, padding:"7px 14px", fontSize:12, color:T.danger, borderColor:"#FCA5A5" }}>Decline</button>
  </>
  ) : (
- <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+ <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end" }}>
  <Badge status={req.status} />
- <button onClick={function(){setPTOStatus(req.id,"pending");}} style={{ fontSize:11, color:T.muted, background:"none", border:"1px solid "+T.border, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Reopen</button>
+ {req.status==="approved" && (cancelPtoId===req.id ? (
+  <>
+   <button onClick={function(){ setCancelPtoId(null); setPTOStatus(req.id,"cancelled"); }} style={{ fontSize:11, color:"white", background:T.danger, border:"none", borderRadius:6, padding:"3px 9px", cursor:"pointer", fontWeight:600 }}>Yes, cancel it</button>
+   <button onClick={function(){ setCancelPtoId(null); }} style={{ fontSize:11, color:T.muted, background:"none", border:"1px solid "+T.border, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Keep</button>
+  </>
+ ) : (
+  <button onClick={function(){ setCancelPtoId(req.id); }} style={{ fontSize:11, color:T.danger, background:"none", border:"1px solid #FCA5A5", borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Cancel time off</button>
+ ))}
+ {req.status!=="approved" && <button onClick={function(){setPTOStatus(req.id,"pending");}} style={{ fontSize:11, color:T.muted, background:"none", border:"1px solid "+T.border, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Reopen</button>}
  </div>
  )}
  </div>
