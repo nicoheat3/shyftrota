@@ -203,6 +203,15 @@ function isoDate(d) {
  var dd = String(d.getDate()).padStart(2,"0");
  return y+"-"+m+"-"+dd;
 }
+// "2026-10-02" -> "Fri, Oct 2" (adds the year only if it isn't this year)
+function fmtReqDate(iso) {
+ if (!iso) return "";
+ var d = new Date(iso + "T00:00:00");
+ if (isNaN(d)) return iso;
+ var opts = { weekday:"short", month:"short", day:"numeric" };
+ if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+ return d.toLocaleDateString(undefined, opts);
+}
 
 // The property's configured first-day-of-week, as a JS Date.getDay() number
 // (0=Sun..6=Sat). Defaults to Monday (1), matching the app's original
@@ -525,9 +534,10 @@ function Confirm({ show, title, body, onOk, onCancel }) {
 
 // ── Badge ─────────────────────────────────────────────
 function Badge({ status }) {
- var map = { pending:{bg:"#FEF9C3",color:"#854D0E"}, approved:{bg:T.successL,color:"#065F46"}, rejected:{bg:T.dangerL,color:"#991B1B"} };
+ var map = { pending:{bg:"#FEF9C3",color:"#854D0E"}, approved:{bg:T.successL,color:"#065F46"}, rejected:{bg:T.dangerL,color:"#991B1B"}, expired:{bg:"#F1EFEC",color:"#6B6460"} };
+ var labels = { rejected:"Declined", denied:"Declined", expired:"Expired" };
  var s = map[status] || map.pending;
- return <span style={{ padding:"2px 8px", borderRadius:20, fontSize:11, fontWeight:600, background:s.bg, color:s.color, textTransform:"capitalize" }}>{status}</span>;
+ return <span style={{ padding:"2px 8px", borderRadius:20, fontSize:11, fontWeight:600, background:s.bg, color:s.color, textTransform:"capitalize" }}>{labels[status] || status}</span>;
 }
 
 // ── AI Chat ───────────────────────────────────────────
@@ -1030,6 +1040,8 @@ function App() {
  var [weekOff, setWeekOff] = useState(0);
  var [publishMap, setPublishMap] = useState({});   // { "2026-09-14": {publishedAt, editedSince} }
  var [publishBusy, setPublishBusy] = useState(false);
+ var [reqView, setReqView] = useState("current");      // "current" | "history"
+ var [histEmp, setHistEmp] = useState("");             // employee filter in history
  var [dailyVol, setDailyVol] = useState({});           // { "2026-09-14": {arrivals, departures, occupancy} }
  var [volOpen, setVolOpen] = useState(false);
  var [roomCount, setRoomCount] = useState(null);
@@ -1046,7 +1058,7 @@ function App() {
     setSwaps(res.data.map(function(r){
      var fromEmp = emps.find(function(e){return e.id===r.from_employee_id;});
      var toEmp = emps.find(function(e){return e.id===r.to_employee_id;});
-     return { id:r.id, fromId:r.from_employee_id, from:fromEmp?fromEmp.name:"", toId:r.to_employee_id, to:toEmp?toEmp.name:"", workDate:r.work_date, day:DAYS[(function(){var d=new Date(r.work_date+"T00:00:00");var wd=d.getDay();return wd===0?6:wd-1;})()], shift:r.shift_id, myShift:r.shift_id, reason:r.reason||"", status:r.status };
+     return { id:r.id, fromId:r.from_employee_id, from:fromEmp?fromEmp.name:"", toId:r.to_employee_id, to:toEmp?toEmp.name:"", workDate:r.work_date, day:DAYS[(function(){var d=new Date(r.work_date+"T00:00:00");var wd=d.getDay();return wd===0?6:wd-1;})()], shift:r.shift_id, myShift:r.shift_id, reason:r.reason||"", status:(r.status==="denied"?"rejected":r.status) };
     }));
    } else { console.error("load swaps failed:", res.error); }
   });
@@ -1054,7 +1066,7 @@ function App() {
    if (res.data) {
     setPtos(res.data.map(function(r){
      var emp = emps.find(function(e){return e.id===r.employee_id;});
-     return { id:r.id, eid:r.employee_id, ename:emp?emp.name:"", type:r.pto_type, startDate:r.start_date, endDate:r.end_date, note:r.reason||"", status:r.status };
+     return { id:r.id, eid:r.employee_id, ename:emp?emp.name:"", type:r.pto_type, startDate:r.start_date, endDate:r.end_date, note:r.reason||"", status:(r.status==="denied"?"rejected":r.status) };
     }));
    } else { console.error("load PTO failed:", res.error); }
   });
@@ -1231,8 +1243,17 @@ function App() {
   if (!s) return null;
   return d+": "+(v.arrivals||0)+" arrivals, "+(v.departures||0)+" departures, "+(v.occupancy||0)+"% occupancy — needs "+s.am+" morning"+(s.mid?", "+s.mid+" mid":"")+", "+s.pm+" evening";
  }).filter(Boolean).join(" | ");
- var pendingSwaps = swaps.filter(function(r){return r.status==="pending";}).length;
- var pendingPTO = ptos.filter(function(r){return r.status==="pending";}).length;
+ // A request stays on the main Requests list until its date has passed,
+ // then it moves to History. Nothing is ever deleted.
+ var reqToday = isoDate(new Date());
+ function ptoLastDay(r){ return r.endDate || r.startDate || ""; }
+ function reqIsPast(d){ return !!d && d < reqToday; }
+ var curPtos = ptos.filter(function(r){ return !reqIsPast(ptoLastDay(r)); });
+ var pastPtos = ptos.filter(function(r){ return reqIsPast(ptoLastDay(r)); });
+ var curSwaps = swaps.filter(function(r){ return !reqIsPast(r.workDate); });
+ var pastSwaps = swaps.filter(function(r){ return reqIsPast(r.workDate); });
+ var pendingSwaps = curSwaps.filter(function(r){return r.status==="pending";}).length;
+ var pendingPTO = curPtos.filter(function(r){return r.status==="pending";}).length;
  var pendingCall = callins.filter(function(r){return r.status==="pending";}).length;
  var pendingAll = pendingSwaps + pendingPTO + pendingCall;
 
@@ -1596,24 +1617,39 @@ function App() {
   }
  }
 
+ // Saves a request's status and confirms the database really changed.
+ // Before, a blocked save failed silently and the request reappeared on refresh.
+ // The database stores a decline as "denied"; the app calls it "rejected".
+ function saveReqStatus(table, id, status) {
+  var dbStatus = status==="rejected" ? "denied" : status;
+  return supabase.from(table).update({ status: dbStatus }).eq("id", id).select("id").then(function(res){
+   if (res.error || !res.data || res.data.length===0) {
+    console.error(table+" status save failed:", res.error || "0 rows updated — blocked by database permissions");
+    showT(res.error ? ("Couldn't save — "+res.error.message) : "Couldn't save — the database blocked this change","error");
+    return false;
+   }
+   return true;
+  });
+ }
+ var STATUS_WORD = { approved:"approved", rejected:"declined", pending:"reopened" };
  function approveSwap(req) {
  var to=emps.find(function(e){return e.id===req.toId;}); var from=emps.find(function(e){return e.id===req.fromId;});
- if(!to||!from) return;
+ if(!to||!from) { showT("Couldn't find one of the employees on this swap","error"); return; }
  var dateStr = req.workDate || dayToISODate(weekOff, req.day);
- applyLocalScheduleChange(dateStr, from.id, to.id, req.shift);
- setSwaps(function(p){return p.map(function(r){return r.id===req.id?{...r,status:"approved"}:r;});});
- showT("Swap approved"); writeAudit("SWAP_APPROVED","swap approved",user.id);
- syncScheduleCellDeleteByDate(dateStr, from.id);
- syncScheduleCellByDate(dateStr, to.id, req.shift);
- supabase.from("swap_requests").update({ status:"approved" }).eq("id", req.id).then(function(res){
-  if (res.error) console.error("swap status sync failed:", res.error);
+ saveReqStatus("swap_requests", req.id, "approved").then(function(ok){
+  if (!ok) return;
+  applyLocalScheduleChange(dateStr, from.id, to.id, req.shift);
+  setSwaps(function(p){return p.map(function(r){return r.id===req.id?{...r,status:"approved"}:r;});});
+  showT("Swap approved"); writeAudit("SWAP_APPROVED","swap approved",user.id);
+  syncScheduleCellDeleteByDate(dateStr, from.id);
+  syncScheduleCellByDate(dateStr, to.id, req.shift);
  });
  }
  function setSwapStatus(id, status) {
-  setSwaps(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});});
-  showT("Swap "+status); writeAudit("SWAP_STATUS_CHANGE","status="+status,user.id);
-  supabase.from("swap_requests").update({ status: status }).eq("id", id).then(function(res){
-   if (res.error) console.error("swap status sync failed:", res.error);
+  saveReqStatus("swap_requests", id, status).then(function(ok){
+   if (!ok) return;
+   setSwaps(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});});
+   showT("Swap "+(STATUS_WORD[status]||status)); writeAudit("SWAP_STATUS_CHANGE","status="+status,user.id);
   });
  }
 
@@ -1646,10 +1682,10 @@ function App() {
  showT("Time-off request submitted");
  }
  function setPTOStatus(id, status) {
-  setPtos(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});});
-  showT("PTO "+status); writeAudit("PTO_STATUS_CHANGE","status="+status,user.id);
-  supabase.from("pto_requests").update({ status: status }).eq("id", id).then(function(res){
-   if (res.error) console.error("PTO status sync failed:", res.error);
+  saveReqStatus("pto_requests", id, status).then(function(ok){
+   if (!ok) return;
+   setPtos(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});});
+   showT("Time off "+(STATUS_WORD[status]||status)); writeAudit("PTO_STATUS_CHANGE","status="+status,user.id);
   });
  }
 
@@ -2757,6 +2793,13 @@ function App() {
  {/* REQUESTS */}
  {tab==="requests" && isAdmin && (
  <div>
+ <div style={{ display:"flex", gap:4, background:T.bg, border:"1px solid "+T.border, borderRadius:10, padding:4, width:"fit-content", marginBottom:18 }}>
+  {[["current","Current"],["history","History"]].map(function(o){
+   var on = reqView===o[0];
+   return <button key={o[0]} onClick={function(){ setReqView(o[0]); }} style={{ border:"none", borderRadius:7, padding:"7px 16px", fontSize:13, fontWeight:on?700:500, fontFamily:"inherit", cursor:"pointer", background:on?T.surface:"transparent", color:on?T.text:T.muted, boxShadow:on?"0 1px 2px rgba(0,0,0,0.08)":"none" }}>{o[1]}{o[0]==="history" && (pastPtos.length+pastSwaps.length) > 0 ? " ("+(pastPtos.length+pastSwaps.length)+")" : ""}</button>;
+  })}
+ </div>
+ {reqView==="current" ? (<>
  {callins.length > 0 && (
  <div style={{ marginBottom:24 }}>
  <div style={{ fontSize:13, fontWeight:600, color:T.danger, marginBottom:10 }}>📞 Attendance Notices</div>
@@ -2779,11 +2822,11 @@ function App() {
  </div>
  </div>
  )}
- {ptos.length > 0 && (
+ {curPtos.length > 0 && (
  <div style={{ marginBottom:24 }}>
  <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>🏖 Time Off Requests</div>
  <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
- {ptos.map(function(req){
+ {curPtos.map(function(req){
  return (
  <div key={req.id} style={{ ...CARD, border:"1px solid "+(req.status==="approved"?"#6EE7B7":req.status==="rejected"?"#FCA5A5":T.border) }}>
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:9 }}>
@@ -2791,7 +2834,7 @@ function App() {
  <div style={{ fontWeight:600, fontSize:14, marginBottom:6 }}>{empName(req.eid, req.ename)}</div>
  <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
  <span style={{ padding:"3px 9px", borderRadius:20, background:"#EDE9FE", color:"#5B21B6", fontSize:12, fontWeight:500 }}>{req.type}</span>
- <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:500 }}>{req.startDate}{req.endDate&&req.endDate!==req.startDate?" to "+req.endDate:""}</span>
+ <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:500 }}>{fmtReqDate(req.startDate)}{req.endDate&&req.endDate!==req.startDate?" to "+fmtReqDate(req.endDate):""}</span>
  </div>
  {req.note && <div style={{ marginTop:6, fontSize:12, color:T.muted }}>{req.note}</div>}
  </div>
@@ -2818,7 +2861,7 @@ function App() {
  <div>
  <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>🔄 Shift Swap Requests</div>
  <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
- {swaps.map(function(req){
+ {curSwaps.map(function(req){
  return (
  <div key={req.id} style={{ ...CARD, border:"1px solid "+(req.status==="approved"?"#6EE7B7":req.status==="rejected"?"#FCA5A5":T.border) }}>
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:9 }}>
@@ -2829,7 +2872,7 @@ function App() {
  <span style={{ fontWeight:600, fontSize:13 }}>{empName(req.toId, req.to)}</span>
  </div>
  <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
- <span style={{ padding:"2px 8px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:11, fontWeight:500 }}>{req.day}</span>
+ <span style={{ padding:"2px 8px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:11, fontWeight:500 }}>{req.workDate ? fmtReqDate(req.workDate) : req.day}</span>
  <span style={{ padding:"2px 8px", borderRadius:20, background:shiftColor(req.shift).bg, color:shiftColor(req.shift).text, fontSize:11 }}>{(function(){ var _sd=shiftDefs.find(function(d){return d.id===req.shift;}); return _sd?(_sd.label+" "+to12(_sd.start)+"-"+to12(_sd.end)):req.shift; })()}</span>
  </div>
  {req.reason && <div style={{ marginTop:5, fontSize:12, color:T.muted }}>{req.reason}</div>}
@@ -2851,9 +2894,53 @@ function App() {
  </div>
  );
  })}
- {swaps.length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:28 }}>No swap requests yet</div>}
+ {curSwaps.length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:28 }}>No upcoming swap requests</div>}
  </div>
  </div>
+ </>) : (function(){
+  // HISTORY — every request whose date has passed. Kept forever.
+  var rows = pastPtos.map(function(r){
+   return { key:"p"+r.id, kind:"Time off", date:ptoLastDay(r), sortDate:r.startDate||"",
+    when: fmtReqDate(r.startDate)+(r.endDate&&r.endDate!==r.startDate?" to "+fmtReqDate(r.endDate):""),
+    who: empName(r.eid, r.ename), eids:[r.eid], detail:r.type, note:r.note,
+    status: r.status==="pending" ? "expired" : r.status };
+  }).concat(pastSwaps.map(function(r){
+   var sd = shiftDefs.find(function(d){return d.id===r.shift;});
+   return { key:"s"+r.id, kind:"Shift swap", date:r.workDate, sortDate:r.workDate||"",
+    when: fmtReqDate(r.workDate),
+    who: empName(r.fromId, r.from)+" \u2192 "+empName(r.toId, r.to), eids:[r.fromId, r.toId],
+    detail: sd ? (sd.label+" "+to12(sd.start)+"-"+to12(sd.end)) : r.shift, note:r.reason,
+    status: r.status==="pending" ? "expired" : r.status };
+  }));
+  if (histEmp) rows = rows.filter(function(r){ return r.eids.some(function(id){ return String(id)===String(histEmp); }); });
+  rows.sort(function(a,b){ return a.sortDate < b.sortDate ? 1 : a.sortDate > b.sortDate ? -1 : 0; });
+  return (
+   <div>
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:12 }}>
+     <div style={{ fontSize:12, color:T.muted, lineHeight:1.5 }}>Requests move here once their date has passed. Anything still pending by then is marked Expired.</div>
+     <select value={histEmp} onChange={function(e){ setHistEmp(e.target.value); }} style={{ ...INP, width:"auto", padding:"6px 10px", fontSize:12 }}>
+      <option value="">All employees</option>
+      {emps.slice().sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); }).map(function(e){ return <option key={e.id} value={e.id}>{e.name}</option>; })}
+     </select>
+    </div>
+    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+     {rows.map(function(r){
+      return (
+       <div key={r.key} style={{ ...CARD, padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+        <div style={{ minWidth:0 }}>
+         <div style={{ fontWeight:600, fontSize:13 }}>{r.who}</div>
+         <div style={{ fontSize:12, color:T.muted, marginTop:3 }}>{r.kind} · {r.when}{r.detail ? " · "+r.detail : ""}</div>
+         {r.note && <div style={{ fontSize:12, color:T.faint, marginTop:3 }}>{r.note}</div>}
+        </div>
+        <Badge status={r.status} />
+       </div>
+      );
+     })}
+     {rows.length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:28 }}>{histEmp ? "No past requests for this employee" : "No past requests yet"}</div>}
+    </div>
+   </div>
+  );
+ })()}
  </div>
  )}
 
