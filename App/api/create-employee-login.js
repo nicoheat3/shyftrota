@@ -57,6 +57,18 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Password must be at least 8 characters" });
   }
 
+  // The employee being given a login must belong to the caller's own property.
+  // Otherwise an admin at one hotel could attach a login to another hotel's employee.
+  var empCheck = await supabaseAdmin
+    .from("employees")
+    .select("id")
+    .eq("id", employeeId)
+    .eq("property_id", propertyId)
+    .maybeSingle();
+  if (empCheck.error || !empCheck.data) {
+    return res.status(403).json({ error: "That employee is not at your property" });
+  }
+
   var createResult = await supabaseAdmin.auth.admin.createUser({
     email: email,
     password: password,

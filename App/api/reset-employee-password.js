@@ -53,14 +53,20 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Password must be at least 8 characters" });
   }
 
-  // Look up the target user by email.
-  var listResult = await supabaseAdmin.auth.admin.listUsers();
-  if (listResult.error) {
-    return res.status(500).json({ error: "Could not look up user: " + listResult.error.message });
+  // Look up the target user by email. listUsers is paginated (50 per page by
+  // default), so walk every page — otherwise anyone past the first page could
+  // never have their password reset.
+  var targetUser = null;
+  var wanted = email.toLowerCase().trim();
+  for (var page = 1; page <= 100 && !targetUser; page++) {
+    var listResult = await supabaseAdmin.auth.admin.listUsers({ page: page, perPage: 1000 });
+    if (listResult.error) {
+      return res.status(500).json({ error: "Could not look up user: " + listResult.error.message });
+    }
+    var users = (listResult.data && listResult.data.users) || [];
+    targetUser = users.find(function (u) { return u.email && u.email.toLowerCase() === wanted; }) || null;
+    if (users.length < 1000) break;
   }
-  var targetUser = listResult.data.users.find(function (u) {
-    return u.email && u.email.toLowerCase() === email.toLowerCase();
-  });
   if (!targetUser) {
     return res.status(404).json({ error: "No user found with that email" });
   }

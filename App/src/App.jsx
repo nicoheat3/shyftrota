@@ -25,23 +25,6 @@ const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 // ── Security Utilities ────────────────────────────────
 // NOTE: localStorage-based. Phase 2 moves to Supabase Auth with JWT tokens.
 
-// ── 1. Password hashing (djb2 + salt) ────────────────
-function hashPassword(pw) {
-  var salt = "sr_2026_salt_x9k";
-  var str  = pw + salt;
-  var hash = 5381;
-  for (var i = 0; i < str.length; i++) {
-    hash = ((hash << 5) + hash) + str.charCodeAt(i);
-    hash = hash & hash;
-  }
-  return "h:" + Math.abs(hash).toString(36) + str.length.toString(36);
-}
-
-function checkPassword(pw, stored) {
-  if (stored && stored.startsWith("h:")) return hashPassword(pw) === stored;
-  return pw === stored;
-}
-
 // ── 2. Strong password validation ────────────────────
 function validatePassword(pw) {
   if (!pw || pw.length < 8)          return "Password must be at least 8 characters.";
@@ -171,9 +154,6 @@ const SEED_EMP = [
   { id:6, name:"James Okafor",     role:"Supervisor",   avail:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], max:45, dept:"hk" },
   { id:7, name:"Yuki Tanaka",      role:"Nurse",        avail:["Mon","Tue","Sat","Sun"],       max:36, dept:"fd" },
   { id:8, name:"Fatima Al-Rashid", role:"Caregiver",    avail:["Tue","Thu","Fri","Sat"],       max:32, dept:"hk" },
-];
-const SEED_ACC = [
- { id:"admin1", name:"Admin Manager", email:"admin@shyftrota.com", pw:"admin123", role:"admin", eid:null }, { id:"acc1", name:"Amara Osei", email:"amara@shyftrota.com", pw:"amara123", role:"employee", eid:1 }, { id:"acc2", name:"Diego Vargas", email:"diego@shyftrota.com", pw:"diego123", role:"employee", eid:2 }, { id:"acc3", name:"Priya Nair", email:"priya@shyftrota.com", pw:"priya123", role:"employee", eid:3 }, { id:"acc4", name:"Luca Moretti", email:"luca@shyftrota.com", pw:"luca123", role:"employee", eid:4 }, { id:"acc5", name:"Sophie Laurent", email:"sophie@shyftrota.com", pw:"sophie123", role:"employee", eid:5 }, { id:"acc6", name:"James Okafor", email:"james@shyftrota.com", pw:"james123", role:"employee", eid:6 }, { id:"acc7", name:"Yuki Tanaka", email:"yuki@shyftrota.com", pw:"yuki123", role:"employee", eid:7 }, { id:"acc8", name:"Fatima Al-Rashid", email:"fatima@shyftrota.com", pw:"fatima123", role:"employee", eid:8 },
 ];
 const SEED_SCHED = {
  Mon:{1:"Morning 6-2",3:"Day 9-5",6:"Evening 2-10"}, Tue:{2:"Day 9-5",5:"Evening 2-10",7:"Morning 6-2"}, Wed:{1:"Day 9-5",4:"Evening 2-10",6:"Morning 6-2"}, Thu:{3:"Morning 6-2",8:"Day 9-5",6:"Night 10-6"}, Fri:{1:"Evening 2-10",2:"Day 9-5",4:"Morning 6-2"}, Sat:{5:"Day 9-5",7:"Evening 2-10",8:"Morning 6-2"}, Sun:{2:"Night 10-6",5:"Day 9-5",6:"Evening 2-10"},
@@ -995,19 +975,14 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
 
 function App() {
  var [accounts, setAccounts] = useState(function(){
-   var stored = ld("sr_acc", SEED_ACC);
-   // Migration: fix bad Python-generated hashes from a previous build
-   var badHashes = ["h:554eed2018","h:3008644718","h:6adb8a6118","h:5a9124c418","h:52f9d3e417","h:54c1484119","h:50d5626718","h:3e9f7d0717","h:4457f68919"];
-   var hashToPw  = {"h:554eed2018":"admin123","h:3008644718":"amara123","h:6adb8a6118":"diego123","h:5a9124c418":"priya123","h:52f9d3e417":"luca123","h:54c1484119":"sophie123","h:50d5626718":"james123","h:3e9f7d0717":"yuki123","h:4457f68919":"fatima123"};
-   var needsFix = stored.some(function(a){ return badHashes.indexOf(a.pw) >= 0; });
-   if (needsFix) {
-     var fixed = stored.map(function(a){
-       return hashToPw[a.pw] ? {...a, pw: hashToPw[a.pw]} : a;
-     });
-     try { localStorage.setItem("sr_acc", JSON.stringify(fixed)); } catch(e) {}
-     return fixed;
-   }
-   return stored;
+   // Logins live in Supabase Auth. This local list is only a leftover index
+   // used for "has a login" badges — strip any passwords older versions saved
+   // into this browser, and drop the old demo accounts.
+   var stored = ld("sr_acc", []);
+   var cleaned = (Array.isArray(stored) ? stored : []).filter(function(a){ return a && !/@shyftrota\.com$/i.test(a.email||""); })
+     .map(function(a){ var c = {...a}; delete c.pw; return c; });
+   try { localStorage.setItem("sr_acc", JSON.stringify(cleaned)); } catch(e) {}
+   return cleaned;
  });
  var [user, setUser] = useState(null);
  var [authLoading, setAuthLoading] = useState(true);
@@ -1330,7 +1305,7 @@ function App() {
 
  function handleLogin(u) { setUser(u); showT("Welcome back, "+u.name.split(" ")[0]+"!"); }
  function handleSignup(d) {
- var acc = {id:"admin_"+Date.now(),name:d.name,email:d.email,pw:d.pw,role:"admin",eid:null};
+ var acc = {id:"admin_"+Date.now(),name:d.name,email:d.email,role:"admin",eid:null};
  setAccounts(function(p){return p.concat([acc]);});
  setIndustry(d.industry);
     if (d.payroll) setPayroll(d.payroll);
@@ -1630,9 +1605,9 @@ function App() {
    }
   }
 
-  // Keep the local account entry too — Team Chat and employee badges still read from
-  // this list locally (not migrated to Supabase yet), independent of the real login above.
-  var acc = { id:"acc"+Date.now(), name:nameClean, email:emailClean, pw:hashPassword(newEmp.pw), role:newEmp.isAdmin?"admin":"employee", eid:emp.id };
+  // Local account entry is only used for the "has a login" badge. Never store the
+  // password here — the real login lives in Supabase Auth.
+  var acc = { id:"acc"+Date.now(), name:nameClean, email:emailClean, role:newEmp.isAdmin?"admin":"employee", eid:emp.id };
   setEmps(function(p){ return p.concat([emp]); });
   setAccounts(function(p){ return p.concat([acc]); });
   setNewEmp({ name:"", role:"", avail:[], max:40, email:"", pw:"", isAdmin:false, dept:"" });
