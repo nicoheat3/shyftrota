@@ -181,9 +181,6 @@ const SEED_SCHED = {
 const SEED_SWAPS = [
  { id:1, fromId:2, from:"Diego Vargas", toId:5, to:"Sophie Laurent", day:"Thu", shift:"Day 9-5", reason:"Family event", status:"pending" }, { id:2, fromId:7, from:"Yuki Tanaka", toId:1, to:"Amara Osei", day:"Sat", shift:"Evening 2-10", reason:"Medical appointment", status:"pending" },
 ];
-const SEED_MSGS = [
- { id:1, sid:"acc6", sname:"James Okafor", text:"Team briefing Monday 8am before shift!", ts:Date.now()-18000000 }, { id:2, sid:"acc1", sname:"Amara Osei", text:"Got it, thanks James!", ts:Date.now()-14400000 }, { id:3, sid:"acc2", sname:"Diego Vargas", text:"Can anyone cover my Friday evening?", ts:Date.now()-7200000 },
-];
 const SEED_SHIFTS = [
  { id:"Morning 6-2", label:"Morning", start:"06:00", end:"14:00" }, { id:"Day 9-5", label:"Day", start:"09:00", end:"17:00" }, { id:"Evening 2-10", label:"Evening", start:"14:00", end:"22:00" }, { id:"Night 10-6", label:"Night", start:"22:00", end:"06:00" },
 ];
@@ -641,127 +638,186 @@ function AIChat({ emps, sched, user, volSummary }) {
 }
 
 // ── Team Chat ─────────────────────────────────────────
-function TeamChat({ user, accounts }) {
-  // channel = "general" or a user id for DMs
-  var [channel,  setChannel]  = useState("general");
-  var [groupMsgs,setGroupMsgs]= useState(function(){ return ld("sr_msgs", SEED_MSGS); });
-  var [dmStore,  setDmStore]  = useState(function(){ return ld("sr_dms", {}); });
-  var [input,    setInput]    = useState("");
+// Messages live in Supabase (chat_messages) and arrive live through
+// Supabase Realtime. "general" is the team channel; a DM channel is
+// "dm:<smaller employee id>:<larger employee id>" so both people share it.
+// The database only returns DMs you're part of.
+function chatDmKey(a, b) {
+  var x = Number(a), y = Number(b);
+  return "dm:" + Math.min(x, y) + ":" + Math.max(x, y);
+}
+function TeamChat({ user, emps }) {
+  var [channel, setChannel] = useState("general");
+  var [messages, setMessages] = useState([]);
+  var [reads, setReads] = useState({});         // { channel: ISO timestamp last read }
+  var [loaded, setLoaded] = useState(false);
+  var [loadErr, setLoadErr] = useState("");
+  var [input, setInput] = useState("");
+  var [sending, setSending] = useState(false);
   var ref = useRef(null);
+  var myEid = user.eid != null ? Number(user.eid) : null;
 
-  useEffect(function(){ sv("sr_msgs", groupMsgs); }, [groupMsgs]);
-  useEffect(function(){ sv("sr_dms",  dmStore);   }, [dmStore]);
-  useEffect(function(){ if(ref.current) ref.current.scrollIntoView({behavior:"smooth"}); }, [groupMsgs, dmStore, channel]);
-
-  var COLORS = ["#1A1714","#2E2A26","#EC4899","#F59E0B","#10B981","#3B82F6","#EF4444","#14B8A6"];
-  function colorFor(sid) { return COLORS[accounts.findIndex(function(a){return a.id===sid;}) % COLORS.length] || "#1A1714"; }
-
-  // DM key is always sorted so A->B and B->A use same thread
-  function dmKey(aid, bid) { return [aid, bid].sort().join("__"); }
-
-  var activeMsgs = channel === "general"
-    ? groupMsgs
-    : (dmStore[dmKey(user.id, channel)] || []);
-
-  // Unread counts — messages since last viewed
-  function unreadCount(uid) {
-    var key = dmKey(user.id, uid);
-    var thread = dmStore[key] || [];
-    var lastSeen = ld("sr_seen_"+key, 0);
-    return thread.filter(function(m){ return m.sid !== user.id && m.ts > lastSeen; }).length;
+  function addMessages(rows) {
+    setMessages(function(prev){
+      var seen = {};
+      prev.forEach(function(m){ seen[m.id] = true; });
+      var fresh = rows.filter(function(r){ return !seen[r.id]; });
+      if (!fresh.length) return prev;
+      return prev.concat(fresh).sort(function(a,b){ return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0; });
+    });
   }
 
-  function markSeen() {
-    if (channel === "general") return;
-    var key = dmKey(user.id, channel);
-    try { localStorage.setItem("sr_seen_"+key, String(Date.now())); } catch(e){}
+  // Initial load + live subscription
+  useEffect(function(){
+    if (!user.property_id) return;
+    var cancelled = false;
+    supabase.from("chat_messages").select("*")
+      .eq("property_id", user.property_id)
+      .order("created_at", { ascending:false }).limit(500)
+      .then(function(res){
+        if (cancelled) return;
+        if (res.error) { console.error("load chat failed:", res.error); setLoadErr(res.error.message); }
+        else addMessages(res.data || []);
+        setLoaded(true);
+      });
+    supabase.from("chat_reads").select("*").eq("user_id", user.id).then(function(res){
+      if (cancelled || !res.data) return;
+      var r = {};
+      res.data.forEach(function(row){ r[row.channel] = row.last_read_at; });
+      setReads(r);
+    });
+    var sub = supabase.channel("chat-" + user.property_id)
+      .on("postgres_changes", { event:"INSERT", schema:"public", table:"chat_messages", filter:"property_id=eq." + user.property_id },
+        function(payload){ if (payload && payload.new) addMessages([payload.new]); })
+      .subscribe();
+    return function(){ cancelled = true; supabase.removeChannel(sub); };
+  }, [user.property_id, user.id]);
+
+  var activeMsgs = messages.filter(function(m){ return m.channel === channel; });
+
+  // Mark the open channel as read whenever it's opened or gets a new message
+  var lastActiveTs = activeMsgs.length ? activeMsgs[activeMsgs.length-1].created_at : null;
+  useEffect(function(){
+    if (!loaded) return;
+    var now = new Date().toISOString();
+    setReads(function(p){ var n = {...p}; n[channel] = now; return n; });
+    supabase.from("chat_reads").upsert({ user_id:user.id, channel:channel, last_read_at:now }, { onConflict:"user_id,channel" })
+      .then(function(res){ if (res.error) console.error("chat read save failed:", res.error); });
+  }, [channel, lastActiveTs, loaded]);
+
+  useEffect(function(){ if (ref.current) ref.current.scrollIntoView({ behavior:"smooth" }); }, [channel, activeMsgs.length]);
+
+  function unreadIn(ch) {
+    if (ch === channel) return 0;
+    var last = reads[ch] ? Date.parse(reads[ch]) : 0;
+    return messages.filter(function(m){ return m.channel === ch && Date.parse(m.created_at) > last && Number(m.sender_eid) !== myEid; }).length;
   }
 
-  useEffect(function(){ markSeen(); }, [channel]);
-
-  function send() {
-    if (!input.trim()) return;
-    var msg = { id:Date.now(), sid:user.id, sname:user.name, text:sanitize(input.trim()), ts:Date.now() };
-    if (channel === "general") {
-      setGroupMsgs(function(p){ return p.concat([msg]); });
-    } else {
-      var key = dmKey(user.id, channel);
-      setDmStore(function(p){ var n={...p}; n[key]=(n[key]||[]).concat([msg]); return n; });
+  async function send() {
+    var text = sanitize(input.trim());
+    if (!text || sending) return;
+    var row = { property_id:user.property_id, channel:channel, sender_eid:myEid, sender_name:user.name, body:text.slice(0, 2000) };
+    if (channel !== "general") {
+      var parts = channel.split(":");
+      row.dm_a = Number(parts[1]); row.dm_b = Number(parts[2]);
     }
+    setSending(true);
+    var res = await supabase.from("chat_messages").insert(row).select().single();
+    setSending(false);
+    if (res.error || !res.data) {
+      console.error("chat send failed:", res.error);
+      showChatErr(res.error ? res.error.message : "Message didn't send");
+      return;
+    }
+    addMessages([res.data]);
     setInput("");
   }
+  var [sendErr, setSendErr] = useState("");
+  function showChatErr(msg) { setSendErr(msg); setTimeout(function(){ setSendErr(""); }, 5000); }
 
-  // People to DM: everyone except yourself
-  var people = accounts.filter(function(a){ return a.id !== user.id; });
+  var people = emps.filter(function(e){ return Number(e.id) !== myEid; })
+    .slice().sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
+  function personColor(eid) { var e = emps.find(function(x){ return Number(x.id) === Number(eid); }); return (e && e.color) || avatarBg(eid == null ? "a" : eid); }
 
-  // Channel display name
-  var chanLabel = channel === "general" ? "#team-general" : (function(){
-    var other = accounts.find(function(a){ return a.id === channel; });
-    return other ? other.name : "DM";
-  })();
-
-  var totalUnread = people.reduce(function(sum, p){ return sum + unreadCount(p.id); }, 0);
+  var chanLabel = "#team-general";
+  var chanSub = emps.length + " members";
+  if (channel !== "general") {
+    var p = channel.split(":");
+    var otherId = Number(p[1]) === myEid ? Number(p[2]) : Number(p[1]);
+    var other = emps.find(function(e){ return Number(e.id) === otherId; });
+    chanLabel = other ? other.name : "Direct message";
+    chanSub = "Private — only you two can see this";
+  }
 
   return (
-    <div style={{ display:"flex", height:500, ...CARD, padding:0, overflow:"hidden" }}>
+    <div style={{ display:"flex", height:"min(560px, calc(100vh - 170px))", minHeight:380, ...CARD, padding:0, overflow:"hidden" }}>
       {/* Sidebar */}
-      <div style={{ width:160, borderRight:"1px solid "+T.border, display:"flex", flexDirection:"column", background:T.bg, flexShrink:0 }}>
+      <div style={{ width:170, borderRight:"1px solid "+T.border, display:"flex", flexDirection:"column", background:T.bg, flexShrink:0 }}>
         <div style={{ padding:"10px 12px", borderBottom:"1px solid "+T.border }}>
           <div style={{ fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.05em" }}>Messages</div>
         </div>
-        {/* Group channel */}
-        <button onClick={function(){setChannel("general");}} style={{ padding:"8px 12px", background:channel==="general"?T.accentL:"transparent", border:"none", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:7, borderLeft:"2px solid "+(channel==="general"?T.accent:"transparent") }}>
-          <span style={{ fontSize:14 }}>💬</span>
-          <span style={{ fontSize:12, fontWeight:channel==="general"?700:400, color:channel==="general"?T.accent:T.muted }}>team-general</span>
-        </button>
-        {/* Divider */}
-        <div style={{ padding:"8px 12px 4px", fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.05em" }}>Direct</div>
-        {/* DM list */}
+        {(function(){
+          var on = channel === "general"; var u = unreadIn("general");
+          return (
+            <button onClick={function(){ setChannel("general"); }} style={{ padding:"8px 12px", background:on?T.accentL:"transparent", border:"none", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:7, borderLeft:"2px solid "+(on?T.accent:"transparent"), fontFamily:"inherit" }}>
+              <span style={{ fontSize:14 }}>💬</span>
+              <span style={{ fontSize:12, fontWeight:on||u>0?700:400, color:on?T.accent:T.text, flex:1 }}>team-general</span>
+              {u > 0 && <span style={{ background:T.danger, color:"white", borderRadius:20, fontSize:9, fontWeight:700, padding:"1px 5px" }}>{u}</span>}
+            </button>
+          );
+        })()}
+        <div style={{ padding:"10px 12px 4px", fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.05em" }}>Direct</div>
         <div style={{ flex:1, overflowY:"auto" }}>
-          {people.map(function(p){
-            var unread = unreadCount(p.id);
-            var isActive = channel === p.id;
+          {myEid == null && <div style={{ padding:"4px 12px", fontSize:11, color:T.faint, lineHeight:1.5 }}>Your login isn't linked to an employee, so direct messages are off.</div>}
+          {myEid != null && people.map(function(e){
+            var ch = chatDmKey(myEid, e.id);
+            var on = channel === ch; var u = unreadIn(ch);
             return (
-              <button key={p.id} onClick={function(){setChannel(p.id);}} style={{ width:"100%", padding:"7px 12px", background:isActive?T.accentL:"transparent", border:"none", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:7, borderLeft:"2px solid "+(isActive?T.accent:"transparent") }}>
-                <div style={{ width:22, height:22, borderRadius:"50%", background:colorFor(p.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700, color:"white", flexShrink:0 }}>{p.name[0]}</div>
-                <span style={{ fontSize:11, fontWeight:isActive||unread>0?700:400, color:isActive?T.accent:T.text, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name.split(" ")[0]}</span>
-                {unread > 0 && <span style={{ background:T.danger, color:"white", borderRadius:20, fontSize:9, fontWeight:700, padding:"1px 5px", flexShrink:0 }}>{unread}</span>}
+              <button key={e.id} onClick={function(){ setChannel(ch); }} style={{ width:"100%", padding:"7px 12px", background:on?T.accentL:"transparent", border:"none", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:7, borderLeft:"2px solid "+(on?T.accent:"transparent"), fontFamily:"inherit" }}>
+                <div style={{ width:22, height:22, borderRadius:"50%", background:personColor(e.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700, color:"white", flexShrink:0 }}>{initials(e.name||"?")}</div>
+                <span style={{ fontSize:12, fontWeight:on||u>0?700:400, color:on?T.accent:T.text, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.name}</span>
+                {u > 0 && <span style={{ background:T.danger, color:"white", borderRadius:20, fontSize:9, fontWeight:700, padding:"1px 5px", flexShrink:0 }}>{u}</span>}
               </button>
             );
           })}
         </div>
       </div>
 
-      {/* Main chat area */}
+      {/* Conversation */}
       <div style={{ flex:1, display:"flex", flexDirection:"column", minWidth:0 }}>
         <div style={{ padding:"11px 14px", borderBottom:"1px solid "+T.border, display:"flex", alignItems:"center", gap:8 }}>
           <div style={{ width:26, height:26, borderRadius:8, background:"linear-gradient(135deg,#10B981,#059669)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, color:"white" }}>💬</div>
-          <div><div style={{ fontWeight:700, fontSize:13 }}>{chanLabel}</div><div style={{ color:T.faint, fontSize:10 }}>{channel==="general"?accounts.length+" members":"Private message"}</div></div>
+          <div style={{ minWidth:0 }}><div style={{ fontWeight:700, fontSize:13 }}>{chanLabel}</div><div style={{ color:T.faint, fontSize:10 }}>{chanSub}</div></div>
         </div>
         <div style={{ flex:1, overflowY:"auto", padding:13, display:"flex", flexDirection:"column", gap:2, background:T.bg }}>
-          {activeMsgs.length === 0 && (
+          {!loaded && <div style={{ textAlign:"center", color:T.faint, fontSize:13, marginTop:40 }}>Loading messages…</div>}
+          {loaded && loadErr && <div style={{ textAlign:"center", color:T.danger, fontSize:12, marginTop:40, lineHeight:1.6 }}>Couldn't load chat: {loadErr}</div>}
+          {loaded && !loadErr && activeMsgs.length === 0 && (
             <div style={{ textAlign:"center", color:T.faint, fontSize:13, marginTop:40 }}>
               {channel === "general" ? "No messages yet — say hi! 👋" : "Start a conversation with " + chanLabel}
             </div>
           )}
-          {activeMsgs.map(function(m, i) {
-            var isMe = m.sid === user.id;
-            var prevSame = i > 0 && activeMsgs[i-1].sid === m.sid && m.ts - activeMsgs[i-1].ts < 120000;
+          {activeMsgs.map(function(m, i){
+            var ts = new Date(m.created_at).getTime();
+            var isMe = myEid != null ? Number(m.sender_eid) === myEid : m.sender_name === user.name;
+            var prev = activeMsgs[i-1];
+            var prevSame = prev && prev.sender_eid === m.sender_eid && ts - new Date(prev.created_at).getTime() < 120000;
             return (
               <div key={m.id} style={{ display:"flex", gap:8, marginTop:prevSame?2:12, alignItems:"flex-end", flexDirection:isMe?"row-reverse":"row" }}>
-                <div style={{ width:24, height:24, borderRadius:"50%", background:colorFor(m.sid), display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700, color:"white", flexShrink:0, visibility:prevSame?"hidden":"visible" }}>{m.sname[0]}</div>
+                <div style={{ width:24, height:24, borderRadius:"50%", background:personColor(m.sender_eid), display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700, color:"white", flexShrink:0, visibility:prevSame?"hidden":"visible" }}>{initials(m.sender_name||"?")}</div>
                 <div style={{ display:"flex", flexDirection:"column", alignItems:isMe?"flex-end":"flex-start", maxWidth:"72%" }}>
-                  {!prevSame && <div style={{ fontSize:10, color:T.faint, marginBottom:3 }}>{isMe?"You":m.sname} · {fmtAgo(m.ts)}</div>}
-                  <div style={{ padding:"8px 12px", borderRadius:isMe?"13px 13px 4px 13px":"13px 13px 13px 4px", background:isMe?T.accent:T.surface, color:isMe?"white":T.text, fontSize:13, lineHeight:1.5, border:isMe?"none":"1px solid "+T.border, wordBreak:"break-word" }}>{m.text}</div>
+                  {!prevSame && <div style={{ fontSize:10, color:T.faint, marginBottom:3 }}>{isMe?"You":m.sender_name} · {fmtAgo(ts)}</div>}
+                  <div style={{ padding:"8px 12px", borderRadius:isMe?"13px 13px 4px 13px":"13px 13px 13px 4px", background:isMe?T.accent:T.surface, color:isMe?"white":T.text, fontSize:13, lineHeight:1.5, border:isMe?"none":"1px solid "+T.border, wordBreak:"break-word", whiteSpace:"pre-wrap" }}>{m.body}</div>
                 </div>
               </div>
             );
           })}
           <div ref={ref} />
         </div>
+        {sendErr && <div style={{ padding:"6px 14px", fontSize:12, color:T.danger, background:T.dangerL }}>Couldn't send: {sendErr}</div>}
         <div style={{ padding:"10px 14px", borderTop:"1px solid "+T.border, display:"flex", gap:7, background:T.surface }}>
-          <input value={input} onChange={function(e){setInput(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")send();}} placeholder={channel==="general"?"Message the team...":"Message "+chanLabel+"..."} style={{ ...INP, fontSize:13 }} />
-          <button onClick={send} disabled={!input.trim()} style={{ ...BTN, background:"#10B981", width:36, height:36, padding:0, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, opacity:input.trim()?1:0.5 }}>&#8593;</button>
+          <input value={input} maxLength={2000} onChange={function(e){ setInput(e.target.value); }} onKeyDown={function(e){ if (e.key==="Enter") send(); }} placeholder={channel==="general" ? "Message the team..." : "Message "+chanLabel+"..."} style={{ ...INP, fontSize:13 }} />
+          <button onClick={send} disabled={!input.trim() || sending} style={{ ...BTN, background:"#10B981", width:36, height:36, padding:0, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, opacity:input.trim()&&!sending?1:0.5 }}>&#8593;</button>
         </div>
       </div>
     </div>
@@ -3060,7 +3116,7 @@ function App() {
  )}
 
  {/* CHAT */}
- {tab==="chat" && <TeamChat user={user} accounts={accounts} />}
+ {tab==="chat" && <TeamChat user={user} emps={emps} />}
 
  {/* AI */}
  {tab==="ai" && isAdmin && (
