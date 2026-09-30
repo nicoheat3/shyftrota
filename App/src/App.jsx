@@ -3253,7 +3253,9 @@ function App() {
  {orderedDays().map(function(d, di){
  var shift = weekSched[d] && weekSched[d][me.id];
  var avail = me.avail.indexOf(d) >= 0;
- var pto = ptos.find(function(r){return r.eid===user.eid&&r.status==="approved";});
+ // Only show PTO on the days the approved time off actually covers
+ var dayIso = dayToISODate(weekOff, d);
+ var pto = ptos.find(function(r){ return r.eid===me.id && r.status==="approved" && dayIso>=r.startDate && dayIso<=(r.endDate||r.startDate); });
  var dd = getDayDate(di, weekOff);
  return (
  <div key={d} style={{ ...CARD, padding:12, textAlign:"center", background:shift?shiftColor(shift).bg:T.surface, border:"1px solid "+(shift?shiftColor(shift).border:T.border) }}>
