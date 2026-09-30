@@ -1034,7 +1034,18 @@ function App() {
  var [ptos, setPtos] = useState([]);
  var [opens, setOpens] = useState(function(){ return ld("sr_open", []); });
  var [callins, setCallins] = useState([]);
- var [timeclock, setTimeclock] = useState([]); // array of punch records
+ var [timeclock, setTimeclockRaw] = useState([]); // array of punch records, always oldest -> newest
+ // Everything that reads punches ("who's clocked in", hours, the employee
+ // clock button) assumes the newest punch is LAST. The database returns
+ // newest-first, so after a refresh the app was reading someone's oldest
+ // punch as their latest one. Sorting on every update keeps it consistent,
+ // including backdated admin punches and edited times.
+ function setTimeclock(next) {
+  setTimeclockRaw(function(prev){
+   var arr = typeof next === "function" ? next(prev) : next;
+   return arr.slice().sort(function(a,b){ return a.ts - b.ts; });
+  });
+ }
  var [overruled, setOverruled] = useState(function(){ return ld("sr_ovr", []); });
  var [shiftDefs, setShiftDefs] = useState([]);
  var [weekOff, setWeekOff] = useState(0);
@@ -3692,10 +3703,13 @@ function App() {
                     <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
                       {Object.values(summary).map(function(s){
                         var emp = emps.find(function(e){ return e.id===s.eid; });
-                        var ins  = s.records.filter(function(p){ return p.type==="in"; });
-                        var outs = s.records.filter(function(p){ return p.type==="out"; });
-                        var ms = 0;
-                        outs.forEach(function(o,i){ if(ins[i]) ms += o.ts-ins[i].ts; });
+                        // Pair each clock-in with the next clock-out. Extra "out"
+                        // punches with no matching "in" are ignored.
+                        var ms = 0, openIn = null;
+                        s.records.forEach(function(p){
+                          if (p.type==="in") openIn = p.ts;
+                          else if (p.type==="out" && openIn!==null) { ms += p.ts - openIn; openIn = null; }
+                        });
                         return (
                           <div key={s.eid} style={CARD}>
                             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
@@ -3712,7 +3726,7 @@ function App() {
                               </div>
                             </div>
                             <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
-                              {s.records.map(function(p){
+                              {s.records.slice().reverse().map(function(p){
                                 var t  = new Date(p.ts);
                                 var st = getPunchStatus(p, shiftDefs);
                                 var isEditing = editingPunchId === p.id;
