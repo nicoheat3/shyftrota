@@ -63,7 +63,7 @@ export function Settings(props) {
   return (
     <div style={{ maxWidth:620 }}>
       <div style={{ marginBottom:16 }}>
-        <h2 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:700, fontSize:18 }}>Settings</h2>
+        <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>Settings</h2>
         <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{isAdmin ? "Property setup and your account" : "Your account"}</p>
       </div>
 

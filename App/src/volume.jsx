@@ -80,7 +80,7 @@ var T = {
   danger:"#EF4444", success:"#10B981", warning:"#F59E0B", warningL:"#FFFBEB",
 };
 var CARD = { background:T.surface, border:"1px solid "+T.border, borderRadius:12, padding:20, boxShadow:"0 1px 3px rgba(0,0,0,0.06)", boxSizing:"border-box", overflow:"hidden" };
-var LBL  = { fontSize:9, color:T.faint, display:"block", marginBottom:3, fontWeight:600, letterSpacing:"0.04em", textTransform:"uppercase" };
+var LBL  = { fontSize:11, color:T.faint, display:"block", marginBottom:3, fontWeight:600, letterSpacing:"0.04em", textTransform:"uppercase" };
 var NINP = { width:"100%", background:T.surface, border:"1px solid "+T.border, borderRadius:8, padding:"7px 4px", color:T.text, fontSize:14, fontWeight:700, textAlign:"center", outline:"none", fontFamily:"inherit", boxSizing:"border-box" };
 var SINP = { width:70, background:T.surface, border:"1px solid "+T.border, borderRadius:8, padding:"6px 8px", color:T.text, fontSize:13, fontWeight:600, textAlign:"center", outline:"none", fontFamily:"inherit", boxSizing:"border-box" };
 var GBTN = { background:"transparent", border:"1px solid "+T.border, borderRadius:8, padding:"6px 12px", color:T.muted, cursor:"pointer", fontSize:12, fontWeight:500, fontFamily:"inherit" };
@@ -99,57 +99,51 @@ export function CoverBadge({ vol, thresholds, actual }) {
   );
 }
 
-function DayCard({ day, date, label, vol, thresholds, actual, onChange, readOnly }) {
+function VolumeRow({ day, date, label, vol, thresholds, actual, onChange, readOnly, last }) {
   var s = suggestCover(vol, thresholds);
   var v = vol || {};
-  function field(name, short) {
+  function field(name, aria) {
     return (
-      <div style={{ minWidth:0 }}>
-        <label style={LBL}>{short}</label>
-        <input
-          type="number" min={0} disabled={readOnly}
-          key={day+"_"+name+"_"+date}
-          defaultValue={v[name] === null || v[name] === undefined ? "" : v[name]}
-          onBlur={function(ev){ onChange(date, name, ev.target.value); }}
-          onKeyDown={function(ev){ if (ev.key === "Enter") ev.target.blur(); }}
-          placeholder="—"
-          style={{ ...NINP, opacity:readOnly?0.6:1 }}
-        />
-      </div>
+      <input
+        type="number" min={0} disabled={readOnly} aria-label={day+" "+aria}
+        key={day+"_"+name+"_"+date}
+        defaultValue={v[name] === null || v[name] === undefined ? "" : v[name]}
+        onBlur={function(ev){ onChange(date, name, ev.target.value); }}
+        onKeyDown={function(ev){ if (ev.key === "Enter") ev.target.blur(); }}
+        placeholder="—"
+        className="mono"
+        style={{ ...NINP, padding:"9px 2px", fontSize:14, fontWeight:500, opacity:readOnly?0.6:1 }}
+      />
     );
   }
   function cover(lbl, want, got) {
     if (want === 0 && got === 0) return null;
     var shortHere = got < want;
     return (
-      <span style={{ fontSize:11, color:shortHere?T.danger:T.muted }}>
-        {lbl} <strong style={{ color:shortHere?T.danger:T.text }}>{got}</strong>
+      <span className="mono" style={{ fontSize:11, color:shortHere?T.danger:T.muted }}>
+        {lbl} <strong style={{ color:shortHere?T.danger:T.text, fontWeight:600 }}>{got}</strong>
         <span style={{ color:T.faint }}>/{want}</span>
       </span>
     );
   }
   return (
-    <div style={{ ...CARD, padding:14 }}>
-      <div style={{ display:"flex", alignItems:"baseline", gap:6, marginBottom:10 }}>
-        <span style={{ fontSize:12, fontWeight:700, color:T.text }}>{day}</span>
-        <span style={{ fontSize:11, color:T.faint }}>{label}</span>
+    <div style={{ padding:"8px 10px", borderBottom:last?"none":"1px solid "+T.border }}>
+      <div style={{ display:"grid", gridTemplateColumns:"64px repeat(3, minmax(0,1fr))", gap:6, alignItems:"center" }}>
+        <div>
+          <div style={{ fontSize:12, fontWeight:700, color:T.text }}>{day}</div>
+          <div className="mono" style={{ fontSize:11, color:T.faint }}>{label}</div>
+        </div>
+        {field("arrivals", "arrivals")}
+        {field("departures", "departures")}
+        {field("occupancy", "occupancy percent")}
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3, minmax(0,1fr))", gap:7 }}>
-        {field("arrivals", "Arr")}
-        {field("departures", "Dep")}
-        {field("occupancy", "Occ %")}
-      </div>
-      <div style={{ marginTop:10, paddingTop:9, borderTop:"1px solid "+T.border, display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
-        {s ? (
-          <>
-            {cover("AM", s.am, actual.am)}
-            {cover("Mid", s.mid, actual.mid)}
-            {cover("PM", s.pm, actual.pm)}
-          </>
-        ) : (
-          <span style={{ fontSize:11, color:T.faint }}>Add numbers to see suggested cover</span>
-        )}
-      </div>
+      {s && (
+        <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginTop:6, paddingLeft:70 }}>
+          {cover("AM", s.am, actual.am)}
+          {cover("Mid", s.mid, actual.mid)}
+          {cover("PM", s.pm, actual.pm)}
+        </div>
+      )}
     </div>
   );
 }
@@ -158,19 +152,22 @@ export function VolumePanel(props) {
   var th = props.thresholds || DEFAULT_THRESHOLDS;
   return (
     <div style={{ marginBottom:16 }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
-        <div>
-          <div style={{ fontSize:13, fontWeight:700, color:T.text }}>Daily volume</div>
-          <div style={{ fontSize:12, color:T.muted, marginTop:2 }}>
-            Type in arrivals, departures and occupancy. Suggested cover shows scheduled against needed.
-          </div>
+      <div style={{ marginBottom:10 }}>
+        <div style={{ fontSize:13, fontWeight:700, color:T.text }}>Daily volume</div>
+        <div style={{ fontSize:12, color:T.muted, marginTop:2 }}>
+          Arrivals, departures and occupancy. Cover shows scheduled / needed.
         </div>
       </div>
-
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))", gap:10 }}>
+      <div style={{ ...CARD, padding:0, boxShadow:"none", maxWidth:520 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"64px repeat(3, minmax(0,1fr))", gap:6, padding:"8px 10px", background:T.bg, borderBottom:"1px solid "+T.border }}>
+          <span style={LBL}>Day</span>
+          <span style={{ ...LBL, textAlign:"center" }}>Arr</span>
+          <span style={{ ...LBL, textAlign:"center" }}>Dep</span>
+          <span style={{ ...LBL, textAlign:"center" }}>Occ %</span>
+        </div>
         {props.days.map(function(d, i){
           return (
-            <DayCard
+            <VolumeRow
               key={d}
               day={d}
               date={props.dates[i]}
@@ -180,6 +177,7 @@ export function VolumePanel(props) {
               actual={props.coverage[i]}
               onChange={props.onChange}
               readOnly={props.readOnly}
+              last={i === props.days.length - 1}
             />
           );
         })}

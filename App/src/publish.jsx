@@ -63,8 +63,7 @@ export function NotPosted({ weekLabel, compact }) {
   return (
     <div style={{ background:T.surface, border:"1px dashed "+T.border, borderRadius:12,
                   padding:compact ? 20 : 34, textAlign:"center" }}>
-      <div style={{ fontSize:22, marginBottom:8 }}>🗓</div>
-      <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:5 }}>Not posted yet</div>
+            <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:5 }}>Not posted yet</div>
       <div style={{ fontSize:12, color:T.muted, lineHeight:1.6, maxWidth:320, margin:"0 auto" }}>
         Your manager is still working on {weekLabel ? weekLabel : "this week"}. It'll show up here once it's posted.
       </div>
