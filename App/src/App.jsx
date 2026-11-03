@@ -1290,6 +1290,9 @@ function App() {
  useEffect(function(){ sv("sr_acc", accounts); }, [accounts]);
  useEffect(function(){ sv("sr_open", opens); }, [opens]);
  useEffect(function(){ sv("sr_ovr", overruled); }, [overruled]);
+ var [ovrOpen, setOvrOpen] = useState(false);
+ // Drop overrules for people who are no longer on the team
+ useEffect(function(){ if (!emps.length) return; setOverruled(function(p){ var keep = p.filter(function(c){ return emps.some(function(e){ return c.indexOf(e.name+" ") === 0; }); }); return keep.length === p.length ? p : keep; }); }, [emps.length]);
  useEffect(function(){ sv("sr_ind", industry); }, [industry]);
   useEffect(function(){ sv("sr_payroll", payroll);   }, [payroll]);
  useEffect(function(){ if(user) sv("sr_uid", user.id); }, [user]);
@@ -2709,19 +2712,26 @@ function App() {
  })}
  </div>
  )}
- {overruled.length > 0 && (
- <div style={{ background:"var(--xF5F3FF)", border:"1px solid var(--xDDD6FE)", borderRadius:10, padding:14 }}>
- <div style={{ color:"var(--x5B21B6)", fontWeight:600, marginBottom:8, fontSize:12 }}>&#10003; Overruled conflicts</div>
- {overruled.map(function(c,i){
- return (
- <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, color:"var(--x7C3AED)", padding:"3px 0" }}>
- <span>- {c}</span>
- <button onClick={function(){restore(c);}} style={{ fontSize:11, color:T.muted, background:T.bg, border:"1px solid "+T.border, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Restore</button>
- </div>
- );
- })}
- </div>
- )}
+ {(function(){
+   var weekOvr = overruled.filter(function(c){ return allConflicts.indexOf(c) >= 0; });
+   if (!weekOvr.length) return null;
+   return (
+     <div style={{ border:"1px solid "+T.border, borderRadius:8, background:T.surface }}>
+       <button onClick={function(){ setOvrOpen(!ovrOpen); }} aria-expanded={ovrOpen} style={{ width:"100%", minHeight:44, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, padding:"0 14px", background:"transparent", border:"none", cursor:"pointer", fontFamily:"inherit", color:T.muted, fontSize:12 }}>
+         <span style={{ display:"flex", alignItems:"center", gap:8 }}><Icon name="check" size={14} />{weekOvr.length} conflict{weekOvr.length > 1 ? "s" : ""} overruled this week</span>
+         <span style={{ color:T.text, fontWeight:600 }}>{ovrOpen ? "Hide" : "Show"}</span>
+       </button>
+       {ovrOpen && weekOvr.map(function(c){
+         return (
+           <div key={c} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, fontSize:12, color:T.muted, padding:"8px 14px", borderTop:"1px solid "+T.border }}>
+             <span>{c}</span>
+             <button onClick={function(){ restore(c); }} title="Flag this conflict again" style={{ ...GBTN, fontSize:11, padding:"4px 10px" }}>Restore</button>
+           </div>
+         );
+       })}
+     </div>
+   );
+ })()}
  </div>
  )}
 
