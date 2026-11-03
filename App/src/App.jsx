@@ -1291,6 +1291,28 @@ function App() {
  useEffect(function(){ sv("sr_open", opens); }, [opens]);
  useEffect(function(){ sv("sr_ovr", overruled); }, [overruled]);
  var [ovrOpen, setOvrOpen] = useState(false);
+ useEffect(function(){
+  if (!selCell) return;
+  function inside(t, sel){ return t && t.closest && t.closest(sel); }
+  function onDown(e){ if (inside(e.target, "[data-shift-pop]") || inside(e.target, "[data-cell]")) return; setSelCell(null); }
+  function onScroll(e){ if (inside(e.target, "[data-shift-pop]")) return; setSelCell(null); }
+  function onResize(){ setSelCell(null); }
+  function onKey(e){ if (e.key === "Escape") setSelCell(null); }
+  document.addEventListener("mousedown", onDown); document.addEventListener("touchstart", onDown, { passive:true });
+  window.addEventListener("scroll", onScroll, true); window.addEventListener("resize", onResize); document.addEventListener("keydown", onKey);
+  return function(){ document.removeEventListener("mousedown", onDown); document.removeEventListener("touchstart", onDown); window.removeEventListener("scroll", onScroll, true); window.removeEventListener("resize", onResize); document.removeEventListener("keydown", onKey); };
+ }, [selCell]);
+ // Puts the shift picker where it fits: below the cell if there's room, otherwise
+ // above it, kept inside the screen, and scrollable on its own if it's taller than the space.
+ function popPlacement(r) {
+  var W = 248, M = 8, vw = window.innerWidth, vh = window.innerHeight;
+  var base = { position:"fixed", zIndex:1000, width:W, boxSizing:"border-box", background:T.surface, border:"1px solid "+T.border, borderRadius:10, padding:8, boxShadow:"0 12px 32px rgba(0,0,0,0.35)", overflowY:"auto", overscrollBehavior:"contain", WebkitOverflowScrolling:"touch", textAlign:"left" };
+  if (!r) return { ...base, top:M, left:M, maxHeight:vh - 2*M };
+  var left = Math.max(M, Math.min(vw - W - M, r.left + r.width/2 - W/2));
+  var below = vh - r.bottom - M - 4, above = r.top - M - 4;
+  if (below >= 260 || below >= above) return { ...base, left:left, top:r.bottom + 4, maxHeight:Math.max(120, below) };
+  return { ...base, left:left, bottom:vh - r.top + 4, maxHeight:Math.max(120, above) };
+ }
  // Drop overrules for people who are no longer on the team
  useEffect(function(){ if (!emps.length) return; setOverruled(function(p){ var keep = p.filter(function(c){ return emps.some(function(e){ return c.indexOf(e.name+" ") === 0; }); }); return keep.length === p.length ? p : keep; }); }, [emps.length]);
  useEffect(function(){ sv("sr_ind", industry); }, [industry]);
@@ -2622,7 +2644,7 @@ function App() {
  var isSel = selCell && selCell.day===d && selCell.eid===emp.id;
  var cellBg = isSel?"var(--xFDF0ED)":(conflict&&!isOvr)?"var(--xFEF2F2)":(!avail?"var(--xF8FAFC)":"inherit");
  return (
- <td key={d} className={isPastWeek?"":"hv"} onClick={function(){if(!isPastWeek)setSelCell(isSel?null:{day:d,eid:emp.id});}} style={{ padding:"6px 4px", textAlign:"center", background:cellBg, position:"relative", transition:"background .1s" }}>
+ <td key={d} className={isPastWeek?"":"hv"} data-cell="1" onClick={function(ev){ if (isPastWeek) return; var r = ev.currentTarget.getBoundingClientRect(); setSelCell(isSel?null:{day:d,eid:emp.id,rect:{top:r.top,bottom:r.bottom,left:r.left,width:r.width}}); }} style={{ padding:"6px 4px", textAlign:"center", background:cellBg, position:"relative", transition:"background .1s" }}>
  {shift ? (
  <div className="mono" style={{ display:"inline-flex", alignItems:"center", gap:3, padding:"3px 7px", borderRadius:4, fontSize:10, fontWeight:500, background:shiftColor(shift).bg, color:shiftColor(shift).text, border:"1px solid "+shiftColor(shift).border, whiteSpace:"nowrap" }}>
  <span style={{ width:5, height:5, borderRadius:"50%", background:shiftColor(shift).dot, display:"inline-block", flexShrink:0 }} />
@@ -2642,12 +2664,12 @@ function App() {
  <span style={{ color:T.border }}>&#8212;</span>
  )}
  {isSel && (
- <div style={{ position:"absolute", top:"100%", left:"50%", transform:"translateX(-50%)", zIndex:100, background:T.surface, border:"1px solid "+T.border, borderRadius:10, padding:8, minWidth:165, boxShadow:"0 8px 24px rgba(0,0,0,0.12)", marginTop:4 }}>
+ <div data-shift-pop="1" role="menu" aria-label={"Shift for "+emp.name+" on "+d} onClick={function(e){ e.stopPropagation(); }} style={popPlacement(selCell.rect)}>
  {shiftDefs.map(function(s) {
  var c = shiftColor(s.id);
  return (
- <div key={s.id} className="hv2" onClick={function(e){e.stopPropagation();assignShift(d,emp.id,s.id);}} style={{ display:"flex", alignItems:"center", gap:7, padding:"6px 10px", borderRadius:7, fontSize:12, color:c.text, marginBottom:2, cursor:"pointer" }}>
- <span style={{ width:7, height:7, borderRadius:"50%", background:c.dot }} />{s.label} <span style={{ fontSize:10, color:c.text, opacity:0.7 }}>{to12(s.start)}-{to12(s.end)}</span>
+ <div key={s.id} className="hv2" onClick={function(e){e.stopPropagation();assignShift(d,emp.id,s.id);}} style={{ display:"flex", alignItems:"center", gap:8, minHeight:40, padding:"0 10px", borderRadius:7, fontSize:13, color:c.text, marginBottom:2, cursor:"pointer", whiteSpace:"nowrap" }}>
+ <span style={{ width:7, height:7, borderRadius:"50%", background:c.dot, flexShrink:0 }} /><span style={{ flex:1, fontWeight:600 }}>{s.label}</span><span className="mono" style={{ fontSize:11, color:c.text, opacity:0.8 }}>{shortT(s.start)}–{shortT(s.end)}</span>
  </div>
  );
  })}
