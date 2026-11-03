@@ -3,22 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ShyftRota — Shift scheduling for hotels, restaurants and service teams</title>
-<meta name="description" content="ShyftRota builds the week around availability, hours and approved time off, flags the shifts that come up short, and puts every shift on your team's phone. $600 per property per month, unlimited employees.">
+<title>ShyftRota — Workforce scheduling for people who work shifts</title>
+<meta name="description" content="ShyftRota builds the week around availability, hours and approved time off, flags the shifts that come up short, and puts every shift on your team's phone. Built by someone who works in hospitality, for people who do too.">
 <link rel="canonical" href="https://www.shyftrota.com/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="ShyftRota">
 <meta property="og:url" content="https://www.shyftrota.com/">
-<meta property="og:title" content="ShyftRota — Shift scheduling for hotels, restaurants and service teams">
-<meta property="og:description" content="Build the week in a tap. Short shifts flagged before they happen. Built at the front desk.">
+<meta property="og:title" content="ShyftRota — Workforce scheduling for people who work shifts">
+<meta property="og:description" content="Build the week in a tap. Short shifts flagged before they happen. Built by someone who works in hospitality, for people who do too.">
 <meta property="og:image" content="https://www.shyftrota.com/og-image.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="ShyftRota week schedule with daily volume and short-shift alerts">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:site" content="@shyftrota">
-<meta name="twitter:title" content="ShyftRota — Shift scheduling for hotels, restaurants and service teams">
-<meta name="twitter:description" content="Build the week in a tap. Short shifts flagged before they happen.">
+<meta name="twitter:title" content="ShyftRota — Workforce scheduling for people who work shifts">
+<meta name="twitter:description" content="Build the week in a tap. Short shifts flagged before they happen. Built by someone who works in hospitality.">
 <meta name="twitter:image" content="https://www.shyftrota.com/og-image.png">
 <meta name="theme-color" content="#0B0B0A">
 <link rel="icon" href="/favicon.ico">
@@ -93,6 +93,7 @@ header.nav.stuck{border-bottom-color:var(--line2);box-shadow:0 10px 30px -22px #
 .js .hero h1{animation:rise .75s cubic-bezier(.2,.8,.2,1) both}
 @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 .hero p.lede{font-size:clamp(17px,1.6vw,19px);color:var(--muted);max-width:50ch;margin:20px 0 0}
+.hero p.by{font-size:16px;color:var(--text);max-width:48ch;margin:18px 0 0;font-weight:500;border-left:2px solid var(--accent);padding-left:14px}
 .hero-cta{display:flex;flex-wrap:wrap;gap:10px;margin-top:30px}
 .hero-meta{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:22px;font-family:var(--mono);font-size:12px;color:var(--faint)}
 .hero-meta span::before{content:"";display:inline-block;width:6px;height:6px;background:var(--accent);margin-right:8px;vertical-align:1px}
@@ -276,9 +277,10 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
 <div class="hero">
   <div class="wrap hero-in">
     <div>
-      <div class="eyebrow">Shift scheduling</div>
-      <h1>Know you're short <span class="acc">before</span> the shift starts.</h1>
-      <p class="lede" data-rv="fade" style="--i:4">Build the week in a tap, around everyone's availability, hours and time off. Short shifts get flagged days before they happen.</p>
+      <div class="eyebrow">Workforce scheduling</div>
+      <h1>Stop wrestling with the <span class="acc">rota</span> every week.</h1>
+      <p class="lede" data-rv="fade" style="--i:4">Build the week in a tap, around everyone's availability, hours and time off. Short shifts get flagged before they happen.</p>
+      <p class="by" data-rv="fade" style="--i:5">Built by someone who works in hospitality, for people who do too.</p>
       <div class="hero-cta" data-rv="fade" style="--i:5">
         <a class="btn btn-primary" href="#pilot">Request a pilot <span class="arr">&rarr;</span></a>
         <a class="btn btn-ghost" href="#how">See how it works</a>
@@ -330,20 +332,20 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
 </div>
 
 <div class="inds">
-  <div class="wrap inds-lbl"><span class="eyebrow">Shift and role presets included for</span></div>
+  <div class="wrap inds-lbl"><span class="eyebrow">Built for wherever people work shifts</span></div>
   <div class="track" aria-hidden="true">
-    <span>Hotels</span><span>Restaurants</span><span>Healthcare</span><span>Retail</span><span>Any shift team</span>
-    <span>Hotels</span><span>Restaurants</span><span>Healthcare</span><span>Retail</span><span>Any shift team</span>
+    <span>Hotels</span><span>Restaurants</span><span>Coffee shops</span><span>Healthcare</span><span>Retail</span><span>Food &amp; beverage</span><span>Many more</span>
+    <span>Hotels</span><span>Restaurants</span><span>Coffee shops</span><span>Healthcare</span><span>Retail</span><span>Food &amp; beverage</span><span>Many more</span>
   </div>
-  <p class="sr-only">ShyftRota ships with shift and role presets for hotels, restaurants, healthcare, retail, and general shift teams.</p>
+  <p class="sr-only">ShyftRota is built for wherever people work shifts: hotels, restaurants, coffee shops, healthcare, retail, food and beverage, and more.</p>
 </div>
 
 <section id="how">
   <div class="wrap">
     <div class="sec-head">
       <div class="eyebrow" data-rv="left">How it works</div>
-      <h2 data-rv style="--i:1">Your team in. A covered week out.</h2>
-      <p data-rv style="--i:2">No spreadsheet, no group text, no guessing how many people Saturday needs.</p>
+      <h2 data-rv style="--i:1">Three steps from chaos to covered.</h2>
+      <p data-rv style="--i:2">No spreadsheets. No group texts. No Sunday night stress.</p>
     </div>
     <div class="steps">
       <div class="step" data-rv style="--i:0"><div class="n">01</div><h3>Set up your team</h3><p>Add people, departments and shift times, or start from the presets for your industry. Everyone gets availability and a weekly max.</p><div class="ex">AM · MID · PM · NIGHT AUDIT</div></div>
@@ -357,8 +359,8 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
   <div class="wrap">
     <div class="sec-head">
       <div class="eyebrow" data-rv="left">Features</div>
-      <h2 data-rv style="--i:1">What a shift team actually needs.</h2>
-      <p data-rv style="--i:2">Scheduling, swaps, hours and payroll in one place, without the per-seat bill or a three-month rollout.</p>
+      <h2 data-rv style="--i:1">Everything the schedule demands. Nothing extra.</h2>
+      <p data-rv style="--i:2">Built from real experience on the floor, not a product roadmap in a boardroom.</p>
     </div>
     <div class="feat">
       <div class="f" data-rv style="--i:0"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg><h3>Auto-fill the week</h3><p>Fills the whole week, or one person's week, around availability, max hours and approved time off.</p></div>
@@ -392,12 +394,12 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
   <div class="wrap split">
     <div>
       <div class="eyebrow" data-rv="left">Why it exists</div>
-      <p class="note" data-rv style="--i:1">I work the front desk. The schedule went out on a spreadsheet every Sunday, and nobody knew a shift was short until it already was.</p>
-      <p class="note" data-rv style="--i:2">Everything we could buy was built for a coffee shop or for corporate HR. <em>So I built this one between check-ins.</em></p>
-      <div class="sig" data-rv style="--i:3"><span class="av">N</span><div><div style="font-weight:700">Nicolas</div><div style="color:var(--faint);font-size:14px">Founder · works the front desk in San Diego</div></div></div>
+      <p class="note" data-rv style="--i:1">I work shifts. Front desk at a hotel, and a restaurant floor on my afternoons off. Both of them ran the week off paper and a spreadsheet, and both of them lost Sunday nights to it.</p>
+      <p class="note" data-rv style="--i:2">The tools we could buy were either too thin to run a real rota or priced like enterprise software. <em>So I built this one between shifts.</em></p>
+      <div class="sig" data-rv style="--i:3"><span class="av">N</span><div><div style="font-weight:700">Nicolas</div><div style="color:var(--faint);font-size:14px">Founder · works in hospitality in San Diego</div></div></div>
     </div>
     <ul class="list" aria-label="How ShyftRota is different" data-rv style="--i:1">
-      <li><b>Built on a real desk</b><span>Written while working front desk shifts, and running at the San Diego hotel where I work.</span></li>
+      <li><b>Built on the floor</b><span>Written between shifts, and running every week at the San Diego hotel where I work.</span></li>
       <li><b>Flat price</b><span>One price per property. Add your whole team without counting seats.</span></li>
       <li><b>Set up in a day</b><span>No implementation project. We load your team and shifts with you.</span></li>
       <li><b>No app store</b><span>Works in the phone's browser. Add it to the home screen.</span></li>
@@ -457,7 +459,7 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
   <div class="wrap split">
     <div class="sec-head">
       <div class="eyebrow" data-rv="left">Request a pilot</div>
-      <h2 data-rv style="--i:1">Try it at your property.</h2>
+      <h2 data-rv style="--i:1">Ready to get your Sundays back?</h2>
       <p data-rv style="--i:2">Tell us about your team and we'll get back to you to set it up.</p>
       <p style="font-size:15px" data-rv="fade"><span style="--i:3">Prefer email? <a href="mailto:hello@shyftrota.com">hello@shyftrota.com</a></span></p>
     </div>
@@ -493,7 +495,7 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
             <path class="r" d="M929 647 L880 792" stroke-width="72"></path>
             <circle class="dot" cx="991" cy="909" r="43"></circle>
           </svg>ShyftRota</a>
-        <p style="margin:0;color:var(--faint);font-size:13px">Shift scheduling for hotels, restaurants and service teams. San Diego, California.</p>
+        <p style="margin:0;color:var(--faint);font-size:13px">Built for the people who keep things running. San Diego, California.</p>
       </div>
       <div class="foot-col">
         <div class="eyebrow">Product</div>
