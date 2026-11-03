@@ -1372,6 +1372,7 @@ function App() {
    showT("Schedule posted — your team can see it now");
    sendNotification({ type:"schedule_posted", weekStart:postedWeek, repost:wasPosted }, function(r){
     if (r && r.sent > 0) showT("Emailed "+r.sent+" "+(r.sent===1?"person":"people")+" their schedule");
+    else if (r && r.errors && r.errors.length) showT("Schedule posted, but the emails didn't send — check Resend","error");
    });
   });
  }
