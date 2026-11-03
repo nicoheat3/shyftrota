@@ -51,7 +51,7 @@ export function NotificationSettings({ user, emps, isAdmin, showT }) {
   var myEid = user.eid != null ? Number(user.eid) : null;
   var [rows, setRows] = useState({});          // employee_id -> settings row
   var [loaded, setLoaded] = useState(false);
-  var [mine, setMine] = useState({ email:"", on_schedule:true, on_requests:true });
+  var [mine, setMine] = useState({ email:"", on_schedule:true, on_requests:true, on_reminders:true, on_chat:true });
   var [savingMine, setSavingMine] = useState(false);
   var [teamDraft, setTeamDraft] = useState({}); // employee_id -> email being typed
 
@@ -61,7 +61,7 @@ export function NotificationSettings({ user, emps, isAdmin, showT }) {
       var m = {};
       (res.data || []).forEach(function(r){ m[r.employee_id] = r; });
       setRows(m);
-      if (myEid != null && m[myEid]) setMine({ email:m[myEid].email || "", on_schedule:m[myEid].on_schedule, on_requests:m[myEid].on_requests });
+      if (myEid != null && m[myEid]) setMine({ email:m[myEid].email || "", on_schedule:m[myEid].on_schedule, on_requests:m[myEid].on_requests, on_reminders:m[myEid].on_reminders, on_chat:m[myEid].on_chat });
       setLoaded(true);
     });
   }, [user.property_id, myEid]);
@@ -105,7 +105,7 @@ export function NotificationSettings({ user, emps, isAdmin, showT }) {
     var email = mine.email.trim().toLowerCase();
     if (email && !EMAIL_RE.test(email)) { showT("That email doesn't look right", "error"); return; }
     setSavingMine(true);
-    var ok = await save(myEid, { email: email || null, on_schedule: mine.on_schedule, on_requests: mine.on_requests });
+    var ok = await save(myEid, { email: email || null, on_schedule: mine.on_schedule, on_requests: mine.on_requests, on_reminders: mine.on_reminders, on_chat: mine.on_chat });
     setSavingMine(false);
     if (ok) showT(email ? "Email notifications saved" : "Email removed — you won't get notifications");
   }
@@ -133,6 +133,8 @@ export function NotificationSettings({ user, emps, isAdmin, showT }) {
           <input type="email" value={mine.email} placeholder="you@example.com" onChange={function(e){ setMine({ ...mine, email:e.target.value }); }} style={{ ...INP, marginBottom:6 }} />
           <Toggle on={mine.on_schedule} onChange={function(v){ setMine({ ...mine, on_schedule:v }); }} label="Schedule posted or updated" hint="Your shifts for the week" />
           <Toggle on={mine.on_requests} onChange={function(v){ setMine({ ...mine, on_requests:v }); }} label="Time off & swap answers" hint="When a request is approved or declined" />
+          <Toggle on={mine.on_reminders} onChange={function(v){ setMine({ ...mine, on_reminders:v }); }} label="Shift reminders" hint="About 2 hours before each shift" />
+          <Toggle on={mine.on_chat} onChange={function(v){ setMine({ ...mine, on_chat:v }); }} label="Missed chat messages" hint="When a message sits unread for 10+ minutes (at most every 30 min)" />
           <div style={{ display:"flex", gap:8, marginTop:12, flexWrap:"wrap" }}>
             <button onClick={saveMine} disabled={savingMine} style={{ ...BTN, opacity:savingMine?0.6:1 }}>{savingMine ? "Saving…" : "Save"}</button>
             {isAdmin && <button onClick={sendTest} disabled={testing} style={{ ...BTN, background:"transparent", color:T.text, border:"1px solid "+T.border, opacity:testing?0.6:1 }}>{testing ? "Sending…" : "Send test email"}</button>}
