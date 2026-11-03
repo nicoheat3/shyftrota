@@ -6,11 +6,9 @@ import { useState } from "react";
 import { seedThresholds } from "./volume.jsx";
 
 var T = {
-  bg:"#F8F6F3", surface:"#FFFFFF", border:"#E5E0D8", text:"#1A1714",
-  muted:"#6B6460", faint:"#A09890", accent:"#C84B31", accentL:"#FDF0ED",
-  danger:"#EF4444", dangerL:"#FEF2F2", success:"#10B981",
+  bg:"var(--bg)", surface:"var(--surface)", border:"var(--border)", text:"var(--text)", muted:"var(--muted)", faint:"var(--faint)", accent:"var(--accent)", accentL:"var(--accentL)", danger:"var(--danger)", dangerL:"var(--dangerL)", success:"var(--success)",
 };
-var CARD = { background:T.surface, border:"1px solid "+T.border, borderRadius:12, padding:20, boxShadow:"0 1px 3px rgba(0,0,0,0.06)", boxSizing:"border-box", overflow:"hidden" };
+var CARD = { background:T.surface, border:"1px solid "+T.border, borderRadius:12, padding:20, boxShadow:"var(--shadow)", boxSizing:"border-box", overflow:"hidden" };
 var INP  = { width:"100%", background:T.surface, border:"1px solid "+T.border, borderRadius:8, padding:"9px 12px", color:T.text, fontSize:13, outline:"none", fontFamily:"inherit", boxSizing:"border-box" };
 var NINP = { ...INP, width:82, textAlign:"center", fontWeight:700, fontSize:14 };
 var LBL  = { fontSize:11, color:T.muted, display:"block", marginBottom:5, fontWeight:600, letterSpacing:"0.04em", textTransform:"uppercase" };
@@ -127,14 +125,14 @@ export function Settings(props) {
         </div>
       </Section>
 
-      <div style={{ ...CARD, border:"1px solid #FCA5A5", background:T.dangerL }}>
-        <div style={{ fontSize:14, fontWeight:700, color:"#991B1B", marginBottom:6 }}>Delete your account</div>
-        <div style={{ fontSize:12, color:"#B45309", lineHeight:1.7, marginBottom:14 }}>
+      <div style={{ ...CARD, border:"1px solid var(--xFCA5A5)", background:T.dangerL }}>
+        <div style={{ fontSize:14, fontWeight:700, color:"var(--x991B1B)", marginBottom:6 }}>Delete your account</div>
+        <div style={{ fontSize:12, color:"var(--xB45309)", lineHeight:1.7, marginBottom:14 }}>
           Your login, profile and availability are removed for good. Your time clock punches stay on record under "Former employee" — your employer needs them for payroll, and they no longer point to you.
         </div>
 
         {!deleteOpen ? (
-          <button onClick={function(){ setDeleteOpen(true); setConfirmText(""); }} style={{ ...GBTN, color:T.danger, borderColor:"#FCA5A5", background:T.surface }}>
+          <button onClick={function(){ setDeleteOpen(true); setConfirmText(""); }} style={{ ...GBTN, color:T.danger, borderColor:"var(--xFCA5A5)", background:T.surface }}>
             Delete my account
           </button>
         ) : (

@@ -5,9 +5,7 @@
 // the admin gets a flag telling them to let the team know.
 
 var T = {
-  bg:"#F8F6F3", surface:"#FFFFFF", border:"#E5E0D8", text:"#1A1714",
-  muted:"#6B6460", faint:"#A09890", accent:"#C84B31", accentL:"#FDF0ED",
-  success:"#10B981", successL:"#ECFDF5", warning:"#F59E0B", warningL:"#FFFBEB",
+  bg:"var(--bg)", surface:"var(--surface)", border:"var(--border)", text:"var(--text)", muted:"var(--muted)", faint:"var(--faint)", accent:"var(--accent)", accentL:"var(--accentL)", success:"var(--success)", successL:"var(--successL)", warning:"var(--warning)", warningL:"var(--warningL)",
 };
 var BTN  = { background:T.accent, border:"none", borderRadius:8, padding:"9px 18px", color:"white", cursor:"pointer", fontSize:13, fontWeight:700, fontFamily:"inherit" };
 var GBTN = { background:"transparent", border:"1px solid "+T.border, borderRadius:8, padding:"7px 14px", color:T.muted, cursor:"pointer", fontSize:12, fontWeight:500, fontFamily:"inherit" };
@@ -28,8 +26,8 @@ export function PublishBar({ publishedAt, editedSince, onPublish, onUnpublish, i
   var tone = !published
     ? { bg:T.bg,        border:T.border,   color:T.muted,   label:"Draft" }
     : stale
-    ? { bg:T.warningL,  border:"#FDE68A",  color:"#92400E", label:"Edited since posted" }
-    : { bg:T.successL,  border:"#6EE7B7",  color:"#065F46", label:"Posted" };
+    ? { bg:T.warningL,  border:"var(--xFDE68A)",  color:"var(--x92400E)", label:"Edited since posted" }
+    : { bg:T.successL,  border:"var(--x6EE7B7)",  color:"var(--x065F46)", label:"Posted" };
 
   var note = !published
     ? "Only you can see this week. Your team sees nothing until you post it."

@@ -7,11 +7,9 @@ import { useState, useEffect } from "react";
 import { supabase } from "./lib/supabaseClient.js";
 
 var T = {
-  bg:"#F8F6F3", surface:"#FFFFFF", border:"#E5E0D8", text:"#1A1714",
-  muted:"#6B6460", faint:"#A09890", accent:"#C84B31", accentL:"#FDF0ED",
-  danger:"#EF4444", success:"#10B981",
+  bg:"var(--bg)", surface:"var(--surface)", border:"var(--border)", text:"var(--text)", muted:"var(--muted)", faint:"var(--faint)", accent:"var(--accent)", accentL:"var(--accentL)", danger:"var(--danger)", success:"var(--success)",
 };
-var CARD = { background:T.surface, border:"1px solid "+T.border, borderRadius:12, padding:20, boxShadow:"0 1px 3px rgba(0,0,0,0.06)", boxSizing:"border-box", marginBottom:14 };
+var CARD = { background:T.surface, border:"1px solid "+T.border, borderRadius:12, padding:20, boxShadow:"var(--shadow)", boxSizing:"border-box", marginBottom:14 };
 var INP  = { width:"100%", background:T.surface, border:"1px solid "+T.border, borderRadius:8, padding:"9px 12px", color:T.text, fontSize:13, outline:"none", fontFamily:"inherit", boxSizing:"border-box" };
 var LBL  = { fontSize:11, color:T.muted, display:"block", marginBottom:5, fontWeight:600, letterSpacing:"0.04em", textTransform:"uppercase" };
 var BTN  = { background:T.accent, border:"none", borderRadius:8, padding:"9px 16px", color:"white", cursor:"pointer", fontSize:13, fontWeight:600, fontFamily:"inherit" };
@@ -139,7 +137,7 @@ export function NotificationSettings({ user, emps, isAdmin, showT }) {
             <button onClick={saveMine} disabled={savingMine} style={{ ...BTN, opacity:savingMine?0.6:1 }}>{savingMine ? "Saving…" : "Save"}</button>
             {isAdmin && <button onClick={sendTest} disabled={testing} style={{ ...BTN, background:"transparent", color:T.text, border:"1px solid "+T.border, opacity:testing?0.6:1 }}>{testing ? "Sending…" : "Send test email"}</button>}
           </div>
-          {testMsg && <div style={{ marginTop:10, fontSize:12, lineHeight:1.6, padding:"9px 12px", borderRadius:8, background:testMsg.ok?"#ECFDF5":"#FEF2F2", color:testMsg.ok?"#065F46":"#991B1B", wordBreak:"break-word" }}>{testMsg.text}</div>}
+          {testMsg && <div style={{ marginTop:10, fontSize:12, lineHeight:1.6, padding:"9px 12px", borderRadius:8, background:testMsg.ok?"var(--xECFDF5)":"var(--xFEF2F2)", color:testMsg.ok?"var(--x065F46)":"var(--x991B1B)", wordBreak:"break-word" }}>{testMsg.text}</div>}
         </div>
       )}
 

@@ -75,11 +75,9 @@ export function isShort(suggested, actual) {
 
 // ── Tokens (mirrors App.jsx so this file stays self-contained) ──
 var T = {
-  bg:"#F8F6F3", surface:"#FFFFFF", border:"#E5E0D8", text:"#1A1714",
-  muted:"#6B6460", faint:"#A09890", accent:"#C84B31", accentL:"#FDF0ED",
-  danger:"#EF4444", success:"#10B981", warning:"#F59E0B", warningL:"#FFFBEB",
+  bg:"var(--bg)", surface:"var(--surface)", border:"var(--border)", text:"var(--text)", muted:"var(--muted)", faint:"var(--faint)", accent:"var(--accent)", accentL:"var(--accentL)", danger:"var(--danger)", success:"var(--success)", warning:"var(--warning)", warningL:"var(--warningL)",
 };
-var CARD = { background:T.surface, border:"1px solid "+T.border, borderRadius:12, padding:20, boxShadow:"0 1px 3px rgba(0,0,0,0.06)", boxSizing:"border-box", overflow:"hidden" };
+var CARD = { background:T.surface, border:"1px solid "+T.border, borderRadius:12, padding:20, boxShadow:"var(--shadow)", boxSizing:"border-box", overflow:"hidden" };
 var LBL  = { fontSize:11, color:T.faint, display:"block", marginBottom:3, fontWeight:600, letterSpacing:"0.04em", textTransform:"uppercase" };
 var NINP = { width:"100%", background:T.surface, border:"1px solid "+T.border, borderRadius:8, padding:"7px 4px", color:T.text, fontSize:14, fontWeight:700, textAlign:"center", outline:"none", fontFamily:"inherit", boxSizing:"border-box" };
 var SINP = { width:70, background:T.surface, border:"1px solid "+T.border, borderRadius:8, padding:"6px 8px", color:T.text, fontSize:13, fontWeight:600, textAlign:"center", outline:"none", fontFamily:"inherit", boxSizing:"border-box" };
@@ -93,7 +91,7 @@ export function CoverBadge({ vol, thresholds, actual }) {
   var title = "Suggested: morning " + s.am + (s.mid ? ", mid " + s.mid : "") + ", evening " + s.pm
             + " | Scheduled: morning " + actual.am + ", mid " + actual.mid + ", evening " + actual.pm;
   return (
-    <div title={title} style={{ marginTop:3, display:"inline-block", padding:"1px 6px", borderRadius:20, fontSize:9, fontWeight:700, letterSpacing:"0.02em", background:short?T.warningL:T.bg, color:short?"#92400E":T.faint, border:"1px solid "+(short?"#FDE68A":T.border) }}>
+    <div title={title} style={{ marginTop:3, display:"inline-block", padding:"1px 6px", borderRadius:20, fontSize:9, fontWeight:700, letterSpacing:"0.02em", background:short?T.warningL:T.bg, color:short?"var(--x92400E)":T.faint, border:"1px solid "+(short?"var(--xFDE68A)":T.border) }}>
       {s.am}{s.mid ? "·"+s.mid : ""}·{s.pm}
     </div>
   );

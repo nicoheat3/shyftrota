@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabaseClient.js";
-import { VolumePanel, CoverBadge, suggestCover, coverageForDay, seedThresholds, DEFAULT_THRESHOLDS } from "./volume.jsx";
+import { VolumePanel, CoverBadge, suggestCover, coverageForDay, shiftBucket, seedThresholds, DEFAULT_THRESHOLDS } from "./volume.jsx";
 import { Settings } from "./settings.jsx";
 import { PublishBar, NotPosted } from "./publish.jsx";
 import { NotificationSettings, sendNotification } from "./notify.jsx";
@@ -143,7 +143,7 @@ const PAYROLL_PROVIDERS = [
 ];
 
 const SC = {
- "Morning 6-2": { bg:"#FEF9C3", text:"#854D0E", border:"#FDE047", dot:"#EAB308" }, "Day 9-5": { bg:"#DBEAFE", text:"#1E40AF", border:"#BFDBFE", dot:"#3B82F6" }, "Evening 2-10": { bg:"#EDE9FE", text:"#5B21B6", border:"#DDD6FE", dot:"#2E2A26" }, "Night 10-6": { bg:"#F1F5F9", text:"#334155", border:"#CBD5E1", dot:"#64748B" },
+ "Morning 6-2": { bg:"var(--sc-am-bg)", text:"var(--sc-am-text)", border:"var(--sc-am-border)", dot:"var(--sc-am-dot)" }, "Day 9-5": { bg:"var(--sc-mid-bg)", text:"var(--sc-mid-text)", border:"var(--sc-mid-border)", dot:"var(--sc-mid-dot)" }, "Evening 2-10": { bg:"var(--sc-pm-bg)", text:"var(--sc-pm-text)", border:"var(--sc-pm-border)", dot:"var(--sc-pm-dot)" }, "Night 10-6": { bg:"var(--sc-nt-bg)", text:"var(--sc-nt-text)", border:"var(--sc-nt-border)", dot:"var(--sc-nt-dot)" },
 };
 
 const SEED_EMP = [
@@ -245,6 +245,7 @@ function getTZ() {
  try { return new Date().toLocaleTimeString("en-us",{timeZoneName:"short"}).split(" ").pop(); } catch(e) { return ""; }
 }
 
+function deptInk(c) { if (!c || typeof document === "undefined" || document.documentElement.getAttribute("data-theme") !== "dark") return c; var m = /^#?([0-9a-f]{6})$/i.exec(String(c)); if (!m) return c; var n = parseInt(m[1], 16); var l = (0.299*((n>>16)&255) + 0.587*((n>>8)&255) + 0.114*(n&255)) / 255; return l < 0.45 ? "var(--muted)" : c; }
 function initials(name) { return name.split(" ").map(function(n){ return n[0]; }).join("").toUpperCase(); }
 
 var AVATAR_PAL = ["#1A1714","#2E2A26","#EC4899","#F59E0B","#10B981","#3B82F6","#EF4444","#14B8A6","#F97316","#84CC16"];
@@ -262,9 +263,9 @@ function fmtAgo(ts) {
 }
 
 function getPunchStatus(punch, shiftDefs) {
-  if (punch.type === "lunch_out") return { label:"Lunch Out", bg:"#FEF9C3", color:"#854D0E", border:"#FDE047" };
-  if (punch.type === "lunch_in")  return { label:"Lunch In",  bg:"#DBEAFE", color:"#1E40AF", border:"#BFDBFE" };
-  if (punch.type === "out") return { label:"Out", bg:"#F1F5F9", color:"#334155", border:"#CBD5E1" };
+  if (punch.type === "lunch_out") return { label:"Lunch Out", bg:"var(--xFEF9C3)", color:"var(--x854D0E)", border:"var(--xFDE047)" };
+  if (punch.type === "lunch_in")  return { label:"Lunch In",  bg:"var(--xDBEAFE)", color:"var(--x1E40AF)", border:"var(--xBFDBFE)" };
+  if (punch.type === "out") return { label:"Out", bg:"var(--xF1F5F9)", color:"var(--x334155)", border:"var(--xCBD5E1)" };
   // For clock-in: compare against scheduled shift start
   if (punch.type === "in" && punch.shift) {
     var def = shiftDefs.find(function(d){ return d.id === punch.shift; });
@@ -274,12 +275,12 @@ function getPunchStatus(punch, shiftDefs) {
       var punchDate = new Date(punch.ts);
       var punchMs   = (punchDate.getHours() * 60 + punchDate.getMinutes()) * 60000;
       var diffMin   = (punchMs - scheduledMs) / 60000;
-      if (diffMin <= 5)  return { label:"On Time", bg:"#ECFDF5", color:"#065F46", border:"#6EE7B7" };
-      if (diffMin <= 15) return { label:"Late ("  +Math.round(diffMin)+"m)", bg:"#FFFBEB", color:"#92400E", border:"#FDE68A" };
-      return { label:"Very Late ("+Math.round(diffMin)+"m)", bg:"#FEF2F2", color:"#991B1B", border:"#FCA5A5" };
+      if (diffMin <= 5)  return { label:"On Time", bg:"var(--xECFDF5)", color:"var(--x065F46)", border:"var(--x6EE7B7)" };
+      if (diffMin <= 15) return { label:"Late ("  +Math.round(diffMin)+"m)", bg:"var(--xFFFBEB)", color:"var(--x92400E)", border:"var(--xFDE68A)" };
+      return { label:"Very Late ("+Math.round(diffMin)+"m)", bg:"var(--xFEF2F2)", color:"var(--x991B1B)", border:"var(--xFCA5A5)" };
     }
   }
-  return { label:"In", bg:"#ECFDF5", color:"#065F46", border:"#6EE7B7" };
+  return { label:"In", bg:"var(--xECFDF5)", color:"var(--x065F46)", border:"var(--x6EE7B7)" };
 }
 
 // Convert HH:MM to 12-hour format using device locale
@@ -340,13 +341,13 @@ function exportCSV(emps, sched) {
 
 // Design tokens
 var T = {
- bg:"#F8F6F3", surface:"#FFFFFF", border:"#E5E0D8", text:"#1A1714", muted:"#6B6460", faint:"#A09890", accent:"#C84B31", accentL:"#FDF0ED", accent2:"#1A1714", danger:"#EF4444", dangerL:"#FEF2F2", success:"#10B981", successL:"#ECFDF5", warning:"#F59E0B", warningL:"#FFFBEB",
+ bg:"var(--bg)", surface:"var(--surface)", border:"var(--border)", text:"var(--text)", muted:"var(--muted)", faint:"var(--faint)", accent:"var(--accent)", accentL:"var(--accentL)", accent2:"var(--accent2)", danger:"var(--danger)", dangerL:"var(--dangerL)", success:"var(--success)", successL:"var(--successL)", warning:"var(--warning)", warningL:"var(--warningL)", raised:"var(--raised)", onAccent:"var(--onAccent)",
 };
-var CARD = { background:T.surface, border:"1px solid "+T.border, borderRadius:12, padding:20, boxShadow:"0 1px 3px rgba(0,0,0,0.06)", boxSizing:"border-box", overflow:"hidden" };
+var CARD = { background:T.surface, border:"1px solid "+T.border, borderRadius:12, padding:20, boxShadow:"var(--shadow)", boxSizing:"border-box", overflow:"hidden" };
 var INP = { width:"100%", background:T.surface, border:"1px solid "+T.border, borderRadius:8, padding:"9px 12px", color:T.text, fontSize:13, outline:"none", fontFamily:"inherit", boxSizing:"border-box" };
 var TINP = { width:"100%", background:T.surface, border:"1px solid "+T.border, borderRadius:8, padding:"8px 8px", color:T.text, fontSize:13, outline:"none", fontFamily:"inherit", textAlign:"center", fontWeight:600, boxSizing:"border-box", maxWidth:"100%" };
 var LBL = { fontSize:11, color:T.muted, display:"block", marginBottom:5, fontWeight:600, letterSpacing:"0.04em", textTransform:"uppercase" };
-var BTN = { background:T.accent, border:"none", borderRadius:8, padding:"8px 16px", color:"white", cursor:"pointer", fontSize:13, fontWeight:600, fontFamily:"inherit" };
+var BTN = { background:T.accent, border:"none", borderRadius:8, padding:"8px 16px", color:T.onAccent, cursor:"pointer", fontSize:13, fontWeight:600, fontFamily:"inherit" };
 var GBTN = { background:"transparent", border:"1px solid "+T.border, borderRadius:8, padding:"8px 16px", color:T.muted, cursor:"pointer", fontSize:13, fontWeight:500, fontFamily:"inherit" };
 // Shorthand style snippets
 var PILL = { borderRadius:20 };
@@ -526,7 +527,7 @@ function DateInput({ label, value, onChange, rangeEnd, onRangeEnd, allowRange, p
 function Toast({ toast }) {
  if (!toast) return null;
  var styles = {
- success: { bg:T.successL, border:"#6EE7B7", color:"#065F46", icon:"✓" }, error: { bg:T.dangerL, border:"#FCA5A5", color:"#991B1B", icon:"✕" }, info: { bg:T.accentL, border:"#F0A898", color:"#3730A3", icon:"i" }, };
+ success: { bg:T.successL, border:"var(--x6EE7B7)", color:"var(--x065F46)", icon:"✓" }, error: { bg:T.dangerL, border:"var(--xFCA5A5)", color:"var(--x991B1B)", icon:"✕" }, info: { bg:T.accentL, border:"var(--xF0A898)", color:"var(--x3730A3)", icon:"i" }, };
  var s = styles[toast.type] || styles.success;
  return (
  <div style={{ position:"fixed", top:16, right:16, zIndex:9999, display:"flex", alignItems:"center", gap:8, padding:"10px 16px", borderRadius:10, fontSize:13, fontWeight:500, background:s.bg, border:"1px solid "+s.border, color:s.color, boxShadow:"0 4px 12px rgba(0,0,0,0.12)", animation:"sIn .2s" }}>
@@ -555,7 +556,7 @@ function Confirm({ show, title, body, onOk, onCancel }) {
 
 // ── Badge ─────────────────────────────────────────────
 function Badge({ status }) {
- var map = { pending:{bg:"#FEF9C3",color:"#854D0E"}, approved:{bg:T.successL,color:"#065F46"}, rejected:{bg:T.dangerL,color:"#991B1B"}, expired:{bg:"#F1EFEC",color:"#6B6460"}, cancelled:{bg:"#F1EFEC",color:"#6B6460"} };
+ var map = { pending:{bg:"var(--xFEF9C3)",color:"var(--x854D0E)"}, approved:{bg:T.successL,color:"var(--x065F46)"}, rejected:{bg:T.dangerL,color:"var(--x991B1B)"}, expired:{bg:"var(--xF1EFEC)",color:"var(--x6B6460)"}, cancelled:{bg:"var(--xF1EFEC)",color:"var(--x6B6460)"} };
  var labels = { rejected:"Declined", denied:"Declined", expired:"Expired", cancelled:"Cancelled" };
  var s = map[status] || map.pending;
  return <span style={{ padding:"2px 8px", borderRadius:20, fontSize:11, fontWeight:600, background:s.bg, color:s.color, textTransform:"capitalize" }}>{labels[status] || status}</span>;
@@ -620,10 +621,10 @@ function AIChat({ emps, sched, user, volSummary }) {
     <div style={{ display:"flex", flexDirection:"column", height:"100%", minHeight:380, ...CARD, padding:0, overflow:"hidden" }}>
       <div style={{ padding:"12px 16px", borderBottom:"1px solid "+T.border, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
         <div style={{ display:"flex", alignItems:"center", gap:9 }}>
-          <div style={{ width:28, height:28, borderRadius:8, background:"linear-gradient(135deg,#C84B31,#E05C40)", display:"flex", alignItems:"center", justifyContent:"center", color:"white" }}><Icon name="terminal" size={15} /></div>
+          <div style={{ width:28, height:28, borderRadius:8, background:"linear-gradient(135deg,var(--xC84B31),var(--xE05C40))", display:"flex", alignItems:"center", justifyContent:"center", color:"white" }}><Icon name="terminal" size={15} /></div>
           <div><div style={{ fontWeight:700, fontSize:13 }}>Schedule AI</div><div style={{ color:T.faint, fontSize:10 }}>Powered by Claude</div></div>
         </div>
-        <div style={{ fontSize:11, fontWeight:600, padding:"3px 9px", borderRadius:20, background:remaining<=3?T.dangerL:T.accentL, color:remaining<=3?T.danger:T.accent, border:"1px solid "+(remaining<=3?"#FCA5A5":"#F5C5BB") }}>
+        <div style={{ fontSize:11, fontWeight:600, padding:"3px 9px", borderRadius:20, background:remaining<=3?T.dangerL:T.accentL, color:remaining<=3?T.danger:T.accent, border:"1px solid "+(remaining<=3?"var(--xFCA5A5)":"var(--xF5C5BB)") }}>
           {limitHit ? "Limit reached" : remaining + " / " + AI_DAILY_LIMIT + " left today"}
         </div>
       </div>
@@ -645,7 +646,7 @@ function AIChat({ emps, sched, user, volSummary }) {
           </div>
         )}
         {limitHit && (
-          <div style={{ textAlign:"center", padding:"16px", background:T.dangerL, borderRadius:10, border:"1px solid #FCA5A5" }}>
+          <div style={{ textAlign:"center", padding:"16px", background:T.dangerL, borderRadius:10, border:"1px solid var(--xFCA5A5)" }}>
             <div style={{ marginBottom:6, display:"flex", justifyContent:"center", color:T.faint }}><Icon name="ban" size={20} /></div>
             <div style={{ fontSize:13, fontWeight:600, color:T.danger }}>Daily limit reached</div>
             <div style={{ fontSize:12, color:T.muted, marginTop:4 }}>You have used all {AI_DAILY_LIMIT} AI messages for today. Resets at midnight.</div>
@@ -911,7 +912,7 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  }
 
  if (mode === "login") return (
- <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#F8F6F3,#EDE8E0)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Archivo',system-ui,sans-serif", padding:20 }}>
+ <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,var(--xF8F6F3),var(--xEDE8E0))", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Archivo',system-ui,sans-serif", padding:20 }}>
  <div style={{ width:"100%", maxWidth:400 }}>
  <button onClick={function(){setMode("home");setErr("");}} style={{ ...GBTN, marginBottom:20, fontSize:12 }}>&#8592; Back</button>
  <div style={{ ...CARD, padding:28 }}>
@@ -921,8 +922,8 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  </div>
  <div style={{ marginBottom:13 }}><label style={LBL}>Email</label><input value={email} onChange={function(e){setEmail(e.target.value);setErr("");}} placeholder="you@company.com" style={INP} /></div>
  <div style={{ marginBottom:18 }}><label style={LBL}>Password</label><input type="password" value={pw} onChange={function(e){setPw(e.target.value);setErr("");}} onKeyDown={function(e){if(e.key==="Enter")doLogin();}} placeholder="password" style={INP} /></div>
- {authError && <div style={{ background:"#FEF3C7", border:"1px solid #FCD34D", borderRadius:8, padding:"9px 12px", color:"#92400E", fontSize:12, marginBottom:13 }}><b>Signed in, but couldn't load your account:</b> {authError}</div>}
- {err && <div style={{ background:T.dangerL, border:"1px solid #FCA5A5", borderRadius:8, padding:"9px 12px", color:"#991B1B", fontSize:13, marginBottom:13 }}>{err}</div>}
+ {authError && <div style={{ background:"var(--xFEF3C7)", border:"1px solid var(--xFCD34D)", borderRadius:8, padding:"9px 12px", color:"var(--x92400E)", fontSize:12, marginBottom:13 }}><b>Signed in, but couldn't load your account:</b> {authError}</div>}
+ {err && <div style={{ background:T.dangerL, border:"1px solid var(--xFCA5A5)", borderRadius:8, padding:"9px 12px", color:"var(--x991B1B)", fontSize:13, marginBottom:13 }}>{err}</div>}
  <button onClick={doLogin} disabled={loggingIn} style={{ ...BTN, width:"100%", padding:"11px", fontSize:14, opacity:loggingIn?0.6:1, cursor:loggingIn?"default":"pointer" }}>{loggingIn ? "Signing in..." : "Sign in"}</button>
  </div>
  </div>
@@ -930,7 +931,7 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  );
 
  if (mode === "signup") return (
- <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#F8F6F3,#EDE8E0)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Archivo',system-ui,sans-serif", padding:20 }}>
+ <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,var(--xF8F6F3),var(--xEDE8E0))", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Archivo',system-ui,sans-serif", padding:20 }}>
  <div style={{ width:"100%", maxWidth:440 }}>
  <button onClick={function(){setMode("home");setErr("");}} style={{ ...GBTN, marginBottom:20, fontSize:12 }}>&#8592; Back</button>
  <div style={{ ...CARD, padding:28 }}>
@@ -971,7 +972,7 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  })}
  </div>
  </div>
- {err && <div style={{ background:T.dangerL, border:"1px solid #FCA5A5", borderRadius:8, padding:"9px 12px", color:"#991B1B", fontSize:13, marginBottom:13 }}>{err}</div>}
+ {err && <div style={{ background:T.dangerL, border:"1px solid var(--xFCA5A5)", borderRadius:8, padding:"9px 12px", color:"var(--x991B1B)", fontSize:13, marginBottom:13 }}>{err}</div>}
           {ind === "hospitality" && (
             <div style={{ marginBottom:16 }}>
               <label style={LBL}>Rooms at this property</label>
@@ -994,7 +995,7 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  );
 
  return (
- <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#F8F6F3,#EDE8E0)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", fontFamily:"'Archivo',system-ui,sans-serif", padding:24 }}>
+ <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,var(--xF8F6F3),var(--xEDE8E0))", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", fontFamily:"'Archivo',system-ui,sans-serif", padding:24 }}>
  <div style={{ textAlign:"center", maxWidth:540, animation:"fadeIn .5s ease" }}>
   <div style={{ marginBottom:24, display:"flex", justifyContent:"center" }}><LogoMark size={88} /></div>
  <h1 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:800, fontSize:40, color:T.text, marginBottom:12, lineHeight:1.15 }}>ShyftRota</h1>
@@ -1245,6 +1246,9 @@ function App() {
    });
  }, [user && user.property_id, weekOff, weekStartDow]);
  var [tab, setTab] = useState("schedule");
+ var [theme, setThemeState] = useState(function(){ try { return document.documentElement.getAttribute("data-theme") || "dark"; } catch(e) { return "dark"; } });
+ function applyTheme(t) { try { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("sr_theme", t); } catch(e) {} setThemeState(t); }
+ var [tlDay, setTlDay] = useState(null);
  var [selCell, setSelCell] = useState(null);
  var [addEmpOpen, setAddEmpOpen]= useState(false);
  var [addingEmp, setAddingEmp] = useState(false);
@@ -1270,7 +1274,7 @@ function App() {
   var [shiftAvailEmp,  setShiftAvailEmp]  = useState(null); // emp.id being edited for shift-window avail
   var [shiftOverrides, setShiftOverrides] = useState({}); // {ISOdate_eid: {start,end}} — loaded from Supabase below
   var [editOverride,   setEditOverride]   = useState(null); // {day, eid, start, end}
-  var [schedView,      setSchedView]      = useState("week");
+  var [schedView,      setSchedView]      = useState(function(){ try { return window.innerWidth < 680 ? "day" : "week"; } catch(e) { return "week"; } });
   var [newDeptName,   setNewDeptName]   = useState("");
   var [overrideEid,    setOverrideEid]    = useState(null);
   var [overrideType,   setOverrideType]   = useState("out");
@@ -1293,6 +1297,7 @@ function App() {
  function showT(msg, type) { setToast({msg:msg,type:type||"success"}); setTimeout(function(){setToast(null);},2800); }
 
  var isAdmin = user && user.role === "admin";
+ useEffect(function(){ if (user && !isAdmin && tab === "schedule") setTab("myschedule"); }, [user && user.role, tab]);
  var indRoles = (INDUSTRIES[industry] && INDUSTRIES[industry].roles) || INDUSTRIES.general.roles;
 
  // Derived week data - must be before allConflicts
@@ -2052,11 +2057,124 @@ function App() {
   var TAB_ICONS = {schedule:"calendar",employees:"users",depts:"building",openShifts:"plusSquare",requests:"clipboard",timeclock:"clock",shifts:"list",chat:"message",ai:"terminal",myschedule:"calendarCheck",today:"eye",timeoff:"sun",swap:"swap",callin:"phone",clockin:"login",settings:"sliders"};
 
  if (authLoading) return (
-  <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"#F8F6F3", color:"#8A8478", fontFamily:"'Archivo',system-ui,sans-serif", fontSize:14 }}>
+  <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--xF8F6F3)", color:"var(--x8A8478)", fontFamily:"'Archivo',system-ui,sans-serif", fontSize:14 }}>
    Loading…
   </div>
  );
  if (!user) return <Welcome onLogin={handleLogin} onSignup={handleSignup} accounts={accounts} authError={authError} />;
+
+ // ── UI upgrade helpers ─────────────────────────────────
+ var MONO = "'IBM Plex Mono',ui-monospace,monospace";
+ var DAY_NAMES_SUN = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+ var todayName = DAY_NAMES_SUN[new Date().getDay()];
+ function hrsOf(t) { if (!t || typeof t !== "string" || t.indexOf(":") < 0) return null; var p = t.split(":"); return Number(p[0]) + Number(p[1]||0)/60; }
+ function shortT(t) { var h = hrsOf(t); if (h === null) return ""; var hh = Math.floor(h), mm = Math.round((h-hh)*60); var ap = hh >= 12 && hh < 24 ? "p" : "a"; var h12 = hh % 12 || 12; return h12 + (mm ? ":" + String(mm).padStart(2,"0") : "") + ap; }
+ function shiftTimesFor(day, eid, shiftId) {
+  var def = shiftDefs.find(function(d){ return d.id === shiftId; });
+  var ov = shiftOverrides[overrideKey(weekOff, day, eid)];
+  return { start: ov ? ov.start : (def ? def.start : null), end: ov ? ov.end : (def ? def.end : null), label: def ? def.label : String(shiftId).split(" ")[0] };
+ }
+ function onPtoOn(eid, iso) { return ptos.some(function(p){ return p.eid === eid && p.status === "approved" && iso >= p.startDate && iso <= (p.endDate || p.startDate); }); }
+ function scopedEmps() { return emps.filter(function(e){ return deptFilter === "all" || e.dept === deptFilter; }); }
+ var BUCKET_LABEL = { am:"AM", mid:"Mid", pm:"PM" };
+ function computeGaps() {
+  if (isPastWeek) return [];
+  var vEmps = scopedEmps(); var out = [];
+  orderedDays().forEach(function(d){
+   var v = dailyVol[dayToISODate(weekOff, d)];
+   var need = suggestCover(v, volThresholds);
+   if (!need) return;
+   var have = coverageForDay(vEmps, weekSched[d] || {}, shiftDefs);
+   ["am","mid","pm"].forEach(function(b){ if (have[b] < need[b]) out.push({ day:d, bucket:b, need:need[b], have:have[b], vol:v }); });
+  });
+  return out;
+ }
+ function candidateFor(day, bucket) {
+  var def = shiftDefs.find(function(s){ return shiftBucket(s.id, shiftDefs) === bucket; });
+  if (!def) return { emp:null, shiftId:null };
+  var iso = dayToISODate(weekOff, day);
+  var pool = scopedEmps().filter(function(e){
+   if (weekSched[day] && weekSched[day][e.id]) return false;
+   if ((e.avail || []).indexOf(day) < 0) return false;
+   if (onPtoOn(e.id, iso)) return false;
+   return weekHours(e.id, weekSched, shiftDefs) + shiftHours(def.id, shiftDefs) <= (e.max || 40);
+  });
+  pool.sort(function(a, b){ return weekHours(a.id, weekSched, shiftDefs) - weekHours(b.id, weekSched, shiftDefs); });
+  return { emp: pool[0] || null, shiftId: def.id, def: def };
+ }
+ function Avatar(props) {
+  var e = props.emp; var sz = props.size || 26;
+  return <span aria-hidden="true" style={{ width:sz, height:sz, borderRadius:"50%", background:colorFor(e.id), color:"white", fontSize:Math.round(sz*0.38), fontWeight:700, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0, border:props.ring ? "2px solid "+T.surface : "none", marginLeft:props.overlap ? -8 : 0 }}>{initials(e.name)}</span>;
+ }
+ function GapCard(props) {
+  var g = props.gap; var c = candidateFor(g.day, g.bucket);
+  var t = c.def ? shortT(c.def.start) + "–" + shortT(c.def.end) : "";
+  var vol = g.vol || {};
+  return (
+   <div style={{ border:"1px solid "+T.border, borderRadius:8, background:T.surface }}>
+    <div style={{ padding:"12px 14px" }}>
+     <div style={{ display:"flex", alignItems:"center", gap:8 }}><span style={{ width:6, height:6, background:T.accent, flexShrink:0 }} /><span style={{ fontSize:13, fontWeight:700, color:T.text }}>{g.day} {BUCKET_LABEL[g.bucket]} is {g.need - g.have} short</span></div>
+     <div style={{ fontFamily:MONO, fontSize:11, color:T.muted, marginTop:4 }}>{t.toUpperCase()}{t ? " · " : ""}{g.have} OF {g.need}{g.bucket === "pm" && vol.arrivals ? " · " + vol.arrivals + " ARRIVALS" : ""}{g.bucket !== "pm" && vol.departures ? " · " + vol.departures + " DUE OUT" : ""}</div>
+    </div>
+    {c.emp ? (
+     <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", borderTop:"1px solid "+T.border }}>
+      <Avatar emp={c.emp} />
+      <div style={{ flex:1, minWidth:0 }}><div style={{ fontSize:13, fontWeight:600, color:T.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.emp.name}</div><div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>AVAILABLE · {weekHours(c.emp.id, weekSched, shiftDefs)}/{c.emp.max}H</div></div>
+      <button onClick={function(){ assignShift(g.day, c.emp.id, c.shiftId); }} style={{ ...BTN, padding:"8px 12px", fontSize:12, minHeight:36 }}>Assign</button>
+     </div>
+    ) : (
+     <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, padding:"10px 14px", borderTop:"1px solid "+T.border }}>
+      <span style={{ fontSize:12, color:T.faint }}>No one available fits.</span>
+      <button onClick={function(){ setTab("openShifts"); }} style={{ ...GBTN, padding:"8px 12px", fontSize:12, color:T.text, minHeight:36 }}>Post open shift</button>
+     </div>
+    )}
+   </div>
+  );
+ }
+ function NeedsYou() {
+  var gaps = computeGaps();
+  var pPto = curPtos.filter(function(r){ return r.status === "pending"; });
+  var pSwap = curSwaps.filter(function(r){ return r.status === "pending"; });
+  var total = gaps.length + pPto.length + pSwap.length;
+  return (
+   <aside aria-label="Needs you" style={{ flex:"1 1 300px", minWidth:0, display:"flex", flexDirection:"column", gap:12, marginBottom:16 }}>
+    <div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>NEEDS YOU · {total}</div>
+    {total === 0 && <div style={{ border:"1px solid "+T.border, borderRadius:8, padding:"14px", fontSize:13, color:T.muted, background:T.surface }}>All covered. No requests waiting.</div>}
+    {gaps.slice(0, 4).map(function(g){ return <GapCard key={g.day+g.bucket} gap={g} />; })}
+    {gaps.length > 4 && <div style={{ fontSize:12, color:T.faint }}>+{gaps.length - 4} more short shifts this week</div>}
+    {(pPto.length > 0 || pSwap.length > 0) && (
+     <div style={{ border:"1px solid "+T.border, borderRadius:8, background:T.surface }}>
+      {pPto.slice(0, 3).map(function(req, i){
+       var e = emps.find(function(x){ return x.id === req.eid; });
+       return (
+        <div key={"p"+req.id} style={{ padding:"12px 14px", borderTop:i ? "1px solid "+T.border : "none" }}>
+         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          {e && <Avatar emp={e} />}
+          <div style={{ flex:1, minWidth:0 }}><div style={{ fontSize:13, fontWeight:600, color:T.text }}>{(e ? e.name.split(" ")[0] : req.ename) + " · time off"}</div><div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>{(fmtReqDate(req.startDate) + (req.endDate && req.endDate !== req.startDate ? " – " + fmtReqDate(req.endDate) : "")).toUpperCase()} · {String(req.type||"").toUpperCase()}</div></div>
+         </div>
+         <div style={{ display:"grid", gridTemplateColumns:"repeat(2, minmax(0, 1fr))", gap:8, marginTop:10 }}>
+          <button onClick={function(){ setPTOStatus(req.id, "approved"); }} style={{ ...BTN, background:T.text, color:T.bg, fontSize:12, minHeight:36 }}>Approve</button>
+          <button onClick={function(){ setPTOStatus(req.id, "rejected"); }} style={{ ...GBTN, fontSize:12, minHeight:36 }}>Deny</button>
+         </div>
+        </div>
+       );
+      })}
+      {pSwap.slice(0, 3).map(function(req, i){
+       var e = emps.find(function(x){ return x.id === req.fromId; });
+       return (
+        <div key={"s"+req.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px", borderTop:(i || pPto.length) ? "1px solid "+T.border : "none" }}>
+         {e && <Avatar emp={e} />}
+         <div style={{ flex:1, minWidth:0 }}><div style={{ fontSize:13, fontWeight:600, color:T.text }}>{empName(req.fromId, req.from).split(" ")[0]} → {empName(req.toId, req.to).split(" ")[0]} · swap</div><div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>{String(req.day||"").toUpperCase()} · {String(getShiftLabel(req.shift, shiftDefs)||req.shift||"").toUpperCase()}</div></div>
+         <button onClick={function(){ approveSwap(req); }} style={{ ...GBTN, padding:"8px 10px", fontSize:12, color:T.text, minHeight:36 }}>Approve</button>
+        </div>
+       );
+      })}
+      {(pPto.length > 3 || pSwap.length > 3) && <button onClick={function(){ setTab("requests"); }} style={{ width:"100%", padding:"12px", background:"transparent", border:"none", borderTop:"1px solid "+T.border, color:T.accent, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>See all requests</button>}
+     </div>
+    )}
+   </aside>
+  );
+ }
 
  var tz = getTZ();
 
@@ -2068,14 +2186,14 @@ function App() {
  .mono { font-family:'IBM Plex Mono',ui-monospace,monospace; font-variant-numeric:tabular-nums; }
  * { box-sizing:border-box; margin:0; padding:0; }
  ::-webkit-scrollbar { width:4px; height:4px; }
- ::-webkit-scrollbar-thumb { background:#CBD5E1; border-radius:4px; }
+ ::-webkit-scrollbar-thumb { background:var(--xCBD5E1); border-radius:4px; }
  @keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
  @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
  @keyframes sIn { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
- .hv:hover { background:#F1F5F9 !important; cursor:pointer; }
- .hv2:hover { background:#FDF0ED !important; cursor:pointer; }
- input:focus, select:focus, textarea:focus { border-color:#C84B31 !important; box-shadow:0 0 0 3px rgba(200,75,49,0.12); outline:none; }
+ .hv:hover { background:var(--xF1F5F9) !important; cursor:pointer; }
+ .hv2:hover { background:var(--xFDF0ED) !important; cursor:pointer; }
+ input:focus, select:focus, textarea:focus { border-color:var(--xC84B31) !important; box-shadow:0 0 0 3px rgba(200,75,49,0.12); outline:none; }
  button { transition: transform 0.12s cubic-bezier(0.34,1.56,0.64,1), opacity 0.12s ease, box-shadow 0.12s ease; }
  button:active { transform: scale(0.88); opacity:0.75; box-shadow: 0 0 0 4px rgba(26,23,20,0.18); }
  .tab-btn { transition: color 0.18s ease, border-color 0.18s ease, transform 0.12s cubic-bezier(0.34,1.56,0.64,1) !important; }
@@ -2114,7 +2232,7 @@ function App() {
  <span style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:800, fontSize:14, color:T.text }}>ShyftRota</span>
  </div>
  <div style={{ display:"flex", gap:7, alignItems:"center" }}>
- {conflicts.length > 0 && <div style={{ background:T.warningL, border:"1px solid #FDE68A", borderRadius:6, padding:"3px 8px", color:"#92400E", fontSize:11 }}>&#9888; {conflicts.length}</div>}
+ {conflicts.length > 0 && <div style={{ background:T.warningL, border:"1px solid var(--xFDE68A)", borderRadius:6, padding:"3px 8px", color:"var(--x92400E)", fontSize:11 }}>&#9888; {conflicts.length}</div>}
  <div style={{ width:26, height:26, borderRadius:"50%", background:colorFor(user.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"white" }}>{user.name[0]}</div>
  <button onClick={logout} style={{ ...GBTN, fontSize:12, padding:"4px 10px", whiteSpace:"nowrap" }}>Sign out</button>
  </div>
@@ -2231,7 +2349,7 @@ function App() {
  </div>
  {isAdmin && (
  <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
- {conflicts.length > 0 && <div style={{ background:T.warningL, border:"1px solid #FDE68A", borderRadius:8, padding:"5px 11px", color:"#92400E", fontSize:12 }}>&#9888; {conflicts.length} conflict{conflicts.length>1?"s":""}</div>}
+ {conflicts.length > 0 && <div style={{ background:T.warningL, border:"1px solid var(--xFDE68A)", borderRadius:8, padding:"5px 11px", color:"var(--x92400E)", fontSize:12 }}>&#9888; {conflicts.length} conflict{conflicts.length>1?"s":""}</div>}
  <button onClick={function(){exportCSV(emps,sched);}} style={{ ...GBTN, fontSize:12 }}>Export CSV</button>
  </div>
  )}
@@ -2244,60 +2362,39 @@ function App() {
  {tab==="schedule" && isAdmin && (
  <div>
 
- {/* TODAY AT A GLANCE */}
+ {/* RIGHT NOW */}
  {weekOff === 0 && (function(){
-   var dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-   var todayDay = dayNames[new Date().getDay()];
-   var todayShifts = weekSched[todayDay] || {};
+   var todayShifts = weekSched[todayName] || {};
    var onToday = emps.filter(function(e){ return todayShifts[e.id]; });
-   var offToday = emps.filter(function(e){ return !todayShifts[e.id]; });
-   var now = new Date();
-   var hr = now.getHours(); var mn = String(now.getMinutes()).padStart(2,"0");
-   var ap = hr>=12?"PM":"AM"; hr=hr%12||12;
-   var clockedInToday = emps.filter(function(e){
-     var last = timeclock.slice().reverse().find(function(p){ return p.eid===e.id; });
-     return last && last.type==="in" && new Date(last.ts).toDateString()===new Date().toDateString();
+   var now = new Date(); var nowH = now.getHours() + now.getMinutes()/60;
+   var hr = now.getHours(); var mn = String(now.getMinutes()).padStart(2,"0"); var ap = hr>=12?"PM":"AM"; hr = hr%12||12;
+   var rows = onToday.map(function(e){
+     var t = shiftTimesFor(todayName, e.id, todayShifts[e.id]);
+     var a = hrsOf(t.start), b = hrsOf(t.end); if (a !== null && b !== null && b <= a) b += 24;
+     var lp = timeclock.slice().reverse().find(function(x){ return x.eid===e.id && new Date(x.ts).toDateString()===now.toDateString(); });
+     return { emp:e, t:t, s:a, en:b, isIn: !!lp && (lp.type==="in" || lp.type==="lunch_in"), onBreak: !!lp && lp.type==="lunch_out", onNow: a !== null && nowH >= a && nowH < b };
    });
+   var onNow = rows.filter(function(r){ return r.onNow || r.isIn || r.onBreak; });
+   var upcoming = rows.filter(function(r){ return r.s !== null && r.s > nowH; }).sort(function(x,y){ return x.s-y.s; });
+   var nextGroup = upcoming.filter(function(r){ return upcoming.length && r.s === upcoming[0].s; });
    return (
-     <div style={{ ...CARD, marginBottom:16, background:"linear-gradient(135deg,#1A1714,#2E2A26)", border:"none" }}>
-       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12, marginBottom:14 }}>
-         <div>
-           <div style={{ fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.4)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>Today</div>
-           <div style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:800, fontSize:20, color:"white" }}>{hr}:{mn} {ap}</div>
-         </div>
-         <div style={{ display:"flex", gap:8 }}>
-           <div style={{ textAlign:"center", background:"rgba(255,255,255,0.08)", borderRadius:10, padding:"8px 14px" }}>
-             <div style={{ fontSize:18, fontWeight:800, color:"white" }}>{onToday.length}</div>
-             <div style={{ fontSize:9, color:"rgba(255,255,255,0.4)", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em" }}>Scheduled</div>
-           </div>
-           <div style={{ textAlign:"center", background:"rgba(34,211,160,0.15)", borderRadius:10, padding:"8px 14px", border:"1px solid rgba(34,211,160,0.25)" }}>
-             <div style={{ fontSize:18, fontWeight:800, color:"#34D399" }}>{clockedInToday.length}</div>
-             <div style={{ fontSize:9, color:"rgba(34,211,160,0.6)", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em" }}>Clocked In</div>
-           </div>
-           <div style={{ textAlign:"center", background:"rgba(255,255,255,0.05)", borderRadius:10, padding:"8px 14px" }}>
-             <div style={{ fontSize:18, fontWeight:800, color:"rgba(255,255,255,0.35)" }}>{offToday.length}</div>
-             <div style={{ fontSize:9, color:"rgba(255,255,255,0.25)", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em" }}>Off Today</div>
-           </div>
-         </div>
+     <section aria-label="Right now" style={{ display:"flex", flexWrap:"wrap", alignItems:"center", gap:"14px 24px", padding:"14px 18px", marginBottom:16, background:T.surface, border:"1px solid "+T.border, borderRadius:8 }}>
+       <div style={{ display:"flex", alignItems:"baseline", gap:10 }}>
+         <span style={{ fontFamily:MONO, fontSize:28, fontWeight:500, letterSpacing:"-0.05em", lineHeight:1, color:T.text }}>{hr}:{mn}<span style={{ fontSize:12, letterSpacing:0, color:T.faint, marginLeft:4 }}>{ap}</span></span>
+         <span style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>{now.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}).toUpperCase()}</span>
        </div>
-       {onToday.length > 0 ? (
-         <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
-           {onToday.map(function(e){
-             var shift = todayShifts[e.id]; var sc = shift ? shiftColor(shift) : {};
-             var isIn = clockedInToday.some(function(c){ return c.id===e.id; });
-             return (
-               <div key={e.id} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", borderRadius:20, background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)" }}>
-                 <div style={{ width:6, height:6, borderRadius:"50%", background:isIn?"#34D399":"rgba(255,255,255,0.2)", flexShrink:0 }} />
-                 <span style={{ fontSize:11, color:"white", fontWeight:500 }}>{e.name.split(" ")[0]}</span>
-                 {sc.bg && <span style={{ fontSize:10, color:sc.text, background:sc.bg, padding:"1px 5px", borderRadius:8, fontWeight:600 }}>{(function(){ var def=shiftDefs.find(function(d){return d.id===shift;}); var ov=shiftOverrides[overrideKey(0,todayDay,e.id)]; if(ov) return to12(ov.start)+"-"+to12(ov.end); return def?to12(def.start)+"-"+to12(def.end):shift.split(" ")[0]; })()}</span>}
-               </div>
-             );
-           })}
-         </div>
-       ) : (
-         <div style={{ fontSize:12, color:"rgba(255,255,255,0.3)", fontStyle:"italic" }}>Nobody scheduled today — auto-generate or assign shifts manually.</div>
-       )}
-     </div>
+       <div style={{ display:"flex", alignItems:"center", gap:8, flex:"1 1 320px", minWidth:0, flexWrap:"wrap" }}>
+         <span style={{ display:"flex", alignItems:"center", gap:6, fontFamily:MONO, fontSize:11, color:T.muted, whiteSpace:"nowrap", marginRight:4 }}><span style={{ width:6, height:6, borderRadius:"50%", background:T.success }} />ON NOW · {onNow.length}</span>
+         {onNow.map(function(r){ return (
+           <span key={r.emp.id} style={{ display:"inline-flex", alignItems:"center", gap:6, height:28, padding:"0 10px 0 3px", border:"1px solid "+T.border, borderRadius:14, fontSize:12, color:r.onBreak?T.muted:T.text }}>
+             <Avatar emp={r.emp} size={22} />{r.emp.name.split(" ")[0]}
+             {r.onBreak ? <span style={{ fontFamily:MONO, fontSize:10, color:T.warning }}>BREAK</span> : !r.isIn ? <span style={{ fontFamily:MONO, fontSize:10, color:T.accent }}>NOT IN</span> : null}
+           </span>
+         ); })}
+         {onNow.length === 0 && <span style={{ fontSize:12, color:T.faint }}>{onToday.length ? "Nobody on yet" : "Nobody scheduled today"}</span>}
+       </div>
+       {nextGroup.length > 0 && <div style={{ fontFamily:MONO, fontSize:11, color:T.faint, whiteSpace:"nowrap" }}>NEXT {shortT(nextGroup[0].t.start).toUpperCase()} · <span style={{ color:T.text }}>{nextGroup.map(function(r){ return r.emp.name.split(" ")[0]; }).join(", ").toUpperCase()}</span></div>}
+     </section>
    );
  })()}
 
@@ -2312,11 +2409,11 @@ function App() {
 
  {/* Past week banner */}
  {isPastWeek && (
- <div style={{ background:"#FFF7ED", border:"1px solid #FED7AA", borderRadius:10, padding:"10px 16px", marginBottom:14, display:"flex", alignItems:"center", gap:10 }}>
- <Icon name="lock" size={18} color="#9A3412" />
+ <div style={{ background:"var(--xFFF7ED)", border:"1px solid var(--xFED7AA)", borderRadius:10, padding:"10px 16px", marginBottom:14, display:"flex", alignItems:"center", gap:10 }}>
+ <Icon name="lock" size={18} color="var(--x9A3412)" />
  <div>
- <div style={{ fontWeight:600, fontSize:13, color:"#9A3412" }}>Past week - read only</div>
- <div style={{ fontSize:12, color:"#C2410C", marginTop:1 }}>This schedule is locked as a historical record. Navigate to the current or future week to make changes.</div>
+ <div style={{ fontWeight:600, fontSize:13, color:"var(--x9A3412)" }}>Past week - read only</div>
+ <div style={{ fontSize:12, color:"var(--xC2410C)", marginTop:1 }}>This schedule is locked as a historical record. Navigate to the current or future week to make changes.</div>
  </div>
  </div>
  )}
@@ -2334,11 +2431,11 @@ function App() {
  <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
   <div style={{ display:"flex", background:T.bg, border:"1px solid "+T.border, borderRadius:8, padding:2 }}>
    <button onClick={function(){setSchedView("week");}} style={{ padding:"5px 12px", borderRadius:6, border:"none", background:schedView==="week"?T.surface:"transparent", color:schedView==="week"?T.text:T.faint, fontSize:11, fontWeight:schedView==="week"?700:400, cursor:"pointer", fontFamily:"inherit" }}>Week</button>
-   <button onClick={function(){setSchedView("day");}} style={{ padding:"5px 12px", borderRadius:6, border:"none", background:schedView==="day"?T.surface:"transparent", color:schedView==="day"?T.text:T.faint, fontSize:11, fontWeight:schedView==="day"?700:400, cursor:"pointer", fontFamily:"inherit" }}>Today</button>
+   <button onClick={function(){setSchedView("day");}} style={{ padding:"5px 12px", borderRadius:6, border:"none", background:schedView==="day"?T.surface:"transparent", color:schedView==="day"?T.text:T.faint, fontSize:11, fontWeight:schedView==="day"?700:400, cursor:"pointer", fontFamily:"inherit" }}>Day</button>
   </div>
   <button onClick={function(){setVolOpen(!volOpen);}} style={{ ...GBTN, fontSize:12, color:volOpen?T.accent:T.muted, borderColor:volOpen?T.accent:T.border }}>{volOpen?"Hide volume":"Volume"}</button>
- {!isPastWeek && <button onClick={clearWeek} style={{ ...GBTN, fontSize:12, display:"flex", alignItems:"center", gap:6, color:T.danger, borderColor:"#FCA5A5" }}>Clear</button>}
-  {!isPastWeek && <button onClick={autoGenerate} style={{ ...BTN, fontSize:12, display:"flex", alignItems:"center", gap:6, background:"linear-gradient(135deg,#C84B31,#E05C40)" }}>Auto-Generate</button>}
+ {!isPastWeek && <button onClick={clearWeek} style={{ ...GBTN, fontSize:12, display:"flex", alignItems:"center", gap:6, color:T.danger, borderColor:"var(--xFCA5A5)" }}>Clear</button>}
+  {!isPastWeek && <button onClick={autoGenerate} style={{ ...BTN, fontSize:12, display:"flex", alignItems:"center", gap:6, background:"linear-gradient(135deg,var(--xC84B31),var(--xE05C40))" }}>Auto-Generate</button>}
  </div>
  </div>
 
@@ -2380,53 +2477,94 @@ function App() {
  })}
  </div>
 
+ <div style={{ display:"flex", flexWrap:"wrap", gap:20, alignItems:"flex-start" }}>
+ <div style={{ flex:"999 1 620px", minWidth:0 }}>
  {schedView==="day" && (function(){
-   var dayNames2=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-   var todayD=dayNames2[new Date().getDay()];
-   var todayS=weekSched[todayD]||{};
-   var filtE=emps.filter(function(e){return deptFilter==="all"||e.dept===deptFilter;});
-   var onS=filtE.filter(function(e){return todayS[e.id];});
-   var offS=filtE.filter(function(e){return !todayS[e.id];});
-   var todayLabel=new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
+   var days = orderedDays();
+   var sel = tlDay && days.indexOf(tlDay) >= 0 ? tlDay : (weekOff === 0 ? todayName : days[0]);
+   var selIdx = days.indexOf(sel);
+   var iso = dayToISODate(weekOff, sel);
+   var daySched = weekSched[sel] || {};
+   var vEmps = scopedEmps();
+   var vol = dailyVol[iso] || null;
+   function show(v){ return v === null || v === undefined || v === "" ? "—" : v; }
+   function pct(h){ var x = h - 6; if (x < 0) x += 24; return Math.max(0, Math.min(100, x / 24 * 100)); }
+   var rows = vEmps.map(function(e){
+     var sh = daySched[e.id];
+     if (!sh) return { emp:e, off:true, pto:onPtoOn(e.id, iso) };
+     var t = shiftTimesFor(sel, e.id, sh); var a = hrsOf(t.start), b = hrsOf(t.end);
+     if (a === null || b === null) return { emp:e, sh:sh, t:t, s:6, en:6, nobar:true };
+     if (b <= a) b += 24;
+     return { emp:e, sh:sh, t:t, s:a, en:b };
+   });
+   var on = rows.filter(function(r){ return !r.off; }).sort(function(x,y){ return (x.s<6?x.s+24:x.s) - (y.s<6?y.s+24:y.s); });
+   var pto = rows.filter(function(r){ return r.off && r.pto; });
+   var free = rows.filter(function(r){ return r.off && !r.pto; });
+   var hrsTotal = on.reduce(function(acc, r){ return acc + (r.nobar ? shiftHours(r.sh, shiftDefs) : (r.en - r.s)); }, 0);
+   var LONG = { Sun:"Sunday", Mon:"Monday", Tue:"Tuesday", Wed:"Wednesday", Thu:"Thursday", Fri:"Friday", Sat:"Saturday" };
+   var GRID = { display:"grid", gridTemplateColumns:"92px minmax(0, 1fr)", columnGap:8, alignItems:"center" };
+   var TRACK = { position:"relative", height:26, backgroundImage:"linear-gradient(to right, var(--border) 1px, transparent 1px)", backgroundSize:"25% 100%" };
+   function shortName(n){ var p = n.split(" "); return p[0] + (p.length > 1 ? " " + p[p.length-1].slice(0,1) + "." : ""); }
    return (
      <div style={{ marginBottom:16 }}>
-       <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:12 }}>{todayLabel}</div>
-       {onS.length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:28 }}>Nobody scheduled today. Hit Auto-Generate or assign shifts manually.</div>}
-       <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
-         {onS.map(function(emp){
-           var sh=todayS[emp.id]; var sc=sh?shiftColor(sh):{};
-           var dept=depts.find(function(d){return d.id===emp.dept;});
-           var lastP=timeclock.slice().reverse().find(function(p){return p.eid===emp.id;});
-           var isIn=lastP&&lastP.type==="in"&&new Date(lastP.ts).toDateString()===new Date().toDateString();
-           var conf=conflicts.find(function(c){return c.indexOf(emp.name)>=0;});
+       <div role="tablist" aria-label="Days" style={{ display:"grid", gridTemplateColumns:"repeat(7, minmax(0, 1fr))", gap:4, marginBottom:16 }}>
+         {days.map(function(d, di){
+           var v = dailyVol[dayToISODate(weekOff, d)];
+           var need = suggestCover(v, volThresholds);
+           var have = coverageForDay(vEmps, weekSched[d] || {}, shiftDefs);
+           var active = d === sel; var isToday = weekOff === 0 && d === todayName;
+           function seg(b, tone){ var col = need ? (have[b] < need[b] ? T.accent : tone) : (have[b] ? tone : T.border); return <span key={b} style={{ flex:1, height:3, background:col }} />; }
            return (
-             <div key={emp.id} style={{ ...CARD, display:"flex", alignItems:"center", gap:12, padding:"12px 16px", border:"1px solid "+(conf?T.danger:sc.border||T.border) }}>
-               <div style={{ width:34,height:34,borderRadius:"50%",background:colorFor(emp.id),display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"white",flexShrink:0 }}>{initials(emp.name)}</div>
-               <div style={{ flex:1, minWidth:0 }}>
-                 <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
-                   <span style={{ fontSize:13, fontWeight:700, color:T.text }}>{emp.name}</span>
-                   <span style={{ fontSize:11, color:T.faint }}>{emp.role}</span>
-                   {dept && <span style={{ fontSize:10, padding:"1px 6px", borderRadius:20, background:dept.color+"22", color:dept.color, fontWeight:600 }}>{dept.name}</span>}
-                 </div>
-                 {conf && <div style={{ fontSize:11, color:T.danger, marginTop:2 }}>&#9888; {conf}</div>}
-               </div>
-               <div style={{ display:"flex", alignItems:"center", gap:7, flexShrink:0 }}>
-                 <div style={{ width:8,height:8,borderRadius:"50%",background:isIn?"#34D399":T.faint }} />
-                 {sc.bg && <span style={{ fontSize:11, fontWeight:700, padding:"4px 10px", borderRadius:20, background:sc.bg, color:sc.text, border:"1px solid "+(sc.border||T.border) }}>{(function(){ var def=shiftDefs.find(function(d){return d.id===sh;}); var ov=shiftOverrides[overrideKey(weekOff,todayD,emp.id)]; if(ov) return def?(def.label+" "+to12(ov.start)+"-"+to12(ov.end)):(to12(ov.start)+"-"+to12(ov.end)); return def?(def.label+" "+to12(def.start)+"-"+to12(def.end)):sh; })()}</span>}
+             <button key={d} role="tab" aria-selected={active} aria-label={LONG[d] + " " + getDayDate(di, weekOff)} onClick={function(){ setTlDay(d); }} style={{ minHeight:60, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:4, padding:"6px 2px", background:active?T.surface:"transparent", border:"1px solid "+(active?T.border:"transparent"), borderRadius:6, cursor:"pointer", fontFamily:"inherit" }}>
+               <span style={{ fontSize:11, fontWeight:700, color:isToday?T.accent:T.faint }}>{d.slice(0,1)}</span>
+               <span style={{ fontFamily:MONO, fontSize:13, color:T.text, fontWeight:active?600:400 }}>{String(getDayDate(di, weekOff)).split(" ").pop()}</span>
+               <span style={{ display:"flex", gap:2, width:22 }}>{seg("am","var(--sc-am-dot)")}{seg("mid","var(--sc-mid-dot)")}{seg("pm","var(--sc-pm-dot)")}</span>
+             </button>
+           );
+         })}
+       </div>
+       <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", gap:12, flexWrap:"wrap", marginBottom:12 }}>
+         <div>
+           <div style={{ fontSize:22, fontWeight:800, letterSpacing:"-0.02em", color:T.text }}>{LONG[sel]}</div>
+           <div style={{ fontFamily:MONO, fontSize:12, color:T.faint, marginTop:2 }}>{String(getDayDate(selIdx, weekOff)).toUpperCase()} · {on.length} ON · {Math.round(hrsTotal*10)/10} HRS</div>
+         </div>
+         {vol && <div style={{ display:"flex", gap:14, fontFamily:MONO, textAlign:"right" }}>
+           {[["OCC", show(vol.occupancy) === "—" ? "—" : vol.occupancy + "%"], ["ARR", show(vol.arrivals)], ["DEP", show(vol.departures)]].map(function(x){ return <div key={x[0]}><div style={{ fontSize:11, color:T.faint }}>{x[0]}</div><div style={{ fontSize:15, fontWeight:600, color:T.text }}>{x[1]}</div></div>; })}
+         </div>}
+       </div>
+       <div style={{ border:"1px solid "+T.border, borderRadius:8, background:T.surface, padding:"8px 12px 4px" }}>
+         <div style={{ ...GRID, fontFamily:MONO, fontSize:11, color:T.faint, marginBottom:4 }}>
+           <span />
+           <div style={{ position:"relative", height:14 }}>{[["6a",0],["12p",25],["6p",50],["12a",75]].map(function(x){ return <span key={x[0]} style={{ position:"absolute", left:x[1]+"%" }}>{x[0]}</span>; })}</div>
+         </div>
+         {on.length === 0 && <div style={{ padding:"18px 0", fontSize:13, color:T.faint, textAlign:"center", borderTop:"1px solid "+T.border }}>Nobody scheduled. Use Auto-Generate or the week view to add shifts.</div>}
+         {on.map(function(r){
+           var c = shiftColor(r.sh);
+           var left = r.nobar ? 0 : pct(r.s); var width = r.nobar ? 100 : Math.max(4, Math.min(100 - left, (r.en - r.s) / 24 * 100));
+           return (
+             <div key={r.emp.id} style={{ ...GRID, minHeight:42, borderTop:"1px solid "+T.border }}>
+               <div style={{ display:"flex", alignItems:"center", gap:7, minWidth:0 }}><Avatar emp={r.emp} size={22} /><span style={{ fontSize:13, fontWeight:600, color:T.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{shortName(r.emp.name)}</span></div>
+               <div style={TRACK}>
+                 <div title={r.t.label} style={{ position:"absolute", left:left+"%", width:width+"%", top:0, bottom:0, boxSizing:"border-box", background:c.bg, border:"1px solid "+c.border, borderRadius:4, display:"flex", alignItems:"center", padding:"0 6px", overflow:"hidden", whiteSpace:"nowrap", fontFamily:MONO, fontSize:11, color:c.text }}>{r.nobar ? r.t.label : shortT(r.t.start) + "–" + shortT(r.t.end)}</div>
                </div>
              </div>
            );
          })}
+         {pto.map(function(r){ return (
+           <div key={r.emp.id} style={{ ...GRID, minHeight:42, borderTop:"1px solid "+T.border }}>
+             <div style={{ display:"flex", alignItems:"center", gap:7, minWidth:0 }}><Avatar emp={r.emp} size={22} /><span style={{ fontSize:13, fontWeight:600, color:T.faint, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{shortName(r.emp.name)}</span></div>
+             <div style={{ height:26, border:"1px dashed "+T.border, borderRadius:4, display:"flex", alignItems:"center", padding:"0 8px", fontSize:11, color:T.faint }}>Time off</div>
+           </div>
+         ); })}
        </div>
-       {offS.length>0 && (
+             {free.length > 0 && (
          <div style={{ marginTop:14 }}>
-           <div style={{ fontSize:10, color:T.faint, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:7 }}>Off today ({offS.length})</div>
+           <div style={{ fontFamily:MONO, fontSize:11, color:T.faint, marginBottom:7 }}>NOT SCHEDULED · {free.length}</div>
            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-             {offS.map(function(emp){ return (
-               <div key={emp.id} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", borderRadius:20, background:T.bg, border:"1px solid "+T.border }}>
-                 <div style={{ width:16,height:16,borderRadius:"50%",background:colorFor(emp.id),display:"flex",alignItems:"center",justifyContent:"center",fontSize:7,fontWeight:700,color:"white" }}>{initials(emp.name)}</div>
-                 <span style={{ fontSize:11, color:T.muted }}>{emp.name.split(" ")[0]}</span>
-               </div>
+             {free.map(function(r){ var avail = (r.emp.avail || []).indexOf(sel) >= 0; return (
+               <span key={r.emp.id} style={{ display:"inline-flex", alignItems:"center", gap:6, height:28, padding:"0 10px 0 3px", border:"1px solid "+T.border, borderRadius:14, fontSize:12, color:avail?T.text:T.faint }}>
+                 <Avatar emp={r.emp} size={22} />{r.emp.name.split(" ")[0]}{!avail && <span style={{ fontFamily:MONO, fontSize:10 }}>OFF</span>}
+               </span>
              ); })}
            </div>
          </div>
@@ -2466,7 +2604,7 @@ function App() {
  <div style={{ width:26, height:26, borderRadius:"50%", background:colorFor(emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"white", flexShrink:0 }}>{initials(emp.name)}</div>
  <div>
  <div style={{ fontSize:12, fontWeight:600, color:T.text, whiteSpace:"nowrap" }}><span className="nm-full">{emp.name}</span><span className="nm-short">{emp.name.split(" ")[0]}{emp.name.split(" ").length>1 ? " "+emp.name.split(" ").slice(-1)[0][0]+"." : ""}</span></div>
- <div className="emp-sub" style={{ fontSize:10, color:T.faint, display:"flex", alignItems:"center", gap:3 }}>{emp.role}{(function(){ var dd=depts.find(function(x){return x.id===emp.dept;}); return dd?<span style={{ color:dd.color, fontWeight:600, marginLeft:2, whiteSpace:"nowrap" }}>· {dd.name}</span>:null; })()}</div>
+ <div className="emp-sub" style={{ fontSize:10, color:T.faint, display:"flex", alignItems:"center", gap:3 }}>{emp.role}{(function(){ var dd=depts.find(function(x){return x.id===emp.dept;}); return dd?<span style={{ color:deptInk(dd.color), fontWeight:600, marginLeft:2, whiteSpace:"nowrap" }}>· {dd.name}</span>:null; })()}</div>
  </div>
  </div>
  </td>
@@ -2479,7 +2617,7 @@ function App() {
  var conflict = shift && (onApprovedPTO || !avail);
  var isOvr = conflict && overruled.indexOf(cKey) >= 0;
  var isSel = selCell && selCell.day===d && selCell.eid===emp.id;
- var cellBg = isSel?"#FDF0ED":(conflict&&!isOvr)?"#FEF2F2":(!avail?"#F8FAFC":"inherit");
+ var cellBg = isSel?"var(--xFDF0ED)":(conflict&&!isOvr)?"var(--xFEF2F2)":(!avail?"var(--xF8FAFC)":"inherit");
  return (
  <td key={d} className={isPastWeek?"":"hv"} onClick={function(){if(!isPastWeek)setSelCell(isSel?null:{day:d,eid:emp.id});}} style={{ padding:"6px 4px", textAlign:"center", background:cellBg, position:"relative", transition:"background .1s" }}>
  {shift ? (
@@ -2488,12 +2626,12 @@ function App() {
  {(function(){
  var ovKey = overrideKey(weekOff,d,emp.id);
  var ov = shiftOverrides[ovKey];
- if (ov) return to12(ov.start)+"-"+to12(ov.end);
+ if (ov) return shortT(ov.start)+"–"+shortT(ov.end);
  var def=shiftDefs.find(function(d2){return d2.id===shift;});
- return def ? to12(def.start)+"-"+to12(def.end) : shift.split(" ")[0];
+ return def ? shortT(def.start)+"–"+shortT(def.end) : shift.split(" ")[0];
  })()}
  {conflict && !isOvr && <span style={{ color:T.danger, marginLeft:2 }}>!</span>}
- {isOvr && <span style={{ color:"#2E2A26", marginLeft:2 }}>&#10003;</span>}
+ {isOvr && <span style={{ color:T.text, marginLeft:2 }}>&#10003;</span>}
  </div>
  ) : avail ? (
  <span style={{ color:T.border, fontSize:16 }}>+</span>
@@ -2536,7 +2674,7 @@ function App() {
    </div>
  )}
  {shift && <div onClick={function(e){e.stopPropagation();removeShift(d,emp.id);}} style={{ display:"flex", alignItems:"center", padding:"6px 10px", borderRadius:7, fontSize:12, color:T.danger, cursor:"pointer", marginTop:2, borderTop:"1px solid "+T.border }} className="hv">Remove shift</div>}
- {conflict && !isOvr && <div onClick={function(e){e.stopPropagation();overrule(cKey);setSelCell(null);}} style={{ display:"flex", alignItems:"center", padding:"6px 10px", borderRadius:7, fontSize:12, color:"#5B21B6", cursor:"pointer", background:"#EDE9FE", marginTop:4 }}>Overrule conflict</div>}
+ {conflict && !isOvr && <div onClick={function(e){e.stopPropagation();overrule(cKey);setSelCell(null);}} style={{ display:"flex", alignItems:"center", padding:"6px 10px", borderRadius:7, fontSize:12, color:"var(--x5B21B6)", cursor:"pointer", background:"var(--xEDE9FE)", marginTop:4 }}>Overrule conflict</div>}
  {isOvr && <div onClick={function(e){e.stopPropagation();restore(cKey);setSelCell(null);}} style={{ display:"flex", alignItems:"center", padding:"6px 10px", borderRadius:7, fontSize:12, color:T.muted, cursor:"pointer", marginTop:4, borderTop:"1px solid "+T.border }} className="hv">Restore conflict</div>}
  </div>
  )}
@@ -2555,25 +2693,28 @@ function App() {
  </div>
  </div>
  )}
+ </div>
+ {!isPastWeek && <NeedsYou />}
+ </div>
  {conflicts.length > 0 && (
- <div style={{ background:T.warningL, border:"1px solid #FDE68A", borderRadius:10, padding:14, marginBottom:12 }}>
- <div style={{ color:"#92400E", fontWeight:600, marginBottom:8, fontSize:13 }}>&#9888; Conflicts - tap a conflicted cell to overrule</div>
+ <div style={{ background:T.warningL, border:"1px solid var(--xFDE68A)", borderRadius:10, padding:14, marginBottom:12 }}>
+ <div style={{ color:"var(--x92400E)", fontWeight:600, marginBottom:8, fontSize:13 }}>&#9888; Conflicts - tap a conflicted cell to overrule</div>
  {conflicts.map(function(c,i){
  return (
- <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, color:"#B45309", padding:"3px 0", borderBottom:i<conflicts.length-1?"1px solid #FDE68A":"none" }}>
+ <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, color:"var(--xB45309)", padding:"3px 0", borderBottom:i<conflicts.length-1?"1px solid var(--xFDE68A)":"none" }}>
  <span>- {c}</span>
- <button onClick={function(){overrule(c);}} style={{ fontSize:11, color:"#5B21B6", background:"#EDE9FE", border:"none", borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Overrule</button>
+ <button onClick={function(){overrule(c);}} style={{ fontSize:11, color:"var(--x5B21B6)", background:"var(--xEDE9FE)", border:"none", borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Overrule</button>
  </div>
  );
  })}
  </div>
  )}
  {overruled.length > 0 && (
- <div style={{ background:"#F5F3FF", border:"1px solid #DDD6FE", borderRadius:10, padding:14 }}>
- <div style={{ color:"#5B21B6", fontWeight:600, marginBottom:8, fontSize:12 }}>&#10003; Overruled conflicts</div>
+ <div style={{ background:"var(--xF5F3FF)", border:"1px solid var(--xDDD6FE)", borderRadius:10, padding:14 }}>
+ <div style={{ color:"var(--x5B21B6)", fontWeight:600, marginBottom:8, fontSize:12 }}>&#10003; Overruled conflicts</div>
  {overruled.map(function(c,i){
  return (
- <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, color:"#7C3AED", padding:"3px 0" }}>
+ <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, color:"var(--x7C3AED)", padding:"3px 0" }}>
  <span>- {c}</span>
  <button onClick={function(){restore(c);}} style={{ fontSize:11, color:T.muted, background:T.bg, border:"1px solid "+T.border, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Restore</button>
  </div>
@@ -2647,7 +2788,7 @@ function App() {
  <button onClick={function(){setColorPickerFor(colorPickerFor===emp.id?null:emp.id);}} title="Change color" style={{ width:38, height:38, borderRadius:"50%", background:colorFor(emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, color:"white", flexShrink:0, border:"none", cursor:"pointer", padding:0 }}>{initials(emp.name)}</button>
  <div style={{ flex:1 }}>
  <div style={{ fontSize:13, fontWeight:600 }}>{emp.name}</div>
- <div style={{ fontSize:11, color:T.faint, display:"flex", alignItems:"center", gap:4, flexWrap:"wrap" }}>{emp.role||"—"}{(function(){ var dd=depts.find(function(x){return x.id===emp.dept;}); return dd?<span style={{ padding:"1px 6px", borderRadius:20, background:dd.color+"22", color:dd.color, fontSize:10, fontWeight:600, marginLeft:2 }}>{dd.name}</span>:null; })()}</div>
+ <div style={{ fontSize:11, color:T.faint, display:"flex", alignItems:"center", gap:4, flexWrap:"wrap" }}>{emp.role||"—"}{(function(){ var dd=depts.find(function(x){return x.id===emp.dept;}); return dd?<span style={{ padding:"1px 6px", borderRadius:20, background:dd.color+"22", color:deptInk(dd.color), fontSize:10, fontWeight:600, marginLeft:2 }}>{dd.name}</span>:null; })()}</div>
  </div>
  <button onClick={function(){setConfirmRm(emp);}} style={{ background:T.dangerL, border:"none", borderRadius:7, padding:"4px 8px", color:T.danger, cursor:"pointer", fontSize:11, fontWeight:600 }}>Remove</button>
  </div>
@@ -2663,7 +2804,7 @@ function App() {
  <span>{acc.email}</span>
  <div style={{ display:"flex", alignItems:"center", gap:5 }}>
  <button onClick={function(){resetPassword(acc);}} style={{ fontSize:10, color:T.muted, background:"transparent", border:"1px solid "+T.border, borderRadius:20, padding:"1px 7px", cursor:"pointer" }}>Reset PW</button>
- <button onClick={function(){toggleAdmin(acc.id);}} style={{ fontSize:10, color:acc.role==="admin"?"#5B21B6":T.muted, background:acc.role==="admin"?"#EDE9FE":"transparent", border:"1px solid "+(acc.role==="admin"?"#DDD6FE":T.border), borderRadius:20, padding:"1px 7px", cursor:"pointer" }}>{acc.role==="admin"?"Admin":"Employee"}</button>
+ <button onClick={function(){toggleAdmin(acc.id);}} style={{ fontSize:10, color:acc.role==="admin"?"var(--x5B21B6)":T.muted, background:acc.role==="admin"?"var(--xEDE9FE)":"transparent", border:"1px solid "+(acc.role==="admin"?"var(--xDDD6FE)":T.border), borderRadius:20, padding:"1px 7px", cursor:"pointer" }}>{acc.role==="admin"?"Admin":"Employee"}</button>
  </div>
  </div>
  )}
@@ -2768,11 +2909,11 @@ function App() {
                               supabase.from("departments").delete().eq("id", dept.id).then(function(res){
                                if (res.error) console.error("department delete failed:", res.error);
                               });
-                            }} style={{ ...GBTN, padding:"4px 8px", fontSize:12, color:T.danger, borderColor:"#FCA5A5" }}>Remove</button>}
+                            }} style={{ ...GBTN, padding:"4px 8px", fontSize:12, color:T.danger, borderColor:"var(--xFCA5A5)" }}>Remove</button>}
                           </div>
                           <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginBottom:12 }}>
                             {deptEmps.length===0 && <span style={{ fontSize:12, color:T.faint }}>No staff yet — assign dept on employee card</span>}
-                            {deptEmps.map(function(e){ return <span key={e.id} style={{ padding:"2px 8px", borderRadius:20, background:dept.color+"22", color:dept.color, fontSize:11, fontWeight:600 }}>{e.name.split(" ")[0]}</span>; })}
+                            {deptEmps.map(function(e){ return <span key={e.id} style={{ padding:"2px 8px", borderRadius:20, background:dept.color+"22", color:deptInk(dept.color), fontSize:11, fontWeight:600 }}>{e.name.split(" ")[0]}</span>; })}
                           </div>
                           <div>
                             <label style={{ ...LBL, marginBottom:8 }}>Linked departments (staff see each other)</label>
@@ -2861,19 +3002,19 @@ function App() {
  {s.status==="pending_approval" ? (
  <>
  <button onClick={function(){approveOpen(s);}} style={{ ...BTN, padding:"6px 12px", fontSize:12 }}>Approve</button>
- <button onClick={function(){declineOpen(s.id);}} style={{ ...GBTN, padding:"6px 12px", fontSize:12, color:T.danger, borderColor:"#FCA5A5" }}>Decline</button>
+ <button onClick={function(){declineOpen(s.id);}} style={{ ...GBTN, padding:"6px 12px", fontSize:12, color:T.danger, borderColor:"var(--xFCA5A5)" }}>Decline</button>
  </>
  ) : isOpen ? (
  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
- <button onClick={function(){ setAvailPanel(panelOpen ? null : s.id); }} style={{ padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:600, background:panelOpen?T.accent:T.accentL, color:panelOpen?"white":T.accent, border:"1px solid "+(panelOpen?T.accent:"#F0A898"), cursor:"pointer", transition:"all .15s" }}>
+ <button onClick={function(){ setAvailPanel(panelOpen ? null : s.id); }} style={{ padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:600, background:panelOpen?T.accent:T.accentL, color:panelOpen?"white":T.accent, border:"1px solid "+(panelOpen?T.accent:"var(--xF0A898)"), cursor:"pointer", transition:"all .15s" }}>
  {panelOpen ? "Hide" : "Open - See who's free"}
  </button>
- <button onClick={function(){removeOpen(s.id);setAvailPanel(null);}} style={{ ...GBTN, padding:"4px 10px", fontSize:12, color:T.danger, borderColor:"#FCA5A5" }}>Remove</button>
+ <button onClick={function(){removeOpen(s.id);setAvailPanel(null);}} style={{ ...GBTN, padding:"4px 10px", fontSize:12, color:T.danger, borderColor:"var(--xFCA5A5)" }}>Remove</button>
  </div>
  ) : (
  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
  <span style={{ padding:"3px 9px", borderRadius:20, fontSize:11, fontWeight:600, background:T.successL, color:T.success }}>Filled</span>
- <button onClick={function(){removeOpen(s.id);}} style={{ ...GBTN, padding:"4px 10px", fontSize:12, color:T.danger, borderColor:"#FCA5A5" }}>Remove</button>
+ <button onClick={function(){removeOpen(s.id);}} style={{ ...GBTN, padding:"4px 10px", fontSize:12, color:T.danger, borderColor:"var(--xFCA5A5)" }}>Remove</button>
  </div>
  )}
  </div>
@@ -2893,7 +3034,7 @@ function App() {
  <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
  {freeEmps.map(function(e){
  return (
- <div key={e.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 12px", background:T.successL, borderRadius:9, border:"1px solid #6EE7B7" }}>
+ <div key={e.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 12px", background:T.successL, borderRadius:9, border:"1px solid var(--x6EE7B7)" }}>
  <div style={{ display:"flex", alignItems:"center", gap:9 }}>
  <div style={{ width:28, height:28, borderRadius:"50%", background:colorFor(e.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"white", flexShrink:0 }}>{initials(e.name)}</div>
  <div>
@@ -2919,7 +3060,7 @@ function App() {
  <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
  {alreadyScheduled.map(function(e){
  return (
- <div key={e.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 12px", background:T.warningL, borderRadius:9, border:"1px solid #FDE68A" }}>
+ <div key={e.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 12px", background:T.warningL, borderRadius:9, border:"1px solid var(--xFDE68A)" }}>
  <div style={{ display:"flex", alignItems:"center", gap:9 }}>
  <div style={{ width:28, height:28, borderRadius:"50%", background:colorFor(e.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"white", flexShrink:0 }}>{initials(e.name)}</div>
  <div>
@@ -2932,7 +3073,7 @@ function App() {
  setOpens(function(p){return p.map(function(o){return o.id===s.id?{...o,status:"filled",claimedBy:e.id,claimedName:e.name}:o;});});
  setAvailPanel(null);
  showT(e.name+" assigned (overrides existing shift)","info");
- }} style={{ ...GBTN, padding:"5px 13px", fontSize:12, color:T.warning, borderColor:"#FDE68A" }}>Override</button>
+ }} style={{ ...GBTN, padding:"5px 13px", fontSize:12, color:T.warning, borderColor:"var(--xFDE68A)" }}>Override</button>
  </div>
  );
  })}
@@ -3017,12 +3158,12 @@ function App() {
  <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
  {curPtos.map(function(req){
  return (
- <div key={req.id} style={{ ...CARD, border:"1px solid "+(req.status==="approved"?"#6EE7B7":req.status==="rejected"?"#FCA5A5":T.border) }}>
+ <div key={req.id} style={{ ...CARD, border:"1px solid "+(req.status==="approved"?"var(--x6EE7B7)":req.status==="rejected"?"var(--xFCA5A5)":T.border) }}>
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:9 }}>
  <div>
  <div style={{ fontWeight:600, fontSize:14, marginBottom:6 }}>{empName(req.eid, req.ename)}</div>
  <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
- <span style={{ padding:"3px 9px", borderRadius:20, background:"#EDE9FE", color:"#5B21B6", fontSize:12, fontWeight:500 }}>{req.type}</span>
+ <span style={{ padding:"3px 9px", borderRadius:20, background:"var(--xEDE9FE)", color:"var(--x5B21B6)", fontSize:12, fontWeight:500 }}>{req.type}</span>
  <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:500 }}>{fmtReqDate(req.startDate)}{req.endDate&&req.endDate!==req.startDate?" to "+fmtReqDate(req.endDate):""}</span>
  </div>
  {req.note && <div style={{ marginTop:6, fontSize:12, color:T.muted }}>{req.note}</div>}
@@ -3031,7 +3172,7 @@ function App() {
  {req.status==="pending" ? (
  <>
  <button onClick={function(){setPTOStatus(req.id,"approved");}} style={{ ...BTN, background:T.success, padding:"7px 14px", fontSize:12 }}>Approve</button>
- <button onClick={function(){setPTOStatus(req.id,"rejected");}} style={{ ...GBTN, padding:"7px 14px", fontSize:12, color:T.danger, borderColor:"#FCA5A5" }}>Decline</button>
+ <button onClick={function(){setPTOStatus(req.id,"rejected");}} style={{ ...GBTN, padding:"7px 14px", fontSize:12, color:T.danger, borderColor:"var(--xFCA5A5)" }}>Decline</button>
  </>
  ) : (
  <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end" }}>
@@ -3042,7 +3183,7 @@ function App() {
    <button onClick={function(){ setCancelPtoId(null); }} style={{ fontSize:11, color:T.muted, background:"none", border:"1px solid "+T.border, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Keep</button>
   </>
  ) : (
-  <button onClick={function(){ setCancelPtoId(req.id); }} style={{ fontSize:11, color:T.danger, background:"none", border:"1px solid #FCA5A5", borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Cancel time off</button>
+  <button onClick={function(){ setCancelPtoId(req.id); }} style={{ fontSize:11, color:T.danger, background:"none", border:"1px solid var(--xFCA5A5)", borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Cancel time off</button>
  ))}
  {req.status!=="approved" && <button onClick={function(){setPTOStatus(req.id,"pending");}} style={{ fontSize:11, color:T.muted, background:"none", border:"1px solid "+T.border, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Reopen</button>}
  </div>
@@ -3060,7 +3201,7 @@ function App() {
  <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
  {curSwaps.map(function(req){
  return (
- <div key={req.id} style={{ ...CARD, border:"1px solid "+(req.status==="approved"?"#6EE7B7":req.status==="rejected"?"#FCA5A5":T.border) }}>
+ <div key={req.id} style={{ ...CARD, border:"1px solid "+(req.status==="approved"?"var(--x6EE7B7)":req.status==="rejected"?"var(--xFCA5A5)":T.border) }}>
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:9 }}>
  <div>
  <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:6 }}>
@@ -3078,7 +3219,7 @@ function App() {
  {req.status==="pending" ? (
  <>
  <button onClick={function(){approveSwap(req);}} style={{ ...BTN, padding:"7px 14px", fontSize:12 }}>Approve</button>
- <button onClick={function(){setSwapStatus(req.id,"rejected");}} style={{ ...GBTN, padding:"7px 14px", fontSize:12, color:T.danger, borderColor:"#FCA5A5" }}>Decline</button>
+ <button onClick={function(){setSwapStatus(req.id,"rejected");}} style={{ ...GBTN, padding:"7px 14px", fontSize:12, color:T.danger, borderColor:"var(--xFCA5A5)" }}>Decline</button>
  </>
  ) : (
  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
@@ -3195,7 +3336,7 @@ function App() {
  {shiftDefs.map(function(s, i){
  var c = shiftColor(s.id);
  return (
- <div key={s.id} style={{ ...CARD, border:"2px solid "+c.border, background:c.bg+"44" }}>
+ <div key={s.id} style={{ ...CARD, border:"2px solid "+c.border, background:c.bg }}>
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
      <div style={{ width:12, height:12, borderRadius:"50%", background:c.dot }} />
@@ -3216,13 +3357,21 @@ function App() {
  })}
  </div>
 
- <div style={{ background:T.successL, border:"1px solid #6EE7B7", borderRadius:10, padding:14, fontSize:13, color:"#065F46" }}>
+ <div style={{ background:T.successL, border:"1px solid var(--x6EE7B7)", borderRadius:10, padding:14, fontSize:13, color:"var(--x065F46)" }}>
  &#10003; Changes save automatically. New shifts appear in the schedule dropdown immediately.
  </div>
  </div>
  )}
 
  {/* SETTINGS */}
+ {tab==="settings" && (
+  <div style={{ ...CARD, marginBottom:16, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
+   <div><div style={{ fontSize:14, fontWeight:700, color:T.text }}>Appearance</div><div style={{ fontSize:12, color:T.muted, marginTop:2 }}>Dark or light. Saved on this device.</div></div>
+   <div role="group" aria-label="Theme" style={{ display:"flex", border:"1px solid "+T.border, borderRadius:8, padding:2 }}>
+    {[["dark","Dark"],["light","Light"]].map(function(o){ var on = theme === o[0]; return <button key={o[0]} aria-pressed={on} onClick={function(){ applyTheme(o[0]); }} style={{ minHeight:36, padding:"0 16px", borderRadius:6, border:"none", background:on?T.bg:"transparent", color:on?T.text:T.faint, fontSize:13, fontWeight:on?700:500, cursor:"pointer", fontFamily:"inherit" }}>{o[1]}</button>; })}
+   </div>
+  </div>
+ )}
  {tab==="settings" && <NotificationSettings user={user} emps={emps} isAdmin={isAdmin} showT={showT} />}
  {tab==="settings" && (
    <Settings
@@ -3328,7 +3477,7 @@ function App() {
   else if (minsUntil > 60 && minsUntil <= 180) { reminderMsg = "Heads up — your " + (shiftDef?shiftDef.label:todayShift) + " shift starts at " + to12(effStart) + " (" + Math.round(minsUntil/60*10)/10 + " hrs away)."; reminderType = "info"; }
    else if (minsUntil <= 0 && minsUntil > -60 && !isClockedIn) { reminderMsg = "Your shift started " + Math.abs(minsUntil) + " min ago — clock in now!"; reminderType = "danger"; }
  }
- var RC = { success:{ bg:T.successL, border:"#6EE7B7", color:T.success, icon:"check" }, warning:{ bg:T.warningL, border:"#FDE68A", color:"#92400E", icon:"clock" }, danger:{ bg:T.dangerL, border:"#FCA5A5", color:T.danger, icon:"alert" }, info:{ bg:T.accentL, border:"#F0A898", color:T.accent, icon:"calendar" } };
+ var RC = { success:{ bg:T.successL, border:"var(--x6EE7B7)", color:T.success, icon:"check" }, warning:{ bg:T.warningL, border:"var(--xFDE68A)", color:"var(--x92400E)", icon:"clock" }, danger:{ bg:T.dangerL, border:"var(--xFCA5A5)", color:T.danger, icon:"alert" }, info:{ bg:T.accentL, border:"var(--xF0A898)", color:T.accent, icon:"calendar" } };
  var rc = RC[reminderType];
  return (
  <div>
@@ -3342,6 +3491,59 @@ function App() {
  <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>My Schedule</h2>
  <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{me.name} - {me.role}</p>
  </div>
+ {(function(){
+   if (weekOff < 0) return null;
+   var now = new Date(); var days = orderedDays(); var next = null;
+   for (var i = 0; i < days.length && !next; i++) {
+     var d = days[i]; var sh = weekSched[d] && weekSched[d][me.id]; if (!sh) continue;
+     var iso = dayToISODate(weekOff, d); if (onPtoOn(me.id, iso)) continue;
+     var t = shiftTimesFor(d, me.id, sh); if (!t.start || !t.end) continue;
+     var pd = iso.split("-").map(Number); var sp = t.start.split(":").map(Number);
+     var startAt = new Date(pd[0], pd[1]-1, pd[2], sp[0], sp[1]||0);
+     var a = hrsOf(t.start), b = hrsOf(t.end); if (b <= a) b += 24;
+     var endAt = new Date(startAt.getTime() + (b - a) * 3600000);
+     if (endAt > now) next = { day:d, di:i, sh:sh, t:t, startAt:startAt, s:a, en:b };
+   }
+   if (!next) return <div style={{ ...CARD, marginBottom:14, padding:"16px 18px" }}><div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>NEXT SHIFT</div><div style={{ fontSize:15, fontWeight:600, color:T.text, marginTop:6 }}>No more shifts this week</div></div>;
+   var mins = Math.round((next.startAt - now) / 60000);
+   var live = mins <= 0;
+   var cd = live ? "ON NOW" : mins >= 1440 ? "IN " + Math.floor(mins/1440) + "D " + Math.floor((mins%1440)/60) + "H" : "IN " + Math.floor(mins/60) + "H " + (mins%60) + "M";
+   var c = shiftColor(next.sh);
+   var mates = emps.filter(function(e){
+     if (e.id === me.id) return false; var sh2 = weekSched[next.day] && weekSched[next.day][e.id]; if (!sh2) return false;
+     var t2 = shiftTimesFor(next.day, e.id, sh2); var x = hrsOf(t2.start), y = hrsOf(t2.end); if (x === null || y === null) return false; if (y <= x) y += 24;
+     return x < next.en && y > next.s;
+   });
+   function big(tm){ var h = hrsOf(tm); var hh = Math.floor(h) % 24, mm = Math.round((h - Math.floor(h)) * 60); return { main:(hh % 12 || 12) + ":" + String(mm).padStart(2,"0"), ap:hh >= 12 ? "p" : "a" }; }
+   var A = big(next.t.start), B = big(next.t.end);
+   var dept = depts.find(function(x){ return x.id === me.dept; });
+   return (
+     <section aria-label="Next shift" style={{ background:T.surface, border:"1px solid "+T.border, borderRadius:10, padding:18, marginBottom:14 }}>
+       <div style={{ display:"flex", justifyContent:"space-between", gap:10, fontFamily:MONO, fontSize:11 }}>
+         <span style={{ color:T.muted }}>{live ? "ON SHIFT" : "NEXT SHIFT"} · {(next.day + " " + getDayDate(next.di, weekOff)).toUpperCase()}</span>
+         <span style={{ color:T.accent, whiteSpace:"nowrap" }}>{cd}</span>
+       </div>
+       <div style={{ fontFamily:MONO, fontSize:40, fontWeight:500, letterSpacing:"-0.04em", lineHeight:1, marginTop:14, color:T.text, whiteSpace:"nowrap" }}>{A.main}<span style={{ fontSize:18, color:T.faint, letterSpacing:0 }}>{A.ap}</span><span style={{ color:T.faint, padding:"0 6px" }}>–</span>{B.main}<span style={{ fontSize:18, color:T.faint, letterSpacing:0 }}>{B.ap}</span></div>
+       <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:10, fontSize:13, color:T.muted, flexWrap:"wrap" }}><span style={{ width:8, height:8, background:c.dot }} /><span style={{ color:T.text, fontWeight:600 }}>{next.t.label}</span><span>{dept ? "· " + dept.name + " " : ""}· {Math.round((next.en - next.s) * 10) / 10} hrs</span></div>
+       <div aria-hidden="true" style={{ position:"relative", height:6, marginTop:16, background:T.bg, border:"1px solid "+T.border }}>
+         <div style={{ position:"absolute", left:(next.s / 24 * 100) + "%", width:((Math.min(24, next.en) - next.s) / 24 * 100) + "%", top:0, bottom:0, background:c.dot }} />
+       </div>
+       <div aria-hidden="true" style={{ display:"flex", justifyContent:"space-between", fontFamily:MONO, fontSize:10, color:T.faint, marginTop:5 }}><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
+       {mates.length > 0 && (
+         <div style={{ display:"flex", alignItems:"center", marginTop:14, paddingTop:12, borderTop:"1px solid "+T.border }}>
+           {mates.slice(0,3).map(function(e, k){ return <Avatar key={e.id} emp={e} ring={true} overlap={k > 0} />; })}
+           <span style={{ fontSize:12, color:T.muted, marginLeft:8 }}>On with {mates.slice(0,2).map(function(e){ return e.name.split(" ")[0]; }).join(", ")}{mates.length > 2 ? " +" + (mates.length - 2) : ""}</span>
+         </div>
+       )}
+       {!isAdmin && (
+         <div style={{ display:"grid", gridTemplateColumns:"repeat(2, minmax(0, 1fr))", gap:8, marginTop:14 }}>
+           <button onClick={function(){ setTab("swap"); }} style={{ ...GBTN, color:T.text, minHeight:44, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="swap" size={16} />Swap</button>
+           <button onClick={function(){ setTab("callin"); }} style={{ ...GBTN, color:T.text, minHeight:44 }}>Can't make it</button>
+         </div>
+       )}
+     </section>
+   );
+ })()}
  <div style={{ ...CARD, padding:0, marginBottom:14, boxShadow:"none" }}>
  {orderedDays().map(function(d, di, arr){
  var shift = weekSched[d] && weekSched[d][me.id];
@@ -3354,7 +3556,7 @@ function App() {
  var isToday = dayIso === todayIso;
  var body;
  if (pto) {
-  body = <span style={{ display:"flex", alignItems:"center", gap:6, fontSize:13, fontWeight:600, color:"#5B21B6", whiteSpace:"nowrap" }}><Icon name="sun" size={15} />Time off</span>;
+  body = <span style={{ display:"flex", alignItems:"center", gap:6, fontSize:13, fontWeight:600, color:"var(--x5B21B6)", whiteSpace:"nowrap" }}><Icon name="sun" size={15} />Time off</span>;
  } else if (shift) {
   var def = shiftDefs.find(function(x){ return x.id===shift; });
   var ov = shiftOverrides[overrideKey(weekOff,d,me.id)];
@@ -3373,13 +3575,15 @@ function App() {
  } else {
   body = <span style={{ fontSize:13, color:T.faint, whiteSpace:"nowrap" }}>Not scheduled</span>;
  }
+ var trackEl = null;
+ if (shift && !pto) { var tt = shiftTimesFor(d, me.id, shift); var ta = hrsOf(tt.start), tb = hrsOf(tt.end); if (ta !== null && tb !== null) { if (tb <= ta) tb += 24; trackEl = <div aria-hidden="true" style={{ position:"relative", height:3, background:T.border, marginTop:7 }}><div style={{ position:"absolute", left:(ta/24*100)+"%", width:((Math.min(24, tb) - ta)/24*100)+"%", top:0, bottom:0, background:shiftColor(shift).dot }} /></div>; } }
  return (
- <div key={d} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", minHeight:52, borderBottom:di<arr.length-1?"1px solid "+T.border:"none", borderLeft:"3px solid "+(isToday?T.accent:"transparent"), background:shift&&!pto?shiftColor(shift).bg+"66":"transparent" }}>
+ <div key={d} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", minHeight:52, borderBottom:di<arr.length-1?"1px solid "+T.border:"none", borderLeft:"3px solid "+(isToday?T.accent:"transparent"), background:shift&&!pto?shiftColor(shift).bg:"transparent" }}>
   <div style={{ width:54, flexShrink:0 }}>
    <div style={{ fontSize:11, fontWeight:700, color:isToday?T.accent:T.faint, letterSpacing:"0.04em", textTransform:"uppercase" }}>{isToday ? "Today" : d}</div>
    <div className="mono" style={{ fontSize:12, color:T.text }}>{dd}</div>
   </div>
-  <div style={{ flex:1, minWidth:0 }}>{body}</div>
+  <div style={{ flex:1, minWidth:0 }}>{body}{trackEl}</div>
  </div>
  );
  })}
@@ -3409,7 +3613,9 @@ function App() {
               if (!isPublished) return (
                 <div>
                   <div style={{ marginBottom:18 }}>
-                    <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>Who's Working Today</h2>
+                    <div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>{new Date().toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}).toUpperCase()}</div>
+                    <div style={{ fontFamily:MONO, fontSize:56, fontWeight:500, letterSpacing:"-0.06em", lineHeight:1, color:T.text, margin:"10px 0 14px" }}>{(function(){ var n = new Date(); var h = n.getHours(); return (h % 12 || 12) + ":" + String(n.getMinutes()).padStart(2,"0"); })()}<span style={{ fontSize:18, letterSpacing:0, color:T.faint, marginLeft:6 }}>{new Date().getHours() >= 12 ? "PM" : "AM"}</span></div>
+                    <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>Who's working today</h2>
                   </div>
                   <NotPosted weekLabel={weekLabel} />
                 </div>
@@ -3417,7 +3623,9 @@ function App() {
               return (
                 <div>
                   <div style={{ marginBottom:18 }}>
-                    <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>Who's Working Today</h2>
+                    <div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>{new Date().toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}).toUpperCase()}</div>
+                    <div style={{ fontFamily:MONO, fontSize:56, fontWeight:500, letterSpacing:"-0.06em", lineHeight:1, color:T.text, margin:"10px 0 14px" }}>{(function(){ var n = new Date(); var h = n.getHours(); return (h % 12 || 12) + ":" + String(n.getMinutes()).padStart(2,"0"); })()}<span style={{ fontSize:18, letterSpacing:0, color:T.faint, marginLeft:6 }}>{new Date().getHours() >= 12 ? "PM" : "AM"}</span></div>
+                    <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>Who's working today</h2>
                     <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{todayDay} — your department{visibleDepts.length>1?" and linked teams":""}</p>
                   </div>
                   {visibleDepts.length===0 && (
@@ -3432,7 +3640,7 @@ function App() {
                         <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
                           <div style={{ width:10, height:10, borderRadius:"50%", background:dept.color }} />
                           <span style={{ fontWeight:700, fontSize:14 }}>{dept.name}</span>
-                          {isMyDept && <span style={{ padding:"2px 8px", borderRadius:20, background:dept.color+"22", color:dept.color, fontSize:11, fontWeight:600 }}>Your team</span>}
+                          {isMyDept && <span style={{ padding:"2px 8px", borderRadius:20, background:dept.color+"22", color:deptInk(dept.color), fontSize:11, fontWeight:600 }}>Your team</span>}
                           <span style={{ fontSize:12, color:T.faint }}>{workingToday.length} on shift</span>
                         </div>
                         {workingToday.length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:18 }}>Nobody from {dept.name} is scheduled today</div>}
@@ -3695,22 +3903,34 @@ function App() {
                         <span style={{ padding:"5px 14px", borderRadius:20, background:sc.bg, color:sc.text, fontSize:13, fontWeight:600, border:"1px solid "+sc.border }}>{todayShift}</span>
                       </div>
                     ) : <div style={{ marginBottom:14, fontSize:13, color:T.faint }}>No shift scheduled today</div>}
-                    <div style={{ fontSize:34, fontWeight:800, fontFamily:"'Archivo',system-ui,sans-serif", color:T.text, marginBottom:4 }}>{hr}:{mn} {ap}</div>
+                    <div style={{ fontFamily:MONO, fontSize:60, fontWeight:500, letterSpacing:"-0.06em", lineHeight:1, color:T.text, marginBottom:8 }}>{hr}:{mn}<span style={{ fontSize:18, letterSpacing:0, color:T.faint, marginLeft:6 }}>{ap}</span></div>
                     <div style={{ fontSize:12, color:T.faint, marginBottom:18 }}>{now.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</div>
-                    <div style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"5px 12px", borderRadius:20, background:isClockedIn?T.successL:T.bg, border:"1px solid "+(isClockedIn?"#6EE7B7":T.border), marginBottom:18 }}>
+                    {isClockedIn && lastPunch && (function(){
+                      var since = new Date(lastPunch.ts).getTime(); var worked = Math.max(0, Math.round((Date.now() - since) / 60000));
+                      var tt = todayShift ? shiftTimesFor(todayDay, user.eid, todayShift) : null;
+                      var ta = tt ? hrsOf(tt.start) : null, tb = tt ? hrsOf(tt.end) : null; if (ta !== null && tb !== null && tb <= ta) tb += 24;
+                      var total = (ta !== null && tb !== null) ? (tb - ta) * 60 : 480;
+                      return (
+                        <div style={{ textAlign:"left", marginBottom:18 }}>
+                          <div aria-hidden="true" style={{ position:"relative", height:8, background:T.bg, border:"1px solid "+T.border }}><div style={{ position:"absolute", left:0, top:0, bottom:0, width:Math.min(100, worked/total*100)+"%", background:T.text }} /></div>
+                          <div style={{ display:"flex", justifyContent:"space-between", fontFamily:MONO, fontSize:11, color:T.faint, marginTop:6 }}><span>{Math.floor(worked/60)}H {worked%60}M WORKED</span>{tt && tt.end ? <span>ENDS {shortT(tt.end).toUpperCase()}</span> : null}</div>
+                        </div>
+                      );
+                    })()}
+                    <div style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"5px 12px", borderRadius:20, background:isClockedIn?T.successL:T.bg, border:"1px solid "+(isClockedIn?"var(--x6EE7B7)":T.border), marginBottom:18 }}>
                       <div style={{ width:8, height:8, borderRadius:"50%", background:isClockedIn?T.success:T.faint, animation:isClockedIn?"pulse 2s infinite":"none" }} />
                       <span style={{ fontSize:12, fontWeight:600, color:isClockedIn?T.success:T.faint }}>{isClockedIn?"Clocked In":"Not Clocked In"}</span>
                     </div>
                     {!isClockedIn
-                      ? <button onClick={clockIn}  style={{ ...BTN, width:"100%", padding:"14px", fontSize:15, fontWeight:700, background:"linear-gradient(135deg,#10B981,#059669)", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="login" size={17} />Clock In</button>
+                      ? <button onClick={clockIn}  style={{ ...BTN, width:"100%", padding:"14px", fontSize:15, fontWeight:700, background:"var(--btnIn)", color:"var(--btnOn)", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="login" size={17} />Clock In</button>
                       : (
                         <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
-                          <button onClick={clockOut} style={{ ...BTN, width:"100%", padding:"13px", fontSize:15, fontWeight:700, background:"linear-gradient(135deg,#EF4444,#DC2626)", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="logout" size={17} />Clock Out</button>
+                          <button onClick={clockOut} style={{ ...BTN, width:"100%", padding:"13px", fontSize:15, fontWeight:700, background:"var(--btnOut)", color:"var(--btnOn)", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="logout" size={17} />Clock Out</button>
                           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
                             <button onClick={async function(){ var realId = await syncPunchInsert(user.eid, "lunch_out", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_out",ts:Date.now(),shift:todayShift||""}]); }); showT("Lunch started - enjoy your break!"); }}
-                              style={{ ...BTN, padding:"10px", fontSize:13, fontWeight:600, background:"linear-gradient(135deg,#F59E0B,#D97706)", borderRadius:10 }}>Lunch Out</button>
+                              style={{ ...BTN, padding:"10px", fontSize:13, fontWeight:600, background:"var(--btnLunchOut)", color:"var(--btnOn)", borderRadius:10 }}>Lunch Out</button>
                             <button onClick={async function(){ var realId = await syncPunchInsert(user.eid, "lunch_in", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_in",ts:Date.now(),shift:todayShift||""}]); }); showT("Back from lunch!"); }}
-                              style={{ ...BTN, padding:"10px", fontSize:13, fontWeight:600, background:"linear-gradient(135deg,#3B82F6,#2563EB)", borderRadius:10 }}>Lunch In</button>
+                              style={{ ...BTN, padding:"10px", fontSize:13, fontWeight:600, background:"var(--btnLunchIn)", color:"var(--btnOn)", borderRadius:10 }}>Lunch In</button>
                           </div>
                         </div>
                       )}
@@ -3837,7 +4057,7 @@ function App() {
                   </div>
 
                   {/* Admin Override Panel */}
-                  <div style={{ background:T.surface, border:"2px solid #A5B4FC", borderRadius:12, padding:16, marginBottom:22, boxSizing:"border-box" }}>
+                  <div style={{ background:T.surface, border:"2px solid var(--xA5B4FC)", borderRadius:12, padding:16, marginBottom:22, boxSizing:"border-box" }}>
                     <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:14 }}>&#9998; Admin Override — Add or Fix a Punch</div>
                     <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 }}>
                       <div style={{ overflow:"hidden" }}>
@@ -3886,7 +4106,7 @@ function App() {
                       {clockedInNow.map(function(item){
                         var elapsed = ((Date.now()-item.since)/3600000).toFixed(1);
                         return (
-                          <div key={item.emp.id} style={{ ...CARD, border:"1px solid #6EE7B7", background:T.successL }}>
+                          <div key={item.emp.id} style={{ ...CARD, border:"1px solid var(--x6EE7B7)", background:T.successL }}>
                             <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:8 }}>
                               <div style={{ width:32, height:32, borderRadius:"50%", background:colorFor(item.emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:"white" }}>{initials(item.emp.name)}</div>
                               <div>
@@ -3898,7 +4118,7 @@ function App() {
                               <span style={{ color:T.muted }}>Since {new Date(item.since).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>
                               <span style={{ fontWeight:700, color:T.success }}>{elapsed}h</span>
                             </div>
-                            <button onClick={function(){forceClockOut(item.emp.id,item.emp.name);}} style={{ ...GBTN, width:"100%", fontSize:12, color:T.danger, borderColor:"#FCA5A5", padding:"6px" }}>
+                            <button onClick={function(){forceClockOut(item.emp.id,item.emp.name);}} style={{ ...GBTN, width:"100%", fontSize:12, color:T.danger, borderColor:"var(--xFCA5A5)", padding:"6px" }}>
                               Force Clock Out
                             </button>
                           </div>
@@ -3959,7 +4179,7 @@ function App() {
                                         <div style={{ display:"flex", gap:6 }}>
                                           <button onClick={function(){saveEditPunch(p.id);}} style={{ ...BTN, fontSize:11, padding:"5px 12px" }}>Save</button>
                                           <button onClick={function(){setEditingPunchId(null);}} style={{ ...GBTN, fontSize:11, padding:"5px 12px" }}>Cancel</button>
-                                          <button onClick={function(){deletePunch(p.id);}} style={{ ...GBTN, fontSize:11, padding:"5px 12px", color:T.danger, borderColor:"#FCA5A5", marginLeft:"auto" }}>Delete</button>
+                                          <button onClick={function(){deletePunch(p.id);}} style={{ ...GBTN, fontSize:11, padding:"5px 12px", color:T.danger, borderColor:"var(--xFCA5A5)", marginLeft:"auto" }}>Delete</button>
                                         </div>
                                       </div>
                                     ) : (
@@ -4111,7 +4331,7 @@ function App() {
                 supabase.from("shift_defs").delete().eq("id", editShift.id).then(function(res){
                  if (res.error) console.error("shift_defs delete failed:", res.error);
                 });
-              }} style={{ ...GBTN, padding:"10px 16px", color:T.danger, borderColor:"#FCA5A5" }}>Delete</button>
+              }} style={{ ...GBTN, padding:"10px 16px", color:T.danger, borderColor:"var(--xFCA5A5)" }}>Delete</button>
             )}
           </div>
         </div>
