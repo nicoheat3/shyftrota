@@ -84,6 +84,23 @@ export function NotificationSettings({ user, emps, isAdmin, showT }) {
     return true;
   }
 
+  var [testing, setTesting] = useState(false);
+  var [testMsg, setTestMsg] = useState(null);
+  function sendTest() {
+    setTesting(true); setTestMsg(null);
+    var done = false;
+    sendNotification({ type:"test" }, function(r){
+      done = true; setTesting(false);
+      if (!r) { setTestMsg({ ok:false, text:"No answer from the server." }); return; }
+      if (r.skipped === "no_key") setTestMsg({ ok:false, text:"Email isn't connected: RESEND_API_KEY isn't set in Vercel for this project (or it was added after the last deploy — redeploy)." });
+      else if (r.skipped === "no_email") setTestMsg({ ok:false, text:"Save your email above first." });
+      else if (r.sent > 0) setTestMsg({ ok:true, text:"Sent to "+r.to+". Check your inbox and spam folder." });
+      else if (r.errors && r.errors.length) setTestMsg({ ok:false, text:"Resend refused it: "+r.errors[0] });
+      else setTestMsg({ ok:false, text:"Didn't send: "+(r.error || JSON.stringify(r)) });
+    });
+    setTimeout(function(){ if (!done) { setTesting(false); setTestMsg({ ok:false, text:"The server didn't respond. The email function may have crashed — check Vercel → Logs." }); } }, 20000);
+  }
+
   async function saveMine() {
     var email = mine.email.trim().toLowerCase();
     if (email && !EMAIL_RE.test(email)) { showT("That email doesn't look right", "error"); return; }
@@ -116,7 +133,11 @@ export function NotificationSettings({ user, emps, isAdmin, showT }) {
           <input type="email" value={mine.email} placeholder="you@example.com" onChange={function(e){ setMine({ ...mine, email:e.target.value }); }} style={{ ...INP, marginBottom:6 }} />
           <Toggle on={mine.on_schedule} onChange={function(v){ setMine({ ...mine, on_schedule:v }); }} label="Schedule posted or updated" hint="Your shifts for the week" />
           <Toggle on={mine.on_requests} onChange={function(v){ setMine({ ...mine, on_requests:v }); }} label="Time off & swap answers" hint="When a request is approved or declined" />
-          <button onClick={saveMine} disabled={savingMine} style={{ ...BTN, marginTop:12, opacity:savingMine?0.6:1 }}>{savingMine ? "Saving…" : "Save"}</button>
+          <div style={{ display:"flex", gap:8, marginTop:12, flexWrap:"wrap" }}>
+            <button onClick={saveMine} disabled={savingMine} style={{ ...BTN, opacity:savingMine?0.6:1 }}>{savingMine ? "Saving…" : "Save"}</button>
+            {isAdmin && <button onClick={sendTest} disabled={testing} style={{ ...BTN, background:"transparent", color:T.text, border:"1px solid "+T.border, opacity:testing?0.6:1 }}>{testing ? "Sending…" : "Send test email"}</button>}
+          </div>
+          {testMsg && <div style={{ marginTop:10, fontSize:12, lineHeight:1.6, padding:"9px 12px", borderRadius:8, background:testMsg.ok?"#ECFDF5":"#FEF2F2", color:testMsg.ok?"#065F46":"#991B1B", wordBreak:"break-word" }}>{testMsg.text}</div>}
         </div>
       )}
 

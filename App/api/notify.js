@@ -74,7 +74,7 @@ async function sendAll(messages) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   if (!SUPABASE_URL || !SERVICE_KEY) return res.status(500).json({ error: "Server misconfigured" });
-  if (!RESEND_KEY) return res.status(200).json({ skipped: "RESEND_API_KEY not set yet" });
+  if (!RESEND_KEY) return res.status(200).json({ skipped: "no_key" });
 
   var auth = req.headers.authorization || "";
   var token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
@@ -84,7 +84,7 @@ export default async function handler(req, res) {
   var u = await db.auth.getUser(token);
   if (u.error || !u.data || !u.data.user) return res.status(401).json({ error: "Invalid session" });
 
-  var prof = await db.from("profiles").select("role, property_id").eq("id", u.data.user.id).single();
+  var prof = await db.from("profiles").select("role, property_id, employee_id").eq("id", u.data.user.id).single();
   if (prof.error || !prof.data || prof.data.role !== "admin") return res.status(403).json({ error: "Only admins send notifications" });
   var propertyId = prof.data.property_id;
 
@@ -112,6 +112,16 @@ export default async function handler(req, res) {
   }
 
   var messages = [];
+
+  // ── Test email to yourself ──────────────────────────
+  if (body.type === "test") {
+    var mine = prof.data.employee_id != null ? settings[prof.data.employee_id] : null;
+    if (!mine) return res.status(200).json({ skipped: "no_email" });
+    var t = await sendAll([{ from: FROM, to: [mine.email], subject: "ShyftRota test email",
+      html: layout("Email notifications are working", '<div style="font-size:14px;line-height:1.6">If you can read this, ShyftRota can email you. Schedule and request emails will arrive just like this one.</div>', appUrl) }]);
+    t.to = mine.email;
+    return res.status(200).json(t);
+  }
 
   // ── Schedule posted ─────────────────────────────────
   if (body.type === "schedule_posted") {
