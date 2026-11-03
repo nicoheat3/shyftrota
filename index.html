@@ -10,7 +10,7 @@
 <meta property="og:site_name" content="ShyftRota">
 <meta property="og:url" content="https://www.shyftrota.com/">
 <meta property="og:title" content="ShyftRota — Shift scheduling for hotels, restaurants and service teams">
-<meta property="og:description" content="Build the week in a tap. Short shifts flagged before they happen. Built by a front desk manager.">
+<meta property="og:description" content="Build the week in a tap. Short shifts flagged before they happen. Built at the front desk.">
 <meta property="og:image" content="https://www.shyftrota.com/og-image.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -88,12 +88,11 @@ header.nav.stuck{border-bottom-color:var(--line2);box-shadow:0 10px 30px -22px #
 .hero::before{content:"";position:absolute;inset:-200px -10% auto;height:640px;background:radial-gradient(closest-side,rgba(228,78,53,.16),transparent 70%);pointer-events:none}
 .js .hero::before{animation:glowPulse 7s ease-in-out infinite}
 .hero-in{position:relative;display:grid;grid-template-columns:minmax(0,1fr);gap:44px}
-.hero h1{font-size:clamp(38px,6.4vw,76px);line-height:1;letter-spacing:-.045em;font-weight:800;margin:18px 0 0;max-width:15ch}
+.hero h1{font-size:clamp(40px,6.6vw,78px);line-height:1.02;letter-spacing:-.045em;font-weight:800;margin:16px 0 0;max-width:22ch;text-wrap:balance}
 .hero h1 span.acc{color:var(--accent)}
-.hero h1 .ln{display:block;overflow:hidden;padding-bottom:.04em}
-.js .hero h1 .ln>span{display:inline-block;animation:rise .85s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i)*110ms)}
-@keyframes rise{from{transform:translateY(104%)}to{transform:none}}
-.hero p.lede{font-size:clamp(17px,1.6vw,19px);color:var(--muted);max-width:58ch;margin:22px 0 0}
+.js .hero h1{animation:rise .75s cubic-bezier(.2,.8,.2,1) both}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.hero p.lede{font-size:clamp(17px,1.6vw,19px);color:var(--muted);max-width:50ch;margin:20px 0 0}
 .hero-cta{display:flex;flex-wrap:wrap;gap:10px;margin-top:30px}
 .hero-meta{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:22px;font-family:var(--mono);font-size:12px;color:var(--faint)}
 .hero-meta span::before{content:"";display:inline-block;width:6px;height:6px;background:var(--accent);margin-right:8px;vertical-align:1px}
@@ -183,8 +182,9 @@ section{padding:88px 0;border-top:1px solid var(--line2)}
 
 .split{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:48px;align-items:start}
 @media (max-width:900px){.split{grid-template-columns:minmax(0,1fr)}}
-.quote{font-size:clamp(22px,2.6vw,30px);line-height:1.3;letter-spacing:-.02em;font-weight:600;margin:0}
-.quote em{font-style:normal;color:var(--accent)}
+.note{font-size:clamp(20px,2.1vw,25px);line-height:1.42;letter-spacing:-.018em;font-weight:500;margin:20px 0 0;max-width:44ch;color:var(--text)}
+.note + .note{color:var(--muted);font-weight:400;margin-top:14px}
+.note em{font-style:normal;color:var(--accent);font-weight:500}
 .sig{display:flex;align-items:center;gap:12px;margin-top:26px}
 .sig .av{width:40px;height:40px;font-size:14px;background:#2B3B37;color:#BFD6CF}
 .list{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
@@ -239,8 +239,7 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
 @media (prefers-reduced-motion:reduce){
   html{scroll-behavior:auto}
   .js [data-rv]{opacity:1!important;transform:none!important;transition:none!important}
-  .js .mk.play *,.js .hero h1 .ln>span,.js .frame.in .sh,.js .track,.js .hero::before,.js .in .short{animation:none!important}
-  .js .hero h1 .ln>span{transform:none}
+  .js .mk.play *,.js .hero h1,.js .frame.in .sh,.js .track,.js .hero::before,.js .in .short{animation:none!important}
 }
 </style>
 </head>
@@ -277,13 +276,9 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
 <div class="hero">
   <div class="wrap hero-in">
     <div>
-      <div class="eyebrow">Shift scheduling for hotels, restaurants and service teams</div>
-      <h1>
-        <span class="ln" style="--i:0"><span>Know you're short</span></span>
-        <span class="ln" style="--i:1"><span><span class="acc">before</span> the shift</span></span>
-        <span class="ln" style="--i:2"><span>starts.</span></span>
-      </h1>
-      <p class="lede" data-rv="fade" style="--i:4">ShyftRota fills the week around everyone's availability, max hours and approved time off, flags the shifts that come up short, and puts every shift on your team's phone. Built by a front desk manager who got tired of Sunday-night spreadsheets.</p>
+      <div class="eyebrow">Shift scheduling</div>
+      <h1>Know you're short <span class="acc">before</span> the shift starts.</h1>
+      <p class="lede" data-rv="fade" style="--i:4">Build the week in a tap, around everyone's availability, hours and time off. Short shifts get flagged days before they happen.</p>
       <div class="hero-cta" data-rv="fade" style="--i:5">
         <a class="btn btn-primary" href="#pilot">Request a pilot <span class="arr">&rarr;</span></a>
         <a class="btn btn-ghost" href="#how">See how it works</a>
@@ -397,8 +392,9 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
   <div class="wrap split">
     <div>
       <div class="eyebrow" data-rv="left">Why it exists</div>
-      <p class="quote" data-rv style="--i:1;margin-top:18px">"The tools we had were built for coffee shops or for corporate HR. Nothing knew what a heavy due-out morning does to a front desk. <em>So I built one.</em>"</p>
-      <div class="sig" data-rv style="--i:2"><span class="av">N</span><div><div style="font-weight:700">Nicolas</div><div style="color:var(--faint);font-size:14px">Founder · hotel front desk manager</div></div></div>
+      <p class="note" data-rv style="--i:1">I work the front desk. The schedule went out on a spreadsheet every Sunday, and nobody knew a shift was short until it already was.</p>
+      <p class="note" data-rv style="--i:2">Everything we could buy was built for a coffee shop or for corporate HR. <em>So I built this one between check-ins.</em></p>
+      <div class="sig" data-rv style="--i:3"><span class="av">N</span><div><div style="font-weight:700">Nicolas</div><div style="color:var(--faint);font-size:14px">Founder · works the front desk in San Diego</div></div></div>
     </div>
     <ul class="list" aria-label="How ShyftRota is different" data-rv style="--i:1">
       <li><b>Built on a real desk</b><span>Written while working front desk shifts, and running at the San Diego hotel where I work.</span></li>
