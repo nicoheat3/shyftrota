@@ -299,7 +299,14 @@ function shiftHours(shiftId, shiftDefs) {
   var sp = def.start.split(":"); var ep = def.end.split(":");
   var mins = (parseInt(ep[0])*60+parseInt(ep[1])) - (parseInt(sp[0])*60+parseInt(sp[1]));
   if (mins <= 0) mins += 1440;
-  return Math.round(mins/60*10)/10;
+  return paidHours(mins/60);
+}
+// Every shift over 5 hours includes a 30-minute unpaid lunch, so an 8.5-hour
+// shift (7:00a–3:30p) counts as 8 paid hours toward the weekly max.
+var LUNCH_HOURS = 0.5;
+function paidHours(clockHours) {
+  var h = clockHours > 5 ? clockHours - LUNCH_HOURS : clockHours;
+  return Math.round(h*10)/10;
 }
 // Sum actual hours for an employee across the week
 function weekHours(empId, weekSched, shiftDefs) {
@@ -2525,7 +2532,7 @@ function App() {
    var on = rows.filter(function(r){ return !r.off; }).sort(function(x,y){ return (x.s<6?x.s+24:x.s) - (y.s<6?y.s+24:y.s); });
    var pto = rows.filter(function(r){ return r.off && r.pto; });
    var free = rows.filter(function(r){ return r.off && !r.pto; });
-   var hrsTotal = on.reduce(function(acc, r){ return acc + (r.nobar ? shiftHours(r.sh, shiftDefs) : (r.en - r.s)); }, 0);
+   var hrsTotal = on.reduce(function(acc, r){ return acc + (r.nobar ? shiftHours(r.sh, shiftDefs) : paidHours(r.en - r.s)); }, 0);
    var LONG = { Sun:"Sunday", Mon:"Monday", Tue:"Tuesday", Wed:"Wednesday", Thu:"Thursday", Fri:"Friday", Sat:"Saturday" };
    var GRID = { display:"grid", gridTemplateColumns:"92px minmax(0, 1fr)", columnGap:8, alignItems:"center" };
    var TRACK = { position:"relative", height:26, backgroundImage:"linear-gradient(to right, var(--border) 1px, transparent 1px)", backgroundSize:"25% 100%" };
@@ -3556,7 +3563,7 @@ function App() {
          <span style={{ color:T.accent, whiteSpace:"nowrap" }}>{cd}</span>
        </div>
        <div style={{ fontFamily:MONO, fontSize:40, fontWeight:500, letterSpacing:"-0.04em", lineHeight:1, marginTop:14, color:T.text, whiteSpace:"nowrap" }}>{A.main}<span style={{ fontSize:18, color:T.faint, letterSpacing:0 }}>{A.ap}</span><span style={{ color:T.faint, padding:"0 6px" }}>–</span>{B.main}<span style={{ fontSize:18, color:T.faint, letterSpacing:0 }}>{B.ap}</span></div>
-       <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:10, fontSize:13, color:T.muted, flexWrap:"wrap" }}><span style={{ width:8, height:8, background:c.dot }} /><span style={{ color:T.text, fontWeight:600 }}>{next.t.label}</span><span>{dept ? "· " + dept.name + " " : ""}· {Math.round((next.en - next.s) * 10) / 10} hrs</span></div>
+       <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:10, fontSize:13, color:T.muted, flexWrap:"wrap" }}><span style={{ width:8, height:8, background:c.dot }} /><span style={{ color:T.text, fontWeight:600 }}>{next.t.label}</span><span>{dept ? "· " + dept.name + " " : ""}· {paidHours(next.en - next.s)} hrs paid</span></div>
        <div aria-hidden="true" style={{ position:"relative", height:6, marginTop:16, background:T.bg, border:"1px solid "+T.border }}>
          <div style={{ position:"absolute", left:(next.s / 24 * 100) + "%", width:((Math.min(24, next.en) - next.s) / 24 * 100) + "%", top:0, bottom:0, background:c.dot }} />
        </div>
