@@ -2134,6 +2134,15 @@ function App() {
   pool.sort(function(a, b){ return weekHours(a.id, weekSched, shiftDefs) - weekHours(b.id, weekSched, shiftDefs); });
   return { emp: pool[0] || null, shiftId: def.id, def: def };
  }
+ function volInput(dateStr, field, label, w) {
+  var v = (dailyVol[dateStr] || {})[field];
+  var has = !(v === null || v === undefined || v === "");
+  return <input className="vol-in mono" type="number" inputMode="numeric" min={0} max={field === "occupancy" ? 100 : undefined} aria-label={label} disabled={isPastWeek}
+    key={dateStr + field + (has ? v : "")} defaultValue={has ? v : ""} placeholder="—"
+    onBlur={function(ev){ var nv = ev.target.value; if (String(nv) !== String(has ? v : "")) saveVolume(dateStr, field, nv); }}
+    onKeyDown={function(ev){ if (ev.key === "Enter") ev.target.blur(); }}
+    style={{ width:w || "100%", height:28, boxSizing:"border-box", padding:"0 4px", background:T.bg, border:"1px "+(has ? "solid " : "dashed ")+T.border, borderRadius:4, color:T.text, fontSize:12, textAlign:"center", outline:"none" }} />;
+ }
  function Avatar(props) {
   var e = props.emp; var sz = props.size || 26;
   return <span aria-hidden="true" style={{ width:sz, height:sz, borderRadius:"50%", background:colorFor(e.id), color:"white", fontSize:Math.round(sz*0.38), fontWeight:700, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0, border:props.ring ? "2px solid "+T.surface : "none", marginLeft:props.overlap ? -8 : 0 }}>{initials(e.name)}</span>;
@@ -2216,6 +2225,8 @@ function App() {
       <style>{`
  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
  .mono { font-family:'IBM Plex Mono',ui-monospace,monospace; font-variant-numeric:tabular-nums; }
+ .vol-in::-webkit-outer-spin-button, .vol-in::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+ .vol-in { -moz-appearance:textfield; appearance:textfield; }
  * { box-sizing:border-box; margin:0; padding:0; }
  ::-webkit-scrollbar { width:4px; height:4px; }
  ::-webkit-scrollbar-thumb { background:var(--xCBD5E1); border-radius:4px; }
@@ -2471,25 +2482,6 @@ function App() {
  </div>
  </div>
 
- {volOpen && (function(){
-   var vDays = orderedDays();
-   var vEmps = emps.filter(function(e){ return deptFilter==="all" || e.dept===deptFilter; });
-   return (
-     <VolumePanel
-       days={vDays}
-       dates={vDays.map(function(d){ return dayToISODate(weekOff, d); })}
-       labels={vDays.map(function(d, di){ return getDayDate(di, weekOff); })}
-       volumes={dailyVol}
-       onChange={saveVolume}
-       thresholds={volThresholds}
-       onThresholds={saveThresholds}
-       roomCount={roomCount}
-       onRoomCount={saveRoomCount}
-       coverage={vDays.map(function(d){ return coverageForDay(vEmps, weekSched[d]||{}, shiftDefs); })}
-       readOnly={isPastWeek}
-     />
-   );
- })()}
 
  {/* Shift legend */}
                 <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:10, alignItems:"center" }}>
@@ -2564,7 +2556,14 @@ function App() {
            {[["OCC", show(vol.occupancy) === "—" ? "—" : vol.occupancy + "%"], ["ARR", show(vol.arrivals)], ["DEP", show(vol.departures)]].map(function(x){ return <div key={x[0]}><div style={{ fontSize:11, color:T.faint }}>{x[0]}</div><div style={{ fontSize:15, fontWeight:600, color:T.text }}>{x[1]}</div></div>; })}
          </div>}
        </div>
-       <div style={{ border:"1px solid "+T.border, borderRadius:8, background:T.surface, padding:"8px 12px 4px" }}>
+       {volOpen && (
+   <div style={{ display:"grid", gridTemplateColumns:"repeat(3, minmax(0, 1fr))", gap:8, marginBottom:12 }}>
+     {[["arrivals","Arrivals"],["departures","Due outs"],["occupancy","Occ %"]].map(function(x){ return (
+       <label key={x[0]} style={{ display:"flex", flexDirection:"column", gap:4, fontSize:10, fontWeight:600, color:T.faint, letterSpacing:"0.04em", textTransform:"uppercase" }}>{x[1]}{volInput(iso, x[0], LONG[sel] + " " + x[1].toLowerCase())}</label>
+     ); })}
+   </div>
+ )}
+ <div style={{ border:"1px solid "+T.border, borderRadius:8, background:T.surface, padding:"8px 12px 4px" }}>
          <div style={{ ...GRID, fontFamily:MONO, fontSize:11, color:T.faint, marginBottom:4 }}>
            <span />
            <div style={{ position:"relative", height:14 }}>{[["6a",0],["12p",25],["6p",50],["12a",75]].map(function(x){ return <span key={x[0]} style={{ position:"absolute", left:x[1]+"%" }}>{x[0]}</span>; })}</div>
@@ -2610,6 +2609,36 @@ function App() {
  <div style={{ overflowX:"auto" }}>
  <table style={{ width:"100%", borderCollapse:"collapse", minWidth:620 }}>
  <thead>
+ {volOpen && (function(){
+   var vDays = orderedDays(); var vEmps = scopedEmps();
+   var LBLC = { padding:"4px 14px", textAlign:"left", color:T.faint, fontSize:10, fontWeight:600, letterSpacing:"0.04em", textTransform:"uppercase", whiteSpace:"nowrap", position:"sticky", left:0, zIndex:2, background:T.surface };
+   function total(field){ var t = 0, n = 0; vDays.forEach(function(d){ var v = (dailyVol[dayToISODate(weekOff, d)] || {})[field]; if (v !== null && v !== undefined && v !== "") { t += Number(v); n++; } }); return n ? (field === "occupancy" ? Math.round(t / n) + "%" : t) : ""; }
+   var rowsDef = [["arrivals","Arrivals"],["departures","Due outs"],["occupancy","Occ %"]];
+   return (
+     <>
+       {rowsDef.map(function(rd, ri){ return (
+         <tr key={rd[0]} style={{ background:T.surface }}>
+           <th scope="row" className="emp-th" style={{ ...LBLC, paddingTop:ri === 0 ? 10 : 4 }}>{rd[1]}</th>
+           {vDays.map(function(d){ var iso = dayToISODate(weekOff, d); return <td key={d} style={{ padding:(ri === 0 ? "10px" : "4px") + " 4px 4px" }}>{volInput(iso, rd[0], d + " " + rd[1].toLowerCase())}</td>; })}
+           <td className="mono" style={{ padding:"4px 6px", textAlign:"center", fontSize:11, color:T.faint }}>{total(rd[0])}</td>
+         </tr>
+       ); })}
+       <tr style={{ background:T.surface }}>
+         <th scope="row" className="emp-th" style={{ ...LBLC, padding:"6px 14px 10px", borderBottom:"1px solid "+T.border }}>Need <span style={{ textTransform:"none", letterSpacing:0, fontWeight:500 }}>AM·Mid·PM</span></th>
+         {vDays.map(function(d){
+           var need = suggestCover(dailyVol[dayToISODate(weekOff, d)], volThresholds);
+           var have = coverageForDay(vEmps, weekSched[d] || {}, shiftDefs);
+           return (
+             <td key={d} className="mono" style={{ padding:"6px 4px 10px", textAlign:"center", fontSize:11, color:T.muted, borderBottom:"1px solid "+T.border, whiteSpace:"nowrap" }}>
+               {need ? ["am","mid","pm"].map(function(b, bi){ var short = have[b] < need[b]; return <span key={b}>{bi ? "·" : ""}<span style={{ color:short ? T.accent : T.muted, fontWeight:short ? 700 : 400 }}>{need[b]}</span></span>; }) : "—"}
+             </td>
+           );
+         })}
+         <td style={{ borderBottom:"1px solid "+T.border }} />
+       </tr>
+     </>
+   );
+ })()}
  <tr style={{ background:T.bg }}>
  <th className="emp-th" style={{ padding:"10px 14px", textAlign:"left", color:T.faint, fontSize:10, fontWeight:600, borderBottom:"1px solid "+T.border, width:150, letterSpacing:"0.04em", textTransform:"uppercase", position:"sticky", left:0, zIndex:2, background:T.bg }}>Employee</th>
  {orderedDays().map(function(d, di) {
