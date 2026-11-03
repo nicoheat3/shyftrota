@@ -3,6 +3,7 @@ import { supabase } from "./lib/supabaseClient.js";
 import { VolumePanel, CoverBadge, suggestCover, coverageForDay, seedThresholds, DEFAULT_THRESHOLDS } from "./volume.jsx";
 import { Settings } from "./settings.jsx";
 import { PublishBar, NotPosted } from "./publish.jsx";
+import { NotificationSettings, sendNotification } from "./notify.jsx";
 
 // ── localStorage polyfill (safety net for restrictive environments) ──
 (function() {
@@ -1355,6 +1356,8 @@ function App() {
  function publishWeek() {
   setPublishBusy(true);
   var now = new Date().toISOString();
+  var wasPosted = isPublished;   // reposting = "your schedule was updated" email
+  var postedWeek = weekKey;
   supabase.from("schedule_publish").upsert({
    property_id: user.property_id,
    week_start: weekKey,
@@ -1367,6 +1370,9 @@ function App() {
    setPublishMap(function(p){ var n={...p}; n[weekKey]={publishedAt:now, editedSince:null}; return n; });
    writeAudit("SCHEDULE_PUBLISHED", weekKey, user.id);
    showT("Schedule posted — your team can see it now");
+   sendNotification({ type:"schedule_posted", weekStart:postedWeek, repost:wasPosted }, function(r){
+    if (r && r.sent > 0) showT("Emailed "+r.sent+" "+(r.sent===1?"person":"people")+" their schedule");
+   });
   });
  }
  function unpublishWeek() {
@@ -1711,6 +1717,7 @@ function App() {
   showT("Swap approved"); writeAudit("SWAP_APPROVED","swap approved",user.id);
   syncScheduleCellDeleteByDate(dateStr, from.id);
   syncScheduleCellByDate(dateStr, to.id, req.shift);
+  sendNotification({ type:"request_decided", kind:"swap", id:req.id });
  });
  }
  function setSwapStatus(id, status) {
@@ -1718,6 +1725,7 @@ function App() {
    if (!ok) return;
    setSwaps(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});});
    showT("Swap "+(STATUS_WORD[status]||status)); writeAudit("SWAP_STATUS_CHANGE","status="+status,user.id);
+   if (status !== "pending") sendNotification({ type:"request_decided", kind:"swap", id:id });
   });
  }
 
@@ -1754,6 +1762,7 @@ function App() {
    if (!ok) return;
    setPtos(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});});
    showT("Time off "+(STATUS_WORD[status]||status)); writeAudit("PTO_STATUS_CHANGE","status="+status,user.id);
+   if (status !== "pending") sendNotification({ type:"request_decided", kind:"pto", id:id });
   });
  }
 
@@ -3131,6 +3140,7 @@ function App() {
  )}
 
  {/* SETTINGS */}
+ {tab==="settings" && <NotificationSettings user={user} emps={emps} isAdmin={isAdmin} showT={showT} />}
  {tab==="settings" && (
    <Settings
      user={user}
