@@ -1,8 +1,8 @@
 {
   "redirects": [
-    { "source": "/signin", "destination": "https://shyftrota-7yp8.vercel.app/", "permanent": false },
-    { "source": "/login", "destination": "https://shyftrota-7yp8.vercel.app/", "permanent": false },
-    { "source": "/app", "destination": "https://shyftrota-7yp8.vercel.app/", "permanent": false },
-    { "source": "/app.html", "destination": "https://shyftrota-7yp8.vercel.app/", "permanent": false }
+    { "source": "/signin", "destination": "https://app.shyftrota.com/", "permanent": false },
+    { "source": "/login", "destination": "https://app.shyftrota.com/", "permanent": false },
+    { "source": "/app", "destination": "https://app.shyftrota.com/", "permanent": false },
+    { "source": "/app.html", "destination": "https://app.shyftrota.com/", "permanent": false }
   ]
 }
