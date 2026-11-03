@@ -937,6 +937,11 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  </div>
  );
 
+ // UNREACHABLE. Nothing sets mode to "signup" any more: the landing CTA now
+ // points at the pilot form on shyftrota.com, and new workspaces are created
+ // by the operator through /provision.html -> api/provision-property.js.
+ // This form never created a real account (see handleSignup below). Kept only
+ // so the markup is here if self-serve signup is wired up properly later.
  if (mode === "signup") return (
  <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,var(--xF8F6F3),var(--xEDE8E0))", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Archivo',system-ui,sans-serif", padding:20 }}>
  <div style={{ width:"100%", maxWidth:440 }}>
@@ -1014,7 +1019,7 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  })}
  </div>
  <div style={{ display:"flex", gap:12, justifyContent:"center", flexWrap:"wrap" }}>
- <button onClick={function(){setMode("signup");}} style={{ ...BTN, padding:"13px 32px", fontSize:15 }}>Get started free</button>
+ <a href="https://www.shyftrota.com/#pilot" style={{ ...BTN, padding:"13px 32px", fontSize:15, textDecoration:"none", display:"inline-flex", alignItems:"center", justifyContent:"center" }}>Request a pilot</a>
  <button onClick={function(){setMode("login");}} style={{ ...GBTN, padding:"13px 32px", fontSize:15 }}>Sign in</button>
  </div>
  </div>
@@ -1385,6 +1390,10 @@ function App() {
  var pendingAll = pendingSwaps + pendingPTO + pendingCall;
 
  function handleLogin(u) { setUser(u); showT("Welcome back, "+u.name.split(" ")[0]+"!"); }
+ // UNREACHABLE, and never worked: this only ever built a local object with a
+ // fake id, threw the password away, and never touched Supabase Auth, the
+ // properties table or the profiles table. Real workspaces are created by
+ // api/provision-property.js. Do not wire this back up as-is.
  function handleSignup(d) {
  var acc = {id:"admin_"+Date.now(),name:d.name,email:d.email,role:"admin",eid:null};
  setAccounts(function(p){return p.concat([acc]);});
