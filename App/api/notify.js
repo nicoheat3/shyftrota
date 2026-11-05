@@ -87,7 +87,11 @@ export default async function handler(req, res) {
     (entries.data || []).forEach(function (r) { (byEmp[r.employee_id] = byEmp[r.employee_id] || []).push(r); });
 
     var range = fmtDay(start) + " – " + fmtDay(end);
+    var only = body.only != null ? String(body.only) : null; // send to one person only
+    if (only && !settings[only]) return res.status(200).json({ sent: 0, errors: [], skipped: "no_email" });
+    if (only && !settings[only].on_schedule) return res.status(200).json({ sent: 0, errors: [], skipped: "opted_out" });
     Object.keys(settings).forEach(function (eid) {
+      if (only && String(eid) !== only) return;
       var s = settings[eid];
       if (!s.on_schedule) return;
       var mine = (byEmp[eid] || []).sort(function (a, b) { return a.work_date < b.work_date ? -1 : 1; });

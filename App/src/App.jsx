@@ -3467,7 +3467,7 @@ function App() {
    </div>
   </div>
  )}
- {tab==="settings" && <NotificationSettings user={user} emps={emps} isAdmin={isAdmin} showT={showT} />}
+ {tab==="settings" && <NotificationSettings user={user} emps={emps} isAdmin={isAdmin} showT={showT} weeks={[0,1].map(function(o){ return { key:isoDate(getWeekStart(o)), label:fmtWeekRange(o) }; })} defaultWeek={weekOff === 1 ? 1 : 0} />}
  {tab==="settings" && (
    <Settings
      user={user}

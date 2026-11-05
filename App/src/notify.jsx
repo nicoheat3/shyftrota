@@ -45,13 +45,15 @@ function Toggle({ on, onChange, label, hint }) {
   );
 }
 
-export function NotificationSettings({ user, emps, isAdmin, showT }) {
+export function NotificationSettings({ user, emps, isAdmin, showT, weeks, defaultWeek }) {
   var myEid = user.eid != null ? Number(user.eid) : null;
   var [rows, setRows] = useState({});          // employee_id -> settings row
   var [loaded, setLoaded] = useState(false);
   var [mine, setMine] = useState({ email:"", on_schedule:true, on_requests:true, on_reminders:true, on_chat:true });
   var [savingMine, setSavingMine] = useState(false);
   var [teamDraft, setTeamDraft] = useState({}); // employee_id -> email being typed
+  var [sendWeek, setSendWeek] = useState(defaultWeek || 0);
+  var [sendingTo, setSendingTo] = useState(null);
 
   useEffect(function(){
     supabase.from("notification_settings").select("*").eq("property_id", user.property_id).then(function(res){
@@ -116,6 +118,26 @@ export function NotificationSettings({ user, emps, isAdmin, showT }) {
     if (await save(eid, { email: email || null })) showT((e ? e.name.split(" ")[0] : "Their") + "'s email " + (email ? "saved" : "removed"));
   }
 
+  // Emails one person their shifts for the chosen (posted) week.
+  function sendOne(e) {
+    var w = weeks && weeks[sendWeek]; if (!w) return;
+    var first = e.name.split(" ")[0];
+    setSendingTo(e.id);
+    var done = false;
+    var guard = setTimeout(function(){ if (!done) { setSendingTo(null); showT("The email server didn't answer. Try again in a minute.", "error"); } }, 20000);
+    sendNotification({ type:"schedule_posted", weekStart:w.key, repost:false, only:e.id }, function(r){
+      done = true; clearTimeout(guard); setSendingTo(null);
+      if (r && r.sent > 0) showT("Sent " + first + " the " + w.label + " schedule");
+      else if (r && r.skipped === "opted_out") showT(first + " turned off schedule emails in their Settings", "info");
+      else if (r && r.skipped === "no_email") showT("Save " + first + "'s email first", "error");
+      else if (r && r.skipped === "no_key") showT("Email isn't set up on the server yet", "error");
+      else if (r && r.error === "That week isn't posted") showT(w.label + " isn't posted yet. Post it first.", "error");
+      else if (r && r.errors && r.errors.length) showT("The email didn't send. Check Resend.", "error");
+      else if (r && r.error) showT(r.error, "error");
+      else showT("Couldn't send to " + first, "error");
+    });
+  }
+
   if (!loaded) return <div style={CARD}><div style={{ fontSize:13, color:T.faint }}>Loading notification settings…</div></div>;
 
   var team = emps.slice().sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
@@ -148,6 +170,16 @@ export function NotificationSettings({ user, emps, isAdmin, showT }) {
             <div style={{ fontSize:12, color:withEmail === team.length ? T.success : T.muted, fontWeight:600 }}>{withEmail} of {team.length} set</div>
           </div>
           <div style={{ fontSize:12, color:T.muted, marginTop:3, marginBottom:12, lineHeight:1.6 }}>Type in emails as you collect them — each one saves when you click away. Employees can also add their own under Settings.</div>
+          {weeks && weeks.length > 0 && (
+            <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:12 }}>
+              <span style={{ fontSize:12, color:T.muted }}>Send button emails the schedule for</span>
+              <div role="group" aria-label="Week to send" style={{ display:"flex", border:"1px solid "+T.border, borderRadius:8, padding:2 }}>
+                {weeks.map(function(w, i){ var on = sendWeek === i; return (
+                  <button key={w.key} aria-pressed={on} onClick={function(){ setSendWeek(i); }} style={{ minHeight:32, padding:"0 12px", borderRadius:6, border:"none", background:on?T.bg:"transparent", color:on?T.text:T.faint, fontSize:12, fontWeight:on?700:500, cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>{(i === 0 ? "This week · " : "Next week · ") + w.label.replace(/, \d{4}$/, "")}</button>
+                ); })}
+              </div>
+            </div>
+          )}
           {team.map(function(e){
             var current = (rows[e.id] && rows[e.id].email) || "";
             var val = teamDraft[e.id] != null ? teamDraft[e.id] : current;
@@ -159,6 +191,13 @@ export function NotificationSettings({ user, emps, isAdmin, showT }) {
                   onBlur={function(){ saveTeam(e.id); }}
                   onKeyDown={function(ev){ if (ev.key === "Enter") ev.target.blur(); }}
                   style={{ ...INP, flex:"2 1 200px", padding:"7px 10px", fontSize:12 }} />
+                {weeks && weeks.length > 0 && (
+                  <button onClick={function(){ sendOne(e); }} disabled={!current || sendingTo === e.id}
+                    title={current ? "Email " + e.name.split(" ")[0] + " their " + weeks[sendWeek].label + " schedule" : "Save an email first"}
+                    style={{ ...BTN, background:"transparent", color:current ? T.text : T.faint, border:"1px solid "+T.border, padding:"0 14px", minHeight:34, fontSize:12, flexShrink:0, opacity:(!current || sendingTo === e.id) ? 0.5 : 1, cursor:current ? "pointer" : "default" }}>
+                    {sendingTo === e.id ? "Sending…" : "Send"}
+                  </button>
+                )}
               </div>
             );
           })}
