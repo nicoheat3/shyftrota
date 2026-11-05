@@ -1139,6 +1139,7 @@ function App() {
  var [weekOff, setWeekOff] = useState(0);
  var [publishMap, setPublishMap] = useState({});   // { "2026-09-14": {publishedAt, editedSince} }
  var [publishBusy, setPublishBusy] = useState(false);
+ var [emailBusy, setEmailBusy] = useState(false);
  var [reqView, setReqView] = useState("current");      // "current" | "history"
  var [histEmp, setHistEmp] = useState("");             // employee filter in history
  var [dailyVol, setDailyVol] = useState({});           // { "2026-09-14": {arrivals, departures, occupancy} }
@@ -1463,6 +1464,21 @@ function App() {
     if (r && r.sent > 0) showT("Emailed "+r.sent+" "+(r.sent===1?"person":"people")+" their schedule");
     else if (r && r.errors && r.errors.length) showT("Schedule posted, but the emails didn't send — check Resend","error");
    });
+  });
+ }
+ // Re-sends this week's posted schedule to everyone with an email on file,
+ // without unposting. Uses the same "Schedule posted" email.
+ function emailWeek() {
+  setEmailBusy(true);
+  var done = false;
+  var guard = setTimeout(function(){ if (!done) { setEmailBusy(false); showT("The email server didn't answer. Try again in a minute.","error"); } }, 20000);
+  sendNotification({ type:"schedule_posted", weekStart:weekKey, repost:false }, function(r){
+   done = true; clearTimeout(guard); setEmailBusy(false);
+   if (r && r.sent > 0) showT("Emailed "+r.sent+" "+(r.sent===1?"person":"people")+" this week's schedule");
+   else if (r && r.skipped === "no_key") showT("Email isn't set up on the server yet","error");
+   else if (r && r.errors && r.errors.length) showT("The emails didn't send. Check Resend.","error");
+   else if (r && r.error) showT(r.error,"error");
+   else showT("Nobody has an email saved. Add them in Settings → Team emails.","info");
   });
  }
  function unpublishWeek() {
@@ -2455,6 +2471,8 @@ function App() {
    editedSince={editedSince}
    onPublish={publishWeek}
    onUnpublish={unpublishWeek}
+   onEmail={emailWeek}
+   emailBusy={emailBusy}
    isPastWeek={isPastWeek}
    busy={publishBusy}
  />

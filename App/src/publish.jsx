@@ -4,6 +4,8 @@
 // disappearing from someone's phone mid-week is worse than a stale one — but
 // the admin gets a flag telling them to let the team know.
 
+import { useState, useEffect } from "react";
+
 var T = {
   bg:"var(--bg)", surface:"var(--surface)", border:"var(--border)", text:"var(--text)", muted:"var(--muted)", faint:"var(--faint)", accent:"var(--accent)", accentL:"var(--accentL)", success:"var(--success)", successL:"var(--successL)", warning:"var(--warning)", warningL:"var(--warningL)",
 };
@@ -19,8 +21,11 @@ function fmtWhen(ts) {
 }
 
 // Sits above the schedule grid for admins.
-export function PublishBar({ publishedAt, editedSince, onPublish, onUnpublish, isPastWeek, busy }) {
+export function PublishBar({ publishedAt, editedSince, onPublish, onUnpublish, onEmail, emailBusy, isPastWeek, busy }) {
   var published = !!publishedAt;
+  // Two taps to send, so a stray tap doesn't email the whole team.
+  var [armed, setArmed] = useState(false);
+  useEffect(function(){ if (!armed) return; var t = setTimeout(function(){ setArmed(false); }, 4000); return function(){ clearTimeout(t); }; }, [armed]);
   var stale = published && !!editedSince;
 
   var tone = !published
@@ -44,6 +49,12 @@ export function PublishBar({ publishedAt, editedSince, onPublish, onUnpublish, i
       </div>
       {!isPastWeek && (
         <div style={{ display:"flex", gap:8, flexShrink:0, flexWrap:"wrap" }}>
+          {published && onEmail && (
+            <button onClick={function(){ if (!armed) { setArmed(true); return; } setArmed(false); onEmail(); }} disabled={emailBusy}
+              style={{ ...GBTN, color:armed?T.accent:T.text, borderColor:armed?T.accent:T.border, opacity:emailBusy?0.6:1, minHeight:36 }}>
+              {emailBusy ? "Sending…" : armed ? "Tap again to send" : "Email schedule"}
+            </button>
+          )}
           {published && !stale && <button onClick={onUnpublish} disabled={busy} style={GBTN}>Unpost</button>}
           {(!published || stale) && (
             <button onClick={onPublish} disabled={busy} style={{ ...BTN, opacity:busy?0.6:1 }}>
