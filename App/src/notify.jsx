@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from "react";
 import { supabase } from "./lib/supabaseClient.js";
+import { pushStatus, enablePush, disablePush, isIOS } from "./push.js";
 
 var T = {
   bg:"var(--bg)", surface:"var(--surface)", border:"var(--border)", text:"var(--text)", muted:"var(--muted)", faint:"var(--faint)", accent:"var(--accent)", accentL:"var(--accentL)", danger:"var(--danger)", success:"var(--success)",
@@ -42,6 +43,71 @@ function Toggle({ on, onChange, label, hint }) {
       </span>
       <input type="checkbox" checked={on} onChange={function(e){ onChange(e.target.checked); }} style={{ width:18, height:18, accentColor:T.accent, flexShrink:0 }} />
     </label>
+  );
+}
+
+// ── Phone notifications (Home Screen app) ─────────────
+function PhoneCard({ user, showT }) {
+  var [st, setSt] = useState(null);
+  var [busy, setBusy] = useState(false);
+  var [msg, setMsg] = useState(null);
+  useEffect(function(){ pushStatus().then(setSt).catch(function(){ setSt("unsupported"); }); }, []);
+
+  function turnOn() {
+    setBusy(true); setMsg(null);
+    enablePush(user).then(function(r){
+      setSt(r); setBusy(false);
+      if (r === "on") showT("Notifications are on for this device");
+    }).catch(function(e){ setBusy(false); setMsg({ ok:false, text:"Couldn't turn on: " + (e && e.message || e) }); });
+  }
+  function turnOff() {
+    setBusy(true); setMsg(null);
+    disablePush().then(function(r){ setSt(r); setBusy(false); showT("Notifications off for this device"); })
+      .catch(function(){ setBusy(false); });
+  }
+  function test() {
+    setBusy(true); setMsg(null);
+    var done = false;
+    sendNotification({ type:"push_test" }, function(r){
+      done = true; setBusy(false);
+      if (r && r.pushed > 0) setMsg({ ok:true, text:"Sent. It should pop up in a few seconds." });
+      else if (r && r.skipped === "no_device") setMsg({ ok:false, text:"This device isn't registered. Turn notifications off and on again." });
+      else setMsg({ ok:false, text:"Didn't send: " + ((r && (r.error || (r.errors && r.errors[0]))) || "no answer from the server") });
+    });
+    setTimeout(function(){ if (!done) { setBusy(false); setMsg({ ok:false, text:"The server didn't respond." }); } }, 20000);
+  }
+
+  var ghost = { ...BTN, background:"transparent", color:T.text, border:"1px solid "+T.border };
+  var note = { fontSize:12, color:T.muted, lineHeight:1.6 };
+  return (
+    <div style={CARD}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:10 }}>
+        <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Phone notifications</div>
+        {st === "on" && <div style={{ fontSize:12, color:T.success, fontWeight:600 }}>On for this device</div>}
+      </div>
+      <div style={{ ...note, marginTop:3, marginBottom:12 }}>Get a buzz when your schedule is posted, a request is answered, before your shift, or when you miss a message.</div>
+      {st === null && <div style={{ fontSize:12, color:T.faint }}>Checking…</div>}
+      {st === "install" && (
+        <div style={{ ...note, color:T.text }}>
+          On iPhone, notifications only work from the Home Screen app:
+          <ol style={{ margin:"8px 0 0", paddingLeft:20 }}>
+            <li>Tap the <b>Share</b> button in Safari</li>
+            <li>Choose <b>Add to Home Screen</b></li>
+            <li>Open ShyftRota from the new icon and come back here</li>
+          </ol>
+        </div>
+      )}
+      {st === "unsupported" && <div style={note}>{isIOS() ? "This needs iOS 16.4 or newer, opened from the Home Screen icon." : "This browser can't show notifications. Try Chrome, Edge or Safari."}</div>}
+      {st === "blocked" && <div style={note}>Notifications are blocked for ShyftRota. {isIOS() ? "Open your iPhone's Settings → Notifications → ShyftRota and allow them, then come back." : "Allow them in your browser's site settings, then reload."}</div>}
+      {st === "off" && <button onClick={turnOn} disabled={busy} style={{ ...BTN, opacity:busy?0.6:1 }}>{busy ? "Turning on…" : "Turn on notifications"}</button>}
+      {st === "on" && (
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <button onClick={test} disabled={busy} style={{ ...ghost, opacity:busy?0.6:1 }}>{busy ? "Working…" : "Send a test"}</button>
+          <button onClick={turnOff} disabled={busy} style={{ ...ghost, color:T.muted, opacity:busy?0.6:1 }}>Turn off</button>
+        </div>
+      )}
+      {msg && <div style={{ marginTop:10, fontSize:12, lineHeight:1.6, padding:"9px 12px", borderRadius:8, background:msg.ok?"var(--xECFDF5)":"var(--xFEF2F2)", color:msg.ok?"var(--x065F46)":"var(--x991B1B)", wordBreak:"break-word" }}>{msg.text}</div>}
+    </div>
   );
 }
 
@@ -107,7 +173,7 @@ export function NotificationSettings({ user, emps, isAdmin, showT, weeks, defaul
     setSavingMine(true);
     var ok = await save(myEid, { email: email || null, on_schedule: mine.on_schedule, on_requests: mine.on_requests, on_reminders: mine.on_reminders, on_chat: mine.on_chat });
     setSavingMine(false);
-    if (ok) showT(email ? "Email notifications saved" : "Email removed — you won't get notifications");
+    if (ok) showT(email ? "Notification settings saved" : "Saved — no email set, so you'll only get phone notifications");
   }
 
   async function saveTeam(eid) {
@@ -127,9 +193,9 @@ export function NotificationSettings({ user, emps, isAdmin, showT, weeks, defaul
     var guard = setTimeout(function(){ if (!done) { setSendingTo(null); showT("The email server didn't answer. Try again in a minute.", "error"); } }, 20000);
     sendNotification({ type:"schedule_posted", weekStart:w.key, repost:false, only:e.id }, function(r){
       done = true; clearTimeout(guard); setSendingTo(null);
-      if (r && r.sent > 0) showT("Sent " + first + " the " + w.label + " schedule");
+      if (r && (r.sent > 0 || r.pushed > 0)) showT("Sent " + first + " the " + w.label + " schedule" + (r.sent > 0 && r.pushed > 0 ? " (email + phone)" : r.pushed > 0 ? " to their phone" : ""));
       else if (r && r.skipped === "opted_out") showT(first + " turned off schedule emails in their Settings", "info");
-      else if (r && r.skipped === "no_email") showT("Save " + first + "'s email first", "error");
+      else if (r && r.skipped === "no_email") showT(first + " has no email saved and hasn't turned on phone notifications", "error");
       else if (r && r.skipped === "no_key") showT("Email isn't set up on the server yet", "error");
       else if (r && r.error === "That week isn't posted") showT(w.label + " isn't posted yet. Post it first.", "error");
       else if (r && r.errors && r.errors.length) showT("The email didn't send. Check Resend.", "error");
@@ -145,12 +211,14 @@ export function NotificationSettings({ user, emps, isAdmin, showT, weeks, defaul
 
   return (
     <div>
+      {myEid != null && <PhoneCard user={user} showT={showT} />}
       {myEid != null && (
         <div style={CARD}>
           <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Email notifications</div>
           <div style={{ fontSize:12, color:T.muted, marginTop:3, marginBottom:14, lineHeight:1.6 }}>Where should ShyftRota email you? Leave it blank and you won't get any emails.</div>
           <label style={LBL}>Your email</label>
-          <input type="email" value={mine.email} placeholder="you@example.com" onChange={function(e){ setMine({ ...mine, email:e.target.value }); }} style={{ ...INP, marginBottom:6 }} />
+          <input type="email" value={mine.email} placeholder="you@example.com" onChange={function(e){ setMine({ ...mine, email:e.target.value }); }} style={{ ...INP, marginBottom:16 }} />
+          <div style={{ fontSize:12, color:T.muted, marginBottom:4 }}><b style={{ color:T.text }}>Notify me about</b> · applies to email and phone</div>
           <Toggle on={mine.on_schedule} onChange={function(v){ setMine({ ...mine, on_schedule:v }); }} label="Schedule posted or updated" hint="Your shifts for the week" />
           <Toggle on={mine.on_requests} onChange={function(v){ setMine({ ...mine, on_requests:v }); }} label="Time off & swap answers" hint="When a request is approved or declined" />
           <Toggle on={mine.on_reminders} onChange={function(v){ setMine({ ...mine, on_reminders:v }); }} label="Shift reminders" hint="About 2 hours before each shift" />

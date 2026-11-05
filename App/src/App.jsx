@@ -4,6 +4,7 @@ import { VolumePanel, CoverBadge, suggestCover, coverageForDay, shiftBucket, see
 import { Settings } from "./settings.jsx";
 import { PublishBar, NotPosted } from "./publish.jsx";
 import { NotificationSettings, sendNotification } from "./notify.jsx";
+import { refreshPush } from "./push.js";
 
 // ── localStorage polyfill (safety net for restrictive environments) ──
 (function() {
@@ -1058,6 +1059,7 @@ function App() {
      eid: res.data.employee_id,
      property_id: res.data.property_id,
     });
+    refreshPush({ id:authUser.id, eid:res.data.employee_id, property_id:res.data.property_id });
    } else {
     // Authenticated with Supabase but couldn't load the matching profile row —
     // surface exactly why instead of silently bouncing back to the login screen.
@@ -1461,8 +1463,8 @@ function App() {
    writeAudit("SCHEDULE_PUBLISHED", weekKey, user.id);
    showT("Schedule posted — your team can see it now");
    sendNotification({ type:"schedule_posted", weekStart:postedWeek, repost:wasPosted }, function(r){
-    if (r && r.sent > 0) showT("Emailed "+r.sent+" "+(r.sent===1?"person":"people")+" their schedule");
-    else if (r && r.errors && r.errors.length) showT("Schedule posted, but the emails didn't send — check Resend","error");
+    if (r && (r.sent > 0 || r.pushed > 0)) showT("Sent everyone their schedule · "+reachMsg(r));
+    else if (r && r.errors && r.errors.length) showT("Schedule posted, but notifications didn't send — check Resend","error");
    });
   });
  }
@@ -1474,12 +1476,18 @@ function App() {
   var guard = setTimeout(function(){ if (!done) { setEmailBusy(false); showT("The email server didn't answer. Try again in a minute.","error"); } }, 20000);
   sendNotification({ type:"schedule_posted", weekStart:weekKey, repost:false }, function(r){
    done = true; clearTimeout(guard); setEmailBusy(false);
-   if (r && r.sent > 0) showT("Emailed "+r.sent+" "+(r.sent===1?"person":"people")+" this week's schedule");
+   if (r && (r.sent > 0 || r.pushed > 0)) showT("Sent this week's schedule · "+reachMsg(r));
    else if (r && r.skipped === "no_key") showT("Email isn't set up on the server yet","error");
    else if (r && r.errors && r.errors.length) showT("The emails didn't send. Check Resend.","error");
    else if (r && r.error) showT(r.error,"error");
-   else showT("Nobody has an email saved. Add them in Settings → Team emails.","info");
+   else showT("Nobody has an email saved or phone notifications on. Add emails in Settings → Team emails.","info");
   });
+ }
+ function reachMsg(r) {
+  var parts = [];
+  if (r.sent > 0) parts.push(r.sent+" email"+(r.sent===1?"":"s"));
+  if (r.pushed > 0) parts.push(r.pushed+" phone"+(r.pushed===1?"":"s"));
+  return parts.join(", ");
  }
  function unpublishWeek() {
   setPublishBusy(true);

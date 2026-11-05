@@ -6,11 +6,15 @@
 //   • Missed-chat emails — when someone has messages they haven't read for
 //     10+ minutes, at most one email every 30 minutes.
 //
+// Each one goes out by email and/or as a phone notification, depending on
+// what the person has set up.
+//
 // Only the Supabase timer can call this: it sends a secret that lives in the
 // app_secrets table, which only the server key can read.
 
 import { createClient } from "@supabase/supabase-js";
 import { FROM, hasEmailKey, esc, unesc, to12, fmtDay, addDays, layout, sendAll } from "./_email.js";
+import { loadSubs, sendPush, itemsFor, prefOn } from "./_push.js";
 
 var SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 var SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -61,15 +65,29 @@ export default async function handler(req, res) {
   var db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { autoRefreshToken: false, persistSession: false } });
   var sec = await db.from("app_secrets").select("value").eq("name", "cron_secret").maybeSingle();
   if (!sec.data || !safeEqual(req.headers["x-cron-secret"], sec.data.value)) return res.status(401).json({ error: "Unauthorized" });
-  if (!hasEmailKey()) return res.status(200).json({ skipped: "no_key" });
 
   var appUrl = "https://" + (req.headers["x-forwarded-host"] || req.headers.host || "shyftrota-7yp8.vercel.app");
   var now = Date.now();
-  var summary = { reminders: 0, chat: 0, errors: [] };
+  var summary = { reminders: 0, chat: 0, pushed: 0, errors: [] };
 
-  var nsRes = await db.from("notification_settings").select("*").not("email", "is", null);
-  var settings = {};
-  (nsRes.data || []).forEach(function (r) { settings[r.employee_id] = r; });
+  var emailOn = hasEmailKey();
+  var nsRes = await db.from("notification_settings").select("*");
+  var prefs = {}, settings = {}; // settings = people we can email
+  (nsRes.data || []).forEach(function (r) { prefs[String(r.employee_id)] = r; if (r.email && emailOn) settings[String(r.employee_id)] = r; });
+  var subs = await loadSubs(db, {});
+  var subProp = {};
+  Object.keys(subs).forEach(function (eid) { subProp[eid] = subs[eid][0].property_id; });
+  // Everyone reachable for a given preference, with their property
+  function reachable(prefKey) {
+    var out = {};
+    Object.keys(settings).forEach(function (eid) { if (settings[eid][prefKey]) out[eid] = settings[eid].property_id; });
+    Object.keys(subs).forEach(function (eid) { if (prefOn(prefs[eid], prefKey)) out[eid] = out[eid] || subProp[eid]; });
+    return out;
+  }
+  async function flushPush(items) {
+    var p = await sendPush(db, items);
+    summary.pushed += p.pushed; summary.errors = summary.errors.concat(p.errors);
+  }
 
   var empRes = await db.from("employees").select("id, name, property_id");
   var empName = {};
@@ -78,10 +96,11 @@ export default async function handler(req, res) {
   // ═══ Shift reminders ═══════════════════════════════
   try {
     var props = await db.from("properties").select("id, timezone, week_start");
+    var remindable = reachable("on_reminders");
     for (var pi = 0; pi < (props.data || []).length; pi++) {
       var prop = props.data[pi];
       var tz = prop.timezone || "America/Los_Angeles";
-      var wanted = Object.keys(settings).filter(function (eid) { var s = settings[eid]; return s.property_id === prop.id && s.on_reminders; });
+      var wanted = Object.keys(remindable).filter(function (eid) { return remindable[eid] === prop.id; });
       if (!wanted.length) continue;
 
       var today = localDate(now, tz), tomorrow = addDays(today, 1);
@@ -127,10 +146,18 @@ export default async function handler(req, res) {
       var claimed = {};
       (claim.data || []).forEach(function (c) { claimed[c.ref + "_" + c.employee_id] = true; });
 
-      var msgs = due.filter(function (x) { return claimed[x.date + "_" + x.eid]; }).map(function (x) {
+      var mine = due.filter(function (x) { return claimed[x.date + "_" + x.eid]; });
+      var phoneItems = [];
+      mine.forEach(function (x) {
+        var when = (x.isToday ? "today" : "tomorrow") + " at " + to12(x.start);
+        phoneItems = phoneItems.concat(itemsFor(subs, x.eid, { title: "Your shift starts soon",
+          body: x.label + (/shift\s*$/i.test(x.label) ? "" : " shift") + " " + when + (x.end ? " until " + to12(x.end) : ""), url: "/", tag: "reminder-" + x.date }));
+      });
+      if (phoneItems.length) await flushPush(phoneItems);
+      var msgs = mine.filter(function (x) { return settings[String(x.eid)] && settings[String(x.eid)].on_reminders; }).map(function (x) {
         var when = (x.isToday ? "today" : "tomorrow") + " at " + to12(x.start);
         return {
-          from: FROM, to: [settings[x.eid].email],
+          from: FROM, to: [settings[String(x.eid)].email],
           subject: "Reminder: " + x.label + " " + when,
           html: layout("Your shift starts soon",
             '<div style="font-size:14px;line-height:1.7">Hi ' + esc((empName[x.eid] || "").split(" ")[0]) + ', your <b>' + esc(x.label) + '</b>' + (/shift\s*$/i.test(x.label) ? '' : ' shift') + ' starts <b>' + esc(when) + '</b>' +
@@ -150,7 +177,8 @@ export default async function handler(req, res) {
       .gte("created_at", from).lte("created_at", until).order("id", { ascending: true });
     if (recent.data && recent.data.length) {
       var profs = await db.from("profiles").select("id, employee_id, property_id").not("employee_id", "is", null);
-      var people = (profs.data || []).filter(function (p) { var s = settings[p.employee_id]; return s && s.on_chat; });
+      var chatty = reachable("on_chat");
+      var people = (profs.data || []).filter(function (p) { return chatty[String(p.employee_id)] != null; });
       if (people.length) {
         var reads = await db.from("chat_reads").select("user_id, channel, last_read_at").in("user_id", people.map(function (p) { return p.id; }));
         var readAt = {};
@@ -159,7 +187,7 @@ export default async function handler(req, res) {
         var state = {};
         (st.data || []).forEach(function (s) { state[s.employee_id] = s; });
 
-        var chatMsgs = [], stateUpdates = [];
+        var chatMsgs = [], chatPush = [], stateUpdates = [];
         people.forEach(function (p) {
           var eid = Number(p.employee_id), s = state[eid] || { last_msg_id: 0, last_sent_at: null };
           if (s.last_sent_at && now - Date.parse(s.last_sent_at) < CHAT_THROTTLE_MIN * 60000) return;
@@ -178,19 +206,28 @@ export default async function handler(req, res) {
             return '<div style="padding:8px 0;border-top:1px solid #EEE9E2"><div style="font-size:12px;color:#7A7469">' + esc(where) + ' · ' + esc(unesc(m.sender_name)) + '</div><div style="font-size:14px;margin-top:2px">' + esc(text) + '</div></div>';
           }).join("");
           var n = unread.length;
+          var last = unread[unread.length - 1], lastText = unesc(last.body);
+          if (lastText.length > 140) lastText = lastText.slice(0, 137) + "…";
+          chatPush = chatPush.concat(itemsFor(subs, eid, {
+            title: n === 1 ? unesc(last.sender_name) : n + " unread messages",
+            body: (n === 1 ? "" : unesc(last.sender_name) + ": ") + lastText, url: "/", tag: "chat" }));
+          stateUpdates.push({ employee_id: eid, last_msg_id: last.id, last_sent_at: new Date(now).toISOString() });
+          if (!settings[String(eid)] || !settings[String(eid)].on_chat) return;
           chatMsgs.push({
-            from: FROM, to: [settings[eid].email],
+            from: FROM, to: [settings[String(eid)].email],
             subject: n === 1 ? "New message from " + unesc(unread[0].sender_name) : n + " unread messages in ShyftRota",
             html: layout(n === 1 ? "You have a new message" : "You have " + n + " unread messages",
               lines + (n > 5 ? '<div style="font-size:12px;color:#7A7469;padding-top:8px">…and ' + (n - 5) + ' more</div>' : ''), appUrl),
           });
-          stateUpdates.push({ employee_id: eid, last_msg_id: unread[unread.length - 1].id, last_sent_at: new Date(now).toISOString() });
         });
 
         if (stateUpdates.length) {
           var up = await db.from("chat_email_state").upsert(stateUpdates, { onConflict: "employee_id" });
           if (up.error) summary.errors.push("chat state: " + up.error.message);
-          else { var r2 = await sendAll(chatMsgs); summary.chat += r2.sent; summary.errors = summary.errors.concat(r2.errors); }
+          else {
+            var r2 = await sendAll(chatMsgs); summary.chat += r2.sent; summary.errors = summary.errors.concat(r2.errors);
+            if (chatPush.length) await flushPush(chatPush);
+          }
         }
       }
     }

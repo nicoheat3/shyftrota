@@ -1,6 +1,7 @@
 // POST /api/notify
 //
-// Sends ShyftRota email notifications through Resend. The app calls this
+// Sends ShyftRota notifications: email through Resend, and phone
+// notifications (web push) to anyone who turned them on in the Home Screen app. The app calls this
 // right after an admin posts a schedule or answers a request. Everything is
 // looked up again here with the server key — the browser only says WHAT
 // happened, never who to email or what to say.
@@ -13,6 +14,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { FROM, hasEmailKey, esc, unesc, to12, fmtDay, addDays, layout, sendAll } from "./_email.js";
+import { loadSubs, sendPush, itemsFor, prefOn } from "./_push.js";
 
 var SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 var SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -20,7 +22,6 @@ var SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   if (!SUPABASE_URL || !SERVICE_KEY) return res.status(500).json({ error: "Server misconfigured" });
-  if (!hasEmailKey()) return res.status(200).json({ skipped: "no_key" });
 
   var auth = req.headers.authorization || "";
   var token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
@@ -31,17 +32,27 @@ export default async function handler(req, res) {
   if (u.error || !u.data || !u.data.user) return res.status(401).json({ error: "Invalid session" });
 
   var prof = await db.from("profiles").select("role, property_id, employee_id").eq("id", u.data.user.id).single();
-  if (prof.error || !prof.data || prof.data.role !== "admin") return res.status(403).json({ error: "Only admins send notifications" });
+  var body = req.body || {};
+  if (prof.error || !prof.data) return res.status(403).json({ error: "No profile" });
+  // Anyone can send a test to their own phone; everything else is admin-only.
+  if (prof.data.role !== "admin" && body.type !== "push_test") return res.status(403).json({ error: "Only admins send notifications" });
   var propertyId = prof.data.property_id;
 
   var appUrl = "https://" + (req.headers["x-forwarded-host"] || req.headers.host || "shyftrota.vercel.app");
-  var body = req.body || {};
 
   // Who wants what, and where to send it
   var ns = await db.from("notification_settings").select("*").eq("property_id", propertyId);
   if (ns.error) { console.error("notify: settings load failed", ns.error); return res.status(500).json({ error: "Couldn't load notification settings" }); }
-  var settings = {};
-  (ns.data || []).forEach(function (r) { if (r.email) settings[r.employee_id] = r; });
+  var emailOn = hasEmailKey();
+  var settings = {}; // people we can email
+  var prefs = {};    // everyone's on/off choices (also used for phone notifications)
+  (ns.data || []).forEach(function (r) { prefs[r.employee_id] = r; if (r.email && emailOn) settings[r.employee_id] = r; });
+  var subs = await loadSubs(db, { propertyId: propertyId });
+  var pushes = [];
+  function phone(eid, prefKey, payload) {
+    if (!prefOn(prefs[eid], prefKey)) return;
+    pushes = pushes.concat(itemsFor(subs, eid, payload));
+  }
 
   var emps = await db.from("employees").select("id, name").eq("property_id", propertyId);
   var empName = {};
@@ -56,11 +67,21 @@ export default async function handler(req, res) {
     var s = ov ? ov.start_time : d && d.start_time, e = ov ? ov.end_time : d && d.end_time;
     return esc(unesc(label)) + (s && e ? " · " + to12(s) + "–" + to12(e) : "");
   }
+  function shiftPlain(shiftId, ov) { return unesc(shiftText(shiftId, ov)); }
 
   var messages = [];
 
+  // ── Test phone notification to yourself ─────────────
+  if (body.type === "push_test") {
+    var myId = prof.data.employee_id;
+    var mineSubs = myId != null ? itemsFor(subs, myId, { title: "Notifications are on", body: "This is how ShyftRota will tell you about schedules, requests and shift reminders.", url: "/", tag: "test" }) : [];
+    if (!mineSubs.length) return res.status(200).json({ pushed: 0, errors: [], skipped: "no_device" });
+    return res.status(200).json(Object.assign({ sent: 0 }, await sendPush(db, mineSubs)));
+  }
+
   // ── Test email to yourself ──────────────────────────
   if (body.type === "test") {
+    if (!emailOn) return res.status(200).json({ skipped: "no_key" });
     var mine = prof.data.employee_id != null ? settings[prof.data.employee_id] : null;
     if (!mine) return res.status(200).json({ skipped: "no_email" });
     var t = await sendAll([{ from: FROM, to: [mine.email], subject: "ShyftRota test email",
@@ -88,8 +109,16 @@ export default async function handler(req, res) {
 
     var range = fmtDay(start) + " – " + fmtDay(end);
     var only = body.only != null ? String(body.only) : null; // send to one person only
-    if (only && !settings[only]) return res.status(200).json({ sent: 0, errors: [], skipped: "no_email" });
-    if (only && !settings[only].on_schedule) return res.status(200).json({ sent: 0, errors: [], skipped: "opted_out" });
+    var hasPhone = function (eid) { return (subs[String(eid)] || []).length > 0; };
+    if (only && !settings[only] && !hasPhone(only)) return res.status(200).json({ sent: 0, errors: [], skipped: "no_email" });
+    if (only && !prefOn(prefs[only], "on_schedule")) return res.status(200).json({ sent: 0, errors: [], skipped: "opted_out" });
+    var pushTitle = body.repost ? "Your schedule was updated" : "Your schedule is posted";
+    Object.keys(subs).forEach(function (eid) {
+      if (only && String(eid) !== only) return;
+      var mine = (byEmp[eid] || []).slice().sort(function (a, b) { return a.work_date < b.work_date ? -1 : 1; });
+      var lines = mine.map(function (r) { return fmtDay(r.work_date) + " · " + shiftPlain(r.shift_id, ovByKey[r.work_date + "_" + eid]); });
+      phone(eid, "on_schedule", { title: pushTitle, body: (lines.length ? lines.join("\n") : "No shifts for you " + range + "."), url: "/", tag: "schedule-" + start });
+    });
     Object.keys(settings).forEach(function (eid) {
       if (only && String(eid) !== only) return;
       var s = settings[eid];
@@ -125,7 +154,8 @@ export default async function handler(req, res) {
     var word = approved ? "approved" : cancelled ? "cancelled" : "declined";
     var color = approved ? "#047857" : "#B91C1C";
 
-    function push(eid, subject, title, html) {
+    function tell(eid, subject, title, html) {
+      phone(eid, "on_requests", { title: title, body: subject, url: "/", tag: "request-" + table + "-" + r.id + "-" + eid });
       var s = settings[eid];
       if (!s || !s.on_requests) return;
       messages.push({ from: FROM, to: [s.email], subject: subject, html: layout(title, html, appUrl) });
@@ -133,16 +163,16 @@ export default async function handler(req, res) {
 
     if (table === "pto_requests") {
       var when = fmtDay(r.start_date) + (r.end_date && r.end_date !== r.start_date ? " – " + fmtDay(r.end_date) : "");
-      push(r.employee_id, "Time off " + word + ": " + when, "Your time off was " + word,
+      tell(r.employee_id, "Time off " + word + ": " + when, "Your time off was " + word,
         '<div style="font-size:14px;line-height:1.6"><b style="color:' + color + '">' + esc(word[0].toUpperCase() + word.slice(1)) + '</b> — ' +
         esc(r.pto_type) + ', ' + esc(when) + '.</div>');
     } else {
       var day = fmtDay(r.work_date);
-      push(r.from_employee_id, "Shift swap " + word + ": " + day, "Your swap request was " + word,
+      tell(r.from_employee_id, "Shift swap " + word + ": " + day, "Your swap request was " + word,
         '<div style="font-size:14px;line-height:1.6"><b style="color:' + color + '">' + esc(word[0].toUpperCase() + word.slice(1)) + '</b> — ' +
         esc(empName[r.to_employee_id] || "your coworker") + ' covering ' + shiftText(r.shift_id) + ' on ' + esc(day) + '.</div>');
       if (approved) {
-        push(r.to_employee_id, "You're picking up a shift on " + day, "You picked up a shift",
+        tell(r.to_employee_id, "You're picking up a shift on " + day, "You picked up a shift",
           '<div style="font-size:14px;line-height:1.6">Your manager approved a swap: you\'re now working ' + shiftText(r.shift_id) +
           ' on ' + esc(day) + ' (covering ' + esc(empName[r.from_employee_id] || "a coworker") + ').</div>');
       }
@@ -152,5 +182,6 @@ export default async function handler(req, res) {
   else return res.status(400).json({ error: "Unknown notification type" });
 
   var result = await sendAll(messages);
-  return res.status(200).json(result);
+  var p = await sendPush(db, pushes);
+  return res.status(200).json({ sent: result.sent, pushed: p.pushed, errors: (result.errors || []).concat(p.errors) });
 }
