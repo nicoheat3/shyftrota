@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { flushSync } from "react-dom";
 import { supabase } from "./lib/supabaseClient.js";
 import { VolumePanel, CoverBadge, suggestCover, coverageForDay, shiftBucket, seedThresholds, DEFAULT_THRESHOLDS } from "./volume.jsx";
 import { Settings } from "./settings.jsx";
@@ -2310,6 +2311,21 @@ function App() {
     {id:"settings",  label:"Settings"},
   ];
  var TABS = isAdmin ? ADMIN_TABS : EMP_TABS;
+  // iOS-style tab change: the page slides toward the tab you picked.
+  // Falls back to an instant switch where the browser lacks View Transitions
+  // or the person has Reduce Motion turned on.
+  function goTab(id, also) {
+    function apply() { setTab(id); if (also) also(); }
+    if (id === tab) { apply(); return; }
+    var order = TABS.map(function(t){ return t.id; });
+    var from = order.indexOf(tab), to = order.indexOf(id);
+    var dir = (from < 0 || to < 0) ? "fade" : (to > from ? "forward" : "back");
+    var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!document.startViewTransition || reduce) { apply(); return; }
+    document.documentElement.dataset.navDir = dir;
+    var vt = document.startViewTransition(function(){ flushSync(apply); });
+    vt.finished.finally(function(){ delete document.documentElement.dataset.navDir; });
+  }
   var TAB_ICONS = {schedule:"calendar",employees:"users",depts:"building",openShifts:"plusSquare",requests:"clipboard",timeclock:"clock",shifts:"list",chat:"message",ai:"terminal",myschedule:"calendarCheck",today:"eye",timeoff:"sun",swap:"swap",callin:"phone",clockin:"login",settings:"sliders"};
 
  if (authLoading) return (
@@ -2390,7 +2406,7 @@ function App() {
     ) : (
      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, padding:"10px 14px", borderTop:"1px solid "+T.border }}>
       <span style={{ fontSize:12, color:T.faint }}>No one available fits.</span>
-      <button onClick={function(){ setTab("openShifts"); }} style={{ ...GBTN, padding:"8px 12px", fontSize:12, color:T.text, minHeight:36 }}>Post open shift</button>
+      <button onClick={function(){ goTab("openShifts"); }} style={{ ...GBTN, padding:"8px 12px", fontSize:12, color:T.text, minHeight:36 }}>Post open shift</button>
      </div>
     )}
    </div>
@@ -2434,7 +2450,7 @@ function App() {
         </div>
        );
       })}
-      {(pPto.length > 3 || pSwap.length > 3) && <button onClick={function(){ setTab("requests"); }} style={{ width:"100%", padding:"12px", background:"transparent", border:"none", borderTop:"1px solid "+T.border, color:T.accent, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>See all requests</button>}
+      {(pPto.length > 3 || pSwap.length > 3) && <button onClick={function(){ goTab("requests"); }} style={{ width:"100%", padding:"12px", background:"transparent", border:"none", borderTop:"1px solid "+T.border, color:T.accent, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>See all requests</button>}
      </div>
     )}
    </aside>
@@ -2458,6 +2474,24 @@ function App() {
  @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
  @keyframes sIn { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+ /* Tab changes (View Transitions): iOS-like push, ~280ms on Apple's ease curve */
+ ::view-transition-old(root), ::view-transition-new(root) { animation:none; }
+ ::view-transition-group(tab-page) { animation-duration:280ms; animation-timing-function:cubic-bezier(0.32,0.72,0,1); }
+ ::view-transition-old(tab-page), ::view-transition-new(tab-page) { animation-duration:280ms; animation-timing-function:cubic-bezier(0.32,0.72,0,1); animation-fill-mode:both; }
+ html[data-nav-dir="forward"]::view-transition-old(tab-page) { animation-name:srOutLeft; }
+ html[data-nav-dir="forward"]::view-transition-new(tab-page) { animation-name:srInRight; }
+ html[data-nav-dir="back"]::view-transition-old(tab-page) { animation-name:srOutRight; }
+ html[data-nav-dir="back"]::view-transition-new(tab-page) { animation-name:srInLeft; }
+ html[data-nav-dir="fade"]::view-transition-old(tab-page) { animation-name:srFadeOut; }
+ html[data-nav-dir="fade"]::view-transition-new(tab-page) { animation-name:srFadeIn; }
+ ::view-transition-group(tab-indicator) { animation-duration:320ms; animation-timing-function:cubic-bezier(0.32,0.72,0,1); }
+ @keyframes srInRight { from{transform:translateX(28%);opacity:0} to{transform:translateX(0);opacity:1} }
+ @keyframes srOutLeft { from{transform:translateX(0);opacity:1} to{transform:translateX(-12%);opacity:0} }
+ @keyframes srInLeft { from{transform:translateX(-28%);opacity:0} to{transform:translateX(0);opacity:1} }
+ @keyframes srOutRight { from{transform:translateX(0);opacity:1} to{transform:translateX(12%);opacity:0} }
+ @keyframes srFadeIn { from{opacity:0} to{opacity:1} }
+ @keyframes srFadeOut { from{opacity:1} to{opacity:0} }
+ @media (prefers-reduced-motion: reduce) { ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation:none !important; } }
  .hv:hover { background:var(--xF1F5F9) !important; cursor:pointer; }
  .hv2:hover { background:var(--xFDF0ED) !important; cursor:pointer; }
  input:focus, select:focus, textarea:focus { border-color:var(--xC84B31) !important; box-shadow:0 0 0 3px rgba(200,75,49,0.12); outline:none; }
@@ -2523,7 +2557,7 @@ function App() {
   function NavBtn(props) {
     return (
       <button className="tab-btn" onClick={props.onClick} style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, padding:"8px 2px", minHeight:56, border:"none", background:"transparent", cursor:"pointer", fontFamily:"inherit", color:props.active?T.accent:T.muted, position:"relative" }}>
-        {props.active && <span style={{ position:"absolute", top:0, left:"30%", right:"30%", height:2, background:T.accent }} />}
+        {props.active && <span style={{ position:"absolute", top:0, left:"30%", right:"30%", height:2, background:T.accent, viewTransitionName:"tab-indicator" }} />}
         <Icon name={props.icon} size={20} />
         <span style={{ fontSize:11, fontWeight:props.active?700:500, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:"100%" }}>{props.label}</span>
         {props.badge > 0 && <span className="mono" style={{ position:"absolute", top:5, left:"calc(50% + 6px)", background:T.accent, color:"white", fontSize:10, fontWeight:600, borderRadius:4, padding:"0 4px", lineHeight:"15px" }}>{props.badge}</span>}
@@ -2538,7 +2572,7 @@ function App() {
        {REST.map(function(t){
         var active = tab === t.id;
         return (
-         <button key={t.id} onClick={function(){ setTab(t.id); setMoreOpen(false); }} style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"12px 10px", minHeight:48, border:"none", borderBottom:"1px solid "+T.border, background:"transparent", cursor:"pointer", fontFamily:"inherit", fontSize:15, fontWeight:active?700:500, color:active?T.accent:T.text, textAlign:"left" }}>
+         <button key={t.id} onClick={function(){ goTab(t.id, function(){ setMoreOpen(false); }); }} style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"12px 10px", minHeight:48, border:"none", borderBottom:"1px solid "+T.border, background:"transparent", cursor:"pointer", fontFamily:"inherit", fontSize:15, fontWeight:active?700:500, color:active?T.accent:T.text, textAlign:"left" }}>
           <Icon name={TAB_ICONS[t.id]} size={18} />
           <span style={{ flex:1 }}>{t.label.replace(/ \(\d+\)/,"")}</span>
           {t.id==="requests" && pendingAll > 0 && <span className="mono" style={{ background:T.accent, color:"white", fontSize:11, fontWeight:600, borderRadius:4, padding:"1px 6px" }}>{pendingAll}</span>}
@@ -2550,7 +2584,7 @@ function App() {
     )}
     <div className="mobile-bottom" style={{ position:"fixed", left:0, right:0, bottom:0, zIndex:70, background:T.surface, borderTop:"1px solid "+T.border, paddingBottom:"env(safe-area-inset-bottom)" }}>
      {MAIN.map(function(t){
-      return <NavBtn key={t.id} icon={TAB_ICONS[t.id]} label={t.label.replace(/ \(\d+\)/,"").replace("My Schedule","Mine")} active={tab===t.id && !moreOpen} badge={t.id==="requests"?pendingAll:0} onClick={function(){ setTab(t.id); setMoreOpen(false); }} />;
+      return <NavBtn key={t.id} icon={TAB_ICONS[t.id]} label={t.label.replace(/ \(\d+\)/,"").replace("My Schedule","Mine")} active={tab===t.id && !moreOpen} badge={t.id==="requests"?pendingAll:0} onClick={function(){ goTab(t.id, function(){ setMoreOpen(false); }); }} />;
      })}
      <NavBtn icon="menu" label="More" active={restActive || moreOpen} badge={REST.some(function(t){return t.id==="requests";})?pendingAll:0} onClick={function(){ setMoreOpen(!moreOpen); }} />
     </div>
@@ -2577,7 +2611,7 @@ function App() {
  {TABS.map(function(t) {
  var active = tab === t.id;
  return (
- <button key={t.id} onClick={function(){setTab(t.id);}} style={{ width:"100%", display:"flex", alignItems:"center", gap:8, padding:"7px 9px", borderRadius:8, border:"none", cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:active?600:400, color:active?T.accent:T.muted, background:active?T.accentL:"transparent", marginBottom:2, textAlign:"left" }}>
+ <button key={t.id} onClick={function(){goTab(t.id);}} style={{ width:"100%", display:"flex", alignItems:"center", gap:8, padding:"7px 9px", borderRadius:8, border:"none", cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:active?600:400, color:active?T.accent:T.muted, background:active?T.accentL:"transparent", marginBottom:2, textAlign:"left" }}>
  <Icon name={TAB_ICONS[t.id]} size={15} />
  <span style={{ flex:1 }}>{t.label.replace(/ \(\d+\)/,"")}</span>
  {t.id==="requests" && pendingAll > 0 && <span style={{ background:T.accent, color:"white", fontSize:10, fontWeight:700, borderRadius:20, padding:"1px 6px" }}>{pendingAll}</span>}
@@ -2623,7 +2657,7 @@ function App() {
  </div>
 
  {/* Page content */}
- <div className="main-pad" style={{ flex:1, padding:24, overflowY:"auto", overflowX:"hidden", animation:"fadeIn .2s ease" }}>
+ <div className="main-pad" style={{ flex:1, padding:24, overflowY:"auto", overflowX:"hidden", animation:"fadeIn .2s ease", viewTransitionName:"tab-page" }}>
 
  {/* SCHEDULE */}
  {tab==="schedule" && isAdmin && (
@@ -3841,8 +3875,8 @@ function App() {
        )}
        {!isAdmin && (
          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, minmax(0, 1fr))", gap:8, marginTop:14 }}>
-           <button onClick={function(){ setTab("swap"); }} style={{ ...GBTN, color:T.text, minHeight:44, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="swap" size={16} />Swap</button>
-           <button onClick={function(){ setTab("callin"); }} style={{ ...GBTN, color:T.text, minHeight:44 }}>Can't make it</button>
+           <button onClick={function(){ goTab("swap"); }} style={{ ...GBTN, color:T.text, minHeight:44, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="swap" size={16} />Swap</button>
+           <button onClick={function(){ goTab("callin"); }} style={{ ...GBTN, color:T.text, minHeight:44 }}>Can't make it</button>
          </div>
        )}
      </section>
