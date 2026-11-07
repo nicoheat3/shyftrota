@@ -208,6 +208,22 @@ function orderedDays() {
  return DAYS.slice(i).concat(DAYS.slice(0, i));
 }
 
+function mapOpenShift(r) {
+ var d = new Date(r.work_date+"T00:00:00");
+ return { id:r.id, workDate:r.work_date, day:DAYS[(d.getDay()+6)%7], shift:r.shift_id, role:r.role||"", note:r.note||"",
+  postedBy:r.posted_name||"", claimedBy:r.claimed_by!=null?Number(r.claimed_by):null, claimedName:r.claimed_name||"", status:r.status };
+}
+function openDateLabel(s) {
+ var d = new Date(s.workDate+"T00:00:00");
+ return s.day+" "+(d.getMonth()+1)+"/"+d.getDate();
+}
+// Which week offset (0 = this week) a date falls in.
+function weekOffForDate(dateStr) {
+ var d = new Date(dateStr+"T00:00:00");
+ d.setDate(d.getDate() - ((d.getDay() - APP_WEEK_START_DOW + 7) % 7));
+ return Math.round((d - getWeekStart(0)) / (7*86400000));
+}
+
 function dayToISODate(weekOffset, day) {
  var dayIdx = orderedDays().indexOf(day);
  var weekStart = getWeekStart(weekOffset);
@@ -1122,7 +1138,7 @@ function App() {
  var [sched, setSched] = useState({});
  var [swaps, setSwaps] = useState([]);
  var [ptos, setPtos] = useState([]);
- var [opens, setOpens] = useState(function(){ return ld("sr_open", []); });
+ var [opens, setOpens] = useState([]); // open shifts, from the open_shifts table
  var [callins, setCallins] = useState([]);
  var [timeclock, setTimeclockRaw] = useState([]); // array of punch records, always oldest -> newest
  // Everything that reads punches ("who's clocked in", hours, the employee
@@ -1303,7 +1319,6 @@ function App() {
  var [toast, setToast] = useState(null);
 
  useEffect(function(){ sv("sr_acc", accounts); }, [accounts]);
- useEffect(function(){ sv("sr_open", opens); }, [opens]);
  useEffect(function(){ sv("sr_ovr", overruled); }, [overruled]);
  var [ovrOpen, setOvrOpen] = useState(false);
  useEffect(function(){
@@ -1337,11 +1352,24 @@ function App() {
  function showT(msg, type) { setToast({msg:msg,type:type||"success"}); setTimeout(function(){setToast(null);},2800); }
 
  var isAdmin = user && user.role === "admin";
+ // Open shifts: today and later. Refreshed whenever the Open Shifts tab opens,
+ // so claims from other phones show up without a full reload.
+ useEffect(function(){
+  if (!user || !user.property_id) return;
+  supabase.from("open_shifts").select("*").eq("property_id", user.property_id)
+   .gte("work_date", isoDate(new Date())).order("work_date", { ascending:true })
+   .then(function(res){
+    if (res.error) { console.error("load open shifts failed:", res.error); return; }
+    setOpens((res.data||[]).map(mapOpenShift));
+   });
+ }, [user && user.property_id, tab==="openShifts"]);
  useEffect(function(){ if (user && !isAdmin && tab === "schedule") setTab("myschedule"); }, [user && user.role, tab]);
  var indRoles = (INDUSTRIES[industry] && INDUSTRIES[industry].roles) || INDUSTRIES.general.roles;
 
  // Derived week data - must be before allConflicts
  var weekLabel = fmtWeekRange(weekOff);
+ var weekStartIso = isoDate(getWeekStart(weekOff));
+ var weekEndIso = (function(){ var d = getWeekStart(weekOff); d.setDate(d.getDate()+6); return isoDate(d); })();
  var weekSched = (sched[weekOff] && typeof sched[weekOff] === "object") ? sched[weekOff] : { Mon:{}, Tue:{}, Wed:{}, Thu:{}, Fri:{}, Sat:{}, Sun:{} };
  var weekKey = isoDate(getWeekStart(weekOff));
  var weekPub = publishMap[weekKey] || null;
@@ -1925,24 +1953,66 @@ function App() {
  }
 
  function postOpen() {
- setOpens(function(p){return p.concat([{id:Date.now(),day:openForm.day,shift:openForm.shift,role:openForm.role,note:sanitize(openForm.note),postedBy:user.name,claimedBy:null,claimedName:"",status:"open"}]);});
- setOpenForm({day:DAYS[0],shift:"",role:"",note:""});
- showT("Open shift posted");
+ if (isPastWeek) { showT("Past weeks are locked","error"); return; }
+ var shiftId = openForm.shift || (shiftDefs[0] && shiftDefs[0].id);
+ if (!shiftId) { showT("Add a shift type first","error"); return; }
+ var workDate = dayToISODate(weekOff, openForm.day);
+ if (workDate < isoDate(new Date())) { showT("That day has already passed","error"); return; }
+ var myEmp=emps.find(function(e){return e.id===user.eid;});
+ supabase.from("open_shifts").insert({
+  property_id: user.property_id, work_date: workDate, shift_id: shiftId,
+  role: openForm.role || null, note: sanitize(openForm.note) || null,
+  posted_name: (myEmp&&myEmp.name)||user.name,
+ }).select().single().then(function(res){
+  if (res.error || !res.data) { console.error("post open shift failed:", res.error); showT("Couldn't post — check connection","error"); return; }
+  setOpens(function(p){ return p.concat([mapOpenShift(res.data)]).sort(function(a,b){ return a.workDate < b.workDate ? -1 : a.workDate > b.workDate ? 1 : 0; }); });
+  setOpenForm({day:DAYS[0],shift:"",role:"",note:""});
+  showT("Open shift posted");
+ });
  }
  function claimShift(id) {
- var myEmp=emps.find(function(e){return e.id===user.eid;});
- setOpens(function(p){return p.map(function(s){return s.id===id?{...s,claimedBy:user.eid,claimedName:(myEmp&&myEmp.name)||user.name,status:"pending_approval"}:s;});});
- showT("Shift claimed - awaiting approval");
+ supabase.rpc("claim_open_shift", { p_id: id }).then(function(res){
+  if (res.error || !res.data) {
+   console.error("claim failed:", res.error);
+   var taken = res.error && /taken/.test(res.error.message||"");
+   showT(taken ? "Someone already claimed that shift" : "Couldn't claim — check connection","error");
+   if (taken) setOpens(function(p){ return p.filter(function(o){ return o.id!==id; }); });
+   return;
+  }
+  var row = mapOpenShift(res.data);
+  setOpens(function(p){return p.map(function(o){return o.id===id?row:o;});});
+  showT("Shift claimed - awaiting approval");
+ });
  }
  function approveOpen(s) {
- setSched(function(p){ var n={...p}; var w={...(n[weekOff]||{})}; w[s.day]={...(w[s.day]||{})}; w[s.day][s.claimedBy]=s.shift; n[weekOff]=w; return n; });
- setOpens(function(p){return p.map(function(o){return o.id===s.id?{...o,status:"filled"}:o;});});
- showT("Open shift approved");
- syncScheduleCell(weekOff, s.day, s.claimedBy, s.shift);
- markWeekEdited();
+ supabase.from("open_shifts").update({ status:"filled" }).eq("id", s.id).eq("status","pending_approval").select("id").then(function(res){
+  if (res.error || !res.data || !res.data.length) { console.error("approve open shift failed:", res.error); showT("Couldn't approve — refresh and try again","error"); return; }
+  applyLocalScheduleChange(s.workDate, null, s.claimedBy, s.shift);
+  syncScheduleCellByDate(s.workDate, s.claimedBy, s.shift);
+  markWeekEdited(s.workDate);
+  setOpens(function(p){return p.map(function(o){return o.id===s.id?{...o,status:"filled"}:o;});});
+  showT("Open shift approved");
+ });
  }
- function declineOpen(id) { setOpens(function(p){return p.map(function(s){return s.id===id?{...s,status:"open",claimedBy:null,claimedName:""}:s;});}); }
- function removeOpen(id) { setOpens(function(p){return p.filter(function(s){return s.id!==id;});}); showT("Open shift removed","info"); }
+ function declineOpen(id) {
+ supabase.from("open_shifts").update({ status:"open", claimed_by:null, claimed_name:null }).eq("id", id).then(function(res){
+  if (res.error) { console.error("decline open shift failed:", res.error); showT("Couldn't decline — check connection","error"); return; }
+  setOpens(function(p){return p.map(function(s){return s.id===id?{...s,status:"open",claimedBy:null,claimedName:""}:s;});});
+ });
+ }
+ function removeOpen(id) {
+ supabase.from("open_shifts").delete().eq("id", id).then(function(res){
+  if (res.error) { console.error("remove open shift failed:", res.error); showT("Couldn't remove — check connection","error"); return; }
+  setOpens(function(p){return p.filter(function(s){return s.id!==id;});}); showT("Open shift removed","info");
+ });
+ }
+ // Admin filled it from "See who's free" (assignShift already wrote the schedule).
+ function fillOpen(s, e) {
+ setOpens(function(p){return p.map(function(o){return o.id===s.id?{...o,status:"filled",claimedBy:e.id,claimedName:e.name}:o;});});
+ supabase.from("open_shifts").update({ status:"filled", claimed_by:e.id, claimed_name:e.name }).eq("id", s.id).then(function(res){
+  if (res.error) { console.error("fill open shift failed:", res.error); showT("Assigned, but the open shift didn't update — check connection","error"); }
+ });
+ }
 
  async function submitCallin() {
  var myEmp=emps.find(function(e){return e.id===user.eid;});
@@ -3118,7 +3188,7 @@ function App() {
  <div style={{ display:"grid", gridTemplateColumns:"360px 1fr", gap:20, marginBottom:24 }} className="two-col">
  <div style={CARD}>
  <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>Post an Open Shift</div>
- <div style={{ marginBottom:11 }}><label style={LBL}>Day</label><select value={openForm.day} onChange={function(e){setOpenForm(function(p){return {...p,day:e.target.value};});}} style={INP}>{orderedDays().map(function(d){return <option key={d}>{d}</option>;})}</select></div>
+ <div style={{ marginBottom:11 }}><label style={LBL}>Day · {weekLabel}</label><select value={openForm.day} onChange={function(e){setOpenForm(function(p){return {...p,day:e.target.value};});}} style={INP}>{orderedDays().map(function(d){return <option key={d}>{d}</option>;})}</select></div>
  <div style={{ marginBottom:11 }}><label style={LBL}>Shift</label><select value={openForm.shift} onChange={function(e){setOpenForm(function(p){return {...p,shift:e.target.value};});}} style={INP}>{shiftDefs.map(function(s){return <option key={s.id} value={s.id}>{s.label} ({to12(s.start)}-{to12(s.end)})</option>;})}</select></div>
  <div style={{ marginBottom:11 }}><label style={LBL}>Role needed</label><input value={openForm.role} onChange={function(e){setOpenForm(function(p){return {...p,role:e.target.value};});}} placeholder="Any role" list="role-list2" style={INP} /><datalist id="role-list2">{indRoles.map(function(r){return <option key={r} value={r} />;})}</datalist></div>
  <div style={{ marginBottom:16 }}><label style={LBL}>Note</label><input value={openForm.note} onChange={function(e){setOpenForm(function(p){return {...p,note:e.target.value};});}} placeholder="Details for employees" style={INP} /></div>
@@ -3130,7 +3200,8 @@ function App() {
  <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
  {opens.map(function(s){
  var isOpen = s.status === "open";
- var panelOpen = availPanel === s.id;
+ var inView = s.workDate >= weekStartIso && s.workDate <= weekEndIso;
+ var panelOpen = inView && availPanel === s.id;
  var availEmps = emps.filter(function(e){ return e.avail.indexOf(s.day) >= 0; });
  var alreadyScheduled = availEmps.filter(function(e){ return weekSched[s.day] && weekSched[s.day][e.id]; });
  var freeEmps = availEmps.filter(function(e){ return !weekSched[s.day] || !weekSched[s.day][e.id]; });
@@ -3139,7 +3210,7 @@ function App() {
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:9 }}>
  <div>
  <div style={{ display:"flex", gap:6, marginBottom:5, flexWrap:"wrap" }}>
- <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:600 }}>{s.day}</span>
+ <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:600 }}>{openDateLabel(s)}</span>
  <span style={{ padding:"3px 9px", borderRadius:20, background:shiftColor(s.shift).bg, color:shiftColor(s.shift).text, fontSize:12, fontWeight:600 }}>{s.shift}</span>
  {s.role && <span style={{ padding:"3px 9px", borderRadius:20, background:T.bg, color:T.muted, fontSize:12 }}>{s.role}</span>}
  </div>
@@ -3154,9 +3225,11 @@ function App() {
  </>
  ) : isOpen ? (
  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
- <button onClick={function(){ setAvailPanel(panelOpen ? null : s.id); }} style={{ padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:600, background:panelOpen?T.accent:T.accentL, color:panelOpen?"white":T.accent, border:"1px solid "+(panelOpen?T.accent:"var(--xF0A898)"), cursor:"pointer", transition:"all .15s" }}>
+ {!inView ? (
+ <button onClick={function(){ setWeekOff(weekOffForDate(s.workDate)); setAvailPanel(s.id); }} style={{ ...GBTN, padding:"4px 12px", fontSize:11 }}>Go to that week</button>
+ ) : <button onClick={function(){ setAvailPanel(panelOpen ? null : s.id); }} style={{ padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:600, background:panelOpen?T.accent:T.accentL, color:panelOpen?"white":T.accent, border:"1px solid "+(panelOpen?T.accent:"var(--xF0A898)"), cursor:"pointer", transition:"all .15s" }}>
  {panelOpen ? "Hide" : "Open - See who's free"}
- </button>
+ </button>}
  <button onClick={function(){removeOpen(s.id);setAvailPanel(null);}} style={{ ...GBTN, padding:"4px 10px", fontSize:12, color:T.danger, borderColor:"var(--xFCA5A5)" }}>Remove</button>
  </div>
  ) : (
@@ -3192,7 +3265,7 @@ function App() {
  </div>
  <button onClick={function(){
  assignShift(s.day, e.id, s.shift);
- setOpens(function(p){return p.map(function(o){return o.id===s.id?{...o,status:"filled",claimedBy:e.id,claimedName:e.name}:o;});});
+ fillOpen(s, e);
  setAvailPanel(null);
  showT(e.name+" assigned to "+s.shift+" on "+s.day);
  }} style={{ ...BTN, padding:"5px 13px", fontSize:12 }}>Assign</button>
@@ -3218,7 +3291,7 @@ function App() {
  </div>
  <button onClick={function(){
  assignShift(s.day, e.id, s.shift);
- setOpens(function(p){return p.map(function(o){return o.id===s.id?{...o,status:"filled",claimedBy:e.id,claimedName:e.name}:o;});});
+ fillOpen(s, e);
  setAvailPanel(null);
  showT(e.name+" assigned (overrides existing shift)","info");
  }} style={{ ...GBTN, padding:"5px 13px", fontSize:12, color:T.warning, borderColor:"var(--xFDE68A)" }}>Override</button>
@@ -3828,7 +3901,7 @@ function App() {
  return (
  <div key={s.id} style={{ ...CARD, border:"2px solid "+T.accentL }}>
  <div style={{ display:"flex", gap:6, marginBottom:9, flexWrap:"wrap" }}>
- <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:600 }}>{s.day}</span>
+ <span style={{ padding:"3px 9px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:12, fontWeight:600 }}>{openDateLabel(s)}</span>
  <span style={{ padding:"3px 9px", borderRadius:20, background:shiftColor(s.shift).bg, color:shiftColor(s.shift).text, fontSize:12, fontWeight:600 }}>{s.shift}</span>
  </div>
  {s.role && <div style={{ fontSize:12, color:T.muted, marginBottom:5 }}>Role: {s.role}</div>}
@@ -3848,7 +3921,7 @@ function App() {
  <div key={s.id} style={CARD}>
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
  <div style={{ display:"flex", gap:6 }}>
- <span style={{ padding:"2px 8px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:11 }}>{s.day}</span>
+ <span style={{ padding:"2px 8px", borderRadius:20, background:T.accentL, color:T.accent, fontSize:11 }}>{openDateLabel(s)}</span>
  <span style={{ padding:"2px 8px", borderRadius:20, background:shiftColor(s.shift).bg, color:shiftColor(s.shift).text, fontSize:11 }}>{s.shift}</span>
  </div>
  <Badge status={s.status==="filled"?"approved":"pending"} />
