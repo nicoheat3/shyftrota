@@ -1503,16 +1503,29 @@ function App() {
  }
  // A posted week that changes stays visible, but the admin gets a nudge to
  // tell the team. Only writes the flag once per round of edits.
- function markWeekEdited() {
-  if (!isPublished || editedSince) return;
+ // Pass a date ("2026-11-12") to flag the week that date falls in; no
+ // argument flags the week on screen. Approved swaps can land in a week
+ // that isn't loaded, so the database update only touches a row that is
+ // actually posted and not already flagged.
+ function markWeekEdited(dateStr) {
+  var key = weekKey;
+  if (dateStr) {
+   var d = new Date(dateStr+"T00:00:00");
+   if (isNaN(d.getTime())) return;
+   d.setDate(d.getDate() - ((d.getDay() - APP_WEEK_START_DOW + 7) % 7));
+   key = isoDate(d);
+  }
+  var known = publishMap[key];
+  if (known && known.editedSince) return;
+  if (!dateStr && !known) return;
   var now = new Date().toISOString();
   setPublishMap(function(p){
    var n={...p};
-   if (n[weekKey]) n[weekKey] = { publishedAt:n[weekKey].publishedAt, editedSince:now };
+   if (n[key] && !n[key].editedSince) n[key] = { publishedAt:n[key].publishedAt, editedSince:now };
    return n;
   });
   supabase.from("schedule_publish").update({ edited_since: now })
-   .eq("property_id", user.property_id).eq("week_start", weekKey)
+   .eq("property_id", user.property_id).eq("week_start", key).is("edited_since", null)
    .then(function(res){ if (res.error) console.error("mark edited failed:", res.error); });
  }
  function saveWeekStart(dow) {
@@ -1837,6 +1850,7 @@ function App() {
   showT("Swap approved"); writeAudit("SWAP_APPROVED","swap approved",user.id);
   syncScheduleCellDeleteByDate(dateStr, from.id);
   syncScheduleCellByDate(dateStr, to.id, req.shift);
+  markWeekEdited(dateStr);
   sendNotification({ type:"request_decided", kind:"swap", id:req.id });
  });
  }
@@ -1901,6 +1915,7 @@ function App() {
  setOpens(function(p){return p.map(function(o){return o.id===s.id?{...o,status:"filled"}:o;});});
  showT("Open shift approved");
  syncScheduleCell(weekOff, s.day, s.claimedBy, s.shift);
+ markWeekEdited();
  }
  function declineOpen(id) { setOpens(function(p){return p.map(function(s){return s.id===id?{...s,status:"open",claimedBy:null,claimedName:""}:s;});}); }
  function removeOpen(id) { setOpens(function(p){return p.filter(function(s){return s.id!==id;});}); showT("Open shift removed","info"); }
