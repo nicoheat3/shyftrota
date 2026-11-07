@@ -204,6 +204,24 @@ section{padding:88px 0;border-top:1px solid var(--line2)}
 .incl li svg{flex-shrink:0;margin-top:3px;color:var(--accent)}
 @media (max-width:820px){.price{grid-template-columns:minmax(0,1fr)}.price-l{border-right:none;border-bottom:1px solid var(--line)}.incl{grid-template-columns:minmax(0,1fr)}}
 
+.tiers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:44px}
+.tier{border:1px solid var(--line);border-radius:12px;padding:30px 28px;display:flex;flex-direction:column;background:var(--s1)}
+.tier.mid{border-color:#5A2A20}
+.tier h3{margin:0;font-size:18px;font-weight:700}
+.tier .who2{color:var(--muted);font-size:14px;margin:6px 0 0;min-height:42px}
+.tier .amt{margin-top:18px}
+.tier .amt .big{font-size:52px}
+.tier .cap{font-family:var(--mono);font-size:12px;color:var(--faint);margin-top:8px;letter-spacing:.04em}
+.tier ul{list-style:none;margin:22px 0 26px;padding:0;display:flex;flex-direction:column;gap:10px;flex:1}
+.tier li{display:flex;gap:10px;font-size:15px}
+.tier li svg{flex-shrink:0;margin-top:3px;color:var(--accent)}
+.tier .tag{font-family:var(--mono);font-size:11px;letter-spacing:.08em;color:var(--accent);margin-bottom:10px}
+.multi{display:flex;flex-wrap:wrap;align-items:center;gap:10px 28px;margin-top:16px;border:1px solid var(--line);border-radius:12px;padding:22px 28px}
+.multi b{font-weight:700}
+.multi .rungs{display:flex;flex-wrap:wrap;gap:6px 22px;font-family:var(--mono);font-size:14px;color:var(--muted);flex:1}
+.multi .rungs span strong{color:var(--text);font-weight:500}
+@media (max-width:900px){.tiers{grid-template-columns:minmax(0,1fr)}.tier .who2{min-height:0}}
+
 /* faq */
 .faq{margin-top:36px;border-top:1px solid var(--line);max-width:860px}
 .faq details{border-bottom:1px solid var(--line)}
@@ -285,7 +303,7 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
         <a class="btn btn-primary" href="#pilot">Request a pilot <span class="arr">&rarr;</span></a>
         <a class="btn btn-ghost" href="#how">See how it works</a>
       </div>
-      <div class="hero-meta" data-rv="fade" style="--i:6"><span>$600 per property, per month</span><span>Unlimited employees</span><span>Nothing to install</span></div>
+      <div class="hero-meta" data-rv="fade" style="--i:6"><span>Free for up to 10 employees</span><span>Unlimited employees</span><span>Nothing to install</span></div>
     </div>
 
     <figure class="frame" data-rv style="margin:0" aria-label="ShyftRota week schedule">
@@ -400,7 +418,7 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
     </div>
     <ul class="list" aria-label="How ShyftRota is different" data-rv style="--i:1">
       <li><b>Built on the floor</b><span>Written between shifts, and running every week at the San Diego hotel where I work.</span></li>
-      <li><b>Flat price</b><span>One price per property. Add your whole team without counting seats.</span></li>
+      <li><b>Flat price</b><span>Tiers by team size, not per seat. Add your whole team without counting.</span></li>
       <li><b>Set up in a day</b><span>No implementation project. We load your team and shifts with you.</span></li>
       <li><b>No app store</b><span>Works in the phone's browser. Add it to the home screen.</span></li>
     </ul>
@@ -411,31 +429,40 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
   <div class="wrap">
     <div class="sec-head">
       <div class="eyebrow" data-rv="left">Pricing</div>
-      <h2 data-rv style="--i:1">One price per property.</h2>
-      <p data-rv style="--i:2">Everyone on the schedule is included. No per-employee fees.</p>
+      <h2 data-rv style="--i:1">Flat pricing. No per-seat math.</h2>
+      <p data-rv style="--i:2">Pick a tier by team size. Everyone on it is included, with no per-employee fees.</p>
     </div>
-    <div class="price" data-rv>
-      <div class="price-l">
-        <div style="font-weight:700;font-size:18px">ShyftRota</div>
-        <div class="amt"><span class="big">$600</span><span class="per">per property / month</span></div>
-        <p style="color:var(--muted);margin:16px 0 26px">Unlimited employees and departments. Managers and staff included.</p>
+    <div class="tiers" data-rv>
+      <div class="tier">
+        <h3>Starter</h3>
+        <p class="who2">For small teams getting off paper and spreadsheets.</p>
+        <div class="amt"><span class="big">$0</span><span class="per">/ month</span></div>
+        <div class="cap">UP TO 10 EMPLOYEES</div>
+        <ul><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Weekly schedule grid</li><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Time off and shift swaps</li><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Team chat</li><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Email and phone alerts</li><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Payroll CSV export</li></ul>
+        <a class="btn btn-ghost" href="#pilot" style="width:100%">Get set up</a>
+      </div>
+      <div class="tier mid">
+        <div class="tag">FOR MOST PROPERTIES</div>
+        <h3>Pro</h3>
+        <p class="who2">For operations that need the full picture, not just a grid.</p>
+        <div class="amt"><span class="big">$69</span><span class="per">/ month</span></div>
+        <div class="cap">UP TO 50 EMPLOYEES</div>
+        <ul><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Everything in Starter</li><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Auto-generate the week</li><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Volume-based staffing</li><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Short-shift and overtime alerts</li><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Time clock</li><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Departments and roles</li><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Draft, then post to the team</li></ul>
         <a class="btn btn-primary" href="#pilot" style="width:100%">Request a pilot</a>
-        <p style="color:var(--faint);font-size:13px;margin:14px 0 0">Running several properties? <a href="#pilot">Tell us about your portfolio.</a></p>
       </div>
-      <div class="price-r">
-        <ul class="incl">
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Auto-fill schedules</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Short-shift alerts</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Volume-based staffing</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Time off and swaps</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Time clock</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Payroll CSV export</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Email notifications</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Team chat</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Departments and roles</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Set up with the founder</li>
-        </ul>
+      <div class="tier">
+        <h3>Property</h3>
+        <p class="who2">For larger teams that want setup done for them.</p>
+        <div class="amt"><span class="big">$149</span><span class="per">/ month</span></div>
+        <div class="cap">UNLIMITED EMPLOYEES</div>
+        <ul><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Everything in Pro</li><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Unlimited employees and departments</li><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Set up with the founder</li><li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>Priority support</li></ul>
+        <a class="btn btn-ghost" href="#pilot" style="width:100%">Talk to us</a>
       </div>
+    </div>
+    <div class="multi" data-rv>
+      <b>Several properties?</b>
+      <div class="rungs"><span><strong>$199</strong>/mo up to 5</span><span><strong>$299</strong>/mo up to 10</span><span><strong>$399</strong>/mo unlimited</span></div>
+      <a href="#pilot">Tell us about your portfolio →</a>
     </div>
   </div>
 </section>
