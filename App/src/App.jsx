@@ -1820,12 +1820,18 @@ function App() {
   setAdminPtoOpen(false);
   showT("Time off added — "+(emp?emp.name.split(" ")[0]:"they")+" won't be scheduled those days");
  }
+ // Approving moves the shift, so it can only happen once per request.
+ // Approved swaps can't be reopened (that left the schedule swapped);
+ // the manager edits the schedule directly if a swap needs undoing.
+ var approvingSwaps = {};
  function approveSwap(req) {
+ if (req.status !== "pending" || approvingSwaps[req.id]) return;
+ approvingSwaps[req.id] = true;
  var to=emps.find(function(e){return e.id===req.toId;}); var from=emps.find(function(e){return e.id===req.fromId;});
  if(!to||!from) { showT("Couldn't find one of the employees on this swap","error"); return; }
  var dateStr = req.workDate || dayToISODate(weekOff, req.day);
  saveReqStatus("swap_requests", req.id, "approved").then(function(ok){
-  if (!ok) return;
+  if (!ok) { delete approvingSwaps[req.id]; return; }
   applyLocalScheduleChange(dateStr, from.id, to.id, req.shift);
   setSwaps(function(p){return p.map(function(r){return r.id===req.id?{...r,status:"approved"}:r;});});
   showT("Swap approved"); writeAudit("SWAP_APPROVED","swap approved",user.id);
@@ -3327,7 +3333,7 @@ function App() {
  ) : (
  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
  <Badge status={req.status} />
- <button onClick={function(){setSwapStatus(req.id,"pending");}} style={{ fontSize:11, color:T.muted, background:"none", border:"1px solid "+T.border, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Reopen</button>
+ {req.status!=="approved" && <button onClick={function(){setSwapStatus(req.id,"pending");}} style={{ fontSize:11, color:T.muted, background:"none", border:"1px solid "+T.border, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>Reopen</button>}
  </div>
  )}
  </div>
