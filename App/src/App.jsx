@@ -3574,7 +3574,7 @@ function App() {
    var shiftStart = new Date(); shiftStart.setHours(sp[0], sp[1], 0, 0);
    var minsUntil = Math.round((shiftStart - nowT) / 60000);
    var lastP = timeclock.slice().reverse().find(function(p){ return p.eid===user.eid && new Date(p.ts).toDateString()===new Date().toDateString(); });
-   var isClockedIn = lastP && lastP.type==="in";
+   var isClockedIn = lastP && (lastP.type==="in" || lastP.type==="lunch_in" || lastP.type==="lunch_out");
    if (isClockedIn) { reminderMsg = "You are clocked in. Have a great shift!"; reminderType = "success"; }
   else if (minsUntil > 0 && minsUntil <= 60) { reminderMsg = "Your " + (shiftDef?shiftDef.label:todayShift) + " shift (" + to12(effStart) + ") starts in " + minsUntil + " min. Remember to clock in!"; reminderType = "warning"; }
   else if (minsUntil > 60 && minsUntil <= 180) { reminderMsg = "Heads up — your " + (shiftDef?shiftDef.label:todayShift) + " shift starts at " + to12(effStart) + " (" + Math.round(minsUntil/60*10)/10 + " hrs away)."; reminderType = "info"; }
@@ -3986,7 +3986,12 @@ function App() {
               var todayDay = dayNames[new Date().getDay()];
               var todayShift = weekSched[todayDay] && weekSched[todayDay][user.eid] ? weekSched[todayDay][user.eid] : null;
               var lastPunch = timeclock.slice().reverse().find(function(p){ return p.eid===user.eid; });
-              var isClockedIn = lastPunch && lastPunch.type==="in";
+              // On the clock = last punch is "in" or "lunch_in". On break = "lunch_out" (still on shift, not working).
+              var onBreak = !!lastPunch && lastPunch.type==="lunch_out";
+              var isClockedIn = !!lastPunch && (lastPunch.type==="in" || lastPunch.type==="lunch_in");
+              var onShift = isClockedIn || onBreak;
+              var shiftStartPunch = null;
+              if (onShift) { for (var spi = timeclock.length-1; spi >= 0; spi--) { var spp = timeclock[spi]; if (spp.eid!==user.eid) continue; if (spp.type==="out") break; if (spp.type==="in") { shiftStartPunch = spp; break; } } }
               var todayPunches = timeclock.filter(function(p){ return p.eid===user.eid && new Date(p.ts).toDateString()===new Date().toDateString(); });
               async function clockIn()  { var realId = await syncPunchInsert(user.eid, "in", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"in",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked in! Have a great shift."); }
               async function clockOut() { var realId = await syncPunchInsert(user.eid, "out", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"out",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked out! See you next time."); }
@@ -4009,7 +4014,7 @@ function App() {
                     <div style={{ fontFamily:MONO, fontSize:60, fontWeight:500, letterSpacing:"-0.06em", lineHeight:1, color:T.text, marginBottom:8 }}>{hr}:{mn}<span style={{ fontSize:18, letterSpacing:0, color:T.faint, marginLeft:6 }}>{ap}</span></div>
                     <div style={{ fontSize:12, color:T.faint, marginBottom:18 }}>{now.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</div>
                     {isClockedIn && lastPunch && (function(){
-                      var since = new Date(lastPunch.ts).getTime(); var worked = Math.max(0, Math.round((Date.now() - since) / 60000));
+                      var since = new Date((shiftStartPunch||lastPunch).ts).getTime(); var worked = Math.max(0, Math.round((Date.now() - since) / 60000));
                       var tt = todayShift ? shiftTimesFor(todayDay, user.eid, todayShift) : null;
                       var ta = tt ? hrsOf(tt.start) : null, tb = tt ? hrsOf(tt.end) : null; if (ta !== null && tb !== null && tb <= ta) tb += 24;
                       var total = (ta !== null && tb !== null) ? (tb - ta) * 60 : 480;
@@ -4020,20 +4025,21 @@ function App() {
                         </div>
                       );
                     })()}
-                    <div style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"5px 12px", borderRadius:20, background:isClockedIn?T.successL:T.bg, border:"1px solid "+(isClockedIn?"var(--x6EE7B7)":T.border), marginBottom:18 }}>
-                      <div style={{ width:8, height:8, borderRadius:"50%", background:isClockedIn?T.success:T.faint, animation:isClockedIn?"pulse 2s infinite":"none" }} />
-                      <span style={{ fontSize:12, fontWeight:600, color:isClockedIn?T.success:T.faint }}>{isClockedIn?"Clocked In":"Not Clocked In"}</span>
+                    <div style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"5px 12px", borderRadius:20, background:isClockedIn?T.successL:onBreak?"var(--xFEF9C3)":T.bg, border:"1px solid "+(isClockedIn?"var(--x6EE7B7)":onBreak?"var(--xFDE047)":T.border), marginBottom:18 }}>
+                      <div style={{ width:8, height:8, borderRadius:"50%", background:isClockedIn?T.success:onBreak?"var(--x854D0E)":T.faint, animation:isClockedIn?"pulse 2s infinite":"none" }} />
+                      <span style={{ fontSize:12, fontWeight:600, color:isClockedIn?T.success:onBreak?"var(--x854D0E)":T.faint }}>{isClockedIn?"Clocked In":onBreak?"On Lunch":"Not Clocked In"}</span>
                     </div>
-                    {!isClockedIn
+                    {onBreak
+                      ? <button onClick={async function(){ var realId = await syncPunchInsert(user.eid, "lunch_in", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_in",ts:Date.now(),shift:todayShift||""}]); }); showT("Back from lunch!"); }}
+                          style={{ ...BTN, width:"100%", padding:"14px", fontSize:15, fontWeight:700, background:"var(--btnLunchIn)", color:"var(--btnOn)", borderRadius:12 }}>Back From Lunch</button>
+                      : !isClockedIn
                       ? <button onClick={clockIn}  style={{ ...BTN, width:"100%", padding:"14px", fontSize:15, fontWeight:700, background:"var(--btnIn)", color:"var(--btnOn)", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="login" size={17} />Clock In</button>
                       : (
                         <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
                           <button onClick={clockOut} style={{ ...BTN, width:"100%", padding:"13px", fontSize:15, fontWeight:700, background:"var(--btnOut)", color:"var(--btnOn)", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="logout" size={17} />Clock Out</button>
-                          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
+                          <div style={{ display:"grid", gridTemplateColumns:"1fr", gap:9 }}>
                             <button onClick={async function(){ var realId = await syncPunchInsert(user.eid, "lunch_out", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_out",ts:Date.now(),shift:todayShift||""}]); }); showT("Lunch started - enjoy your break!"); }}
                               style={{ ...BTN, padding:"10px", fontSize:13, fontWeight:600, background:"var(--btnLunchOut)", color:"var(--btnOn)", borderRadius:10 }}>Lunch Out</button>
-                            <button onClick={async function(){ var realId = await syncPunchInsert(user.eid, "lunch_in", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_in",ts:Date.now(),shift:todayShift||""}]); }); showT("Back from lunch!"); }}
-                              style={{ ...BTN, padding:"10px", fontSize:13, fontWeight:600, background:"var(--btnLunchIn)", color:"var(--btnOn)", borderRadius:10 }}>Lunch In</button>
                           </div>
                         </div>
                       )}
@@ -4063,10 +4069,13 @@ function App() {
             {tab==="timeclock" && isAdmin && (function(){
               var clockedInNow = emps.filter(function(e){
                 var last = timeclock.slice().reverse().find(function(p){ return p.eid===e.id; });
-                return last && last.type==="in";
+                return last && (last.type==="in" || last.type==="lunch_in" || last.type==="lunch_out");
               }).map(function(e){
-                var last = timeclock.slice().reverse().find(function(p){ return p.eid===e.id; });
-                return {emp:e, since:last.ts};
+                var mine = timeclock.filter(function(p){ return p.eid===e.id; });
+                var last = mine[mine.length-1];
+                var start = last;
+                for (var k = mine.length-1; k >= 0; k--) { if (mine[k].type==="out") break; if (mine[k].type==="in") { start = mine[k]; break; } }
+                return {emp:e, since:start.ts, onBreak:last.type==="lunch_out"};
               });
               var summary = {};
               timeclock.forEach(function(p){
@@ -4214,7 +4223,7 @@ function App() {
                               <div style={{ width:32, height:32, borderRadius:"50%", background:colorFor(item.emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:"white" }}>{initials(item.emp.name)}</div>
                               <div>
                                 <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{item.emp.name}</div>
-                                <div style={{ fontSize:11, color:T.muted }}>{item.emp.role}</div>
+                                <div style={{ fontSize:11, color:item.onBreak?"var(--x854D0E)":T.muted, fontWeight:item.onBreak?600:400 }}>{item.onBreak ? "On lunch" : item.emp.role}</div>
                               </div>
                             </div>
                             <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:10 }}>
@@ -4237,12 +4246,12 @@ function App() {
                     <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
                       {Object.values(summary).map(function(s){
                         var emp = emps.find(function(e){ return e.id===s.eid; });
-                        // Pair each clock-in with the next clock-out. Extra "out"
-                        // punches with no matching "in" are ignored.
+                        // Pair each clock-in with the next clock-out; lunch pauses the clock.
+                        // Extra "out" punches with no matching "in" are ignored.
                         var ms = 0, openIn = null;
                         s.records.forEach(function(p){
-                          if (p.type==="in") openIn = p.ts;
-                          else if (p.type==="out" && openIn!==null) { ms += p.ts - openIn; openIn = null; }
+                          if (p.type==="in" || p.type==="lunch_in") { if (p.type==="in" || openIn===null) openIn = p.ts; }
+                          else if ((p.type==="out" || p.type==="lunch_out") && openIn!==null) { ms += p.ts - openIn; openIn = null; }
                         });
                         return (
                           <div key={s.eid} style={CARD}>
