@@ -2515,7 +2515,8 @@ function App() {
  .sr-check path { stroke-dasharray:16; stroke-dashoffset:16; animation:srDraw 260ms cubic-bezier(0.32,0.72,0,1) 380ms forwards; }
  @keyframes srDraw { to{stroke-dashoffset:0} }
  .sr-posted-pop { animation:srPosted 600ms cubic-bezier(0.34,1.56,0.64,1); }
- @keyframes srPosted { 0%{transform:scale(1)} 40%{transform:scale(1.015)} 100%{transform:scale(1)} }
+ .sr-posted-pop { display:inline-block; }
+ @keyframes srPosted { 0%{transform:scale(1)} 40%{transform:scale(1.08)} 100%{transform:scale(1)} }
  @media (prefers-reduced-motion: reduce) { ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation:none !important; } .main-pad > div > *, .sr-backdrop, .sr-sheet, .sr-up, .sr-check, .sr-check circle, .sr-check path, .sr-posted-pop { animation:none !important; stroke-dashoffset:0 !important; } }
  .hv:hover { background:var(--xF1F5F9) !important; cursor:pointer; }
  .hv2:hover { background:var(--xFDF0ED) !important; cursor:pointer; }

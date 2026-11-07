@@ -53,10 +53,10 @@ export function PublishBar({ publishedAt, editedSince, onPublish, onUnpublish, o
     : "Your team can see this week. Posted " + fmtWhen(publishedAt) + ".";
 
   return (
-    <div className={celebrate ? "sr-posted-pop" : undefined} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap",
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap",
                   background:tone.bg, border:"1px solid "+tone.border, borderRadius:10, padding:"12px 16px", marginBottom:14 }}>
       <div style={{ minWidth:0 }}>
-        <div style={{ fontSize:13, fontWeight:700, color:tone.color }}>
+        <div className={celebrate ? "sr-posted-pop" : undefined} style={{ fontSize:13, fontWeight:700, color:tone.color, transformOrigin:"left center" }}>
           {celebrate && (
             <span className="sr-check" aria-hidden="true">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
