@@ -1831,7 +1831,8 @@ function App() {
   writeAudit("PTO_ADDED_BY_ADMIN", "employee="+eid+" "+adminPto.start+" to "+end, user.id);
   setAdminPto({ eid:"", type:PTO_TYPES[0], start:"", end:"", note:"" });
   setAdminPtoOpen(false);
-  showT("Time off added — "+(emp?emp.name.split(" ")[0]:"they")+" won't be scheduled those days");
+  var removed = await clearShiftsForTimeOff(eid, adminPto.start, end);
+  showT("Time off added — "+(emp?emp.name.split(" ")[0]:"they")+" won't be scheduled those days"+shiftsRemovedMsg(removed));
  }
  // Approving moves the shift, so it can only happen once per request.
  // Approved swaps can't be reopened (that left the schedule swapped);
@@ -1891,11 +1892,34 @@ function App() {
  setPtoDate(null); setPtoEnd(null); setPtoNote("");
  showT("Time-off request submitted");
  }
+ // Approved time off means they aren't working: take them off any shift
+ // already scheduled from today through the end of the time off.
+ // Past days are left alone. Resolves to how many shifts were removed.
+ function clearShiftsForTimeOff(eid, start, end) {
+  var today = isoDate(new Date());
+  var from = start > today ? start : today;
+  var to = end || start;
+  if (!eid || !from || to < from) return Promise.resolve(0);
+  return supabase.from("schedule_entries").delete()
+   .eq("property_id", user.property_id).eq("employee_id", eid)
+   .gte("work_date", from).lte("work_date", to)
+   .select("work_date")
+   .then(function(res){
+    if (res.error) { console.error("clear shifts for time off failed:", res.error); showT("Time off saved, but their shifts on those days weren't removed","error"); return 0; }
+    var dates = (res.data||[]).map(function(x){ return x.work_date; });
+    dates.forEach(function(d){ applyLocalScheduleChange(d, eid, null, null); markWeekEdited(d); });
+    return dates.length;
+   });
+ }
+ function shiftsRemovedMsg(n) { return n > 0 ? " · removed from "+n+" scheduled shift"+(n===1?"":"s") : ""; }
  function setPTOStatus(id, status) {
+  var req = ptos.find(function(r){ return r.id===id; });
   saveReqStatus("pto_requests", id, status).then(function(ok){
    if (!ok) return;
    setPtos(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});});
-   showT("Time off "+(STATUS_WORD[status]||status)); writeAudit("PTO_STATUS_CHANGE","status="+status,user.id);
+   var cleared = (status==="approved" && req) ? clearShiftsForTimeOff(req.eid, req.startDate, req.endDate) : Promise.resolve(0);
+   cleared.then(function(n){ showT("Time off "+(STATUS_WORD[status]||status)+shiftsRemovedMsg(n)); });
+   writeAudit("PTO_STATUS_CHANGE","status="+status,user.id);
    if (status !== "pending") sendNotification({ type:"request_decided", kind:"pto", id:id });
   });
  }
