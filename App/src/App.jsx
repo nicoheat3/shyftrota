@@ -96,7 +96,17 @@ function writeAudit(action, detail, userId) {
     if (log.length > 500) log = log.slice(-500); // keep last 500 entries
     localStorage.setItem("sr_audit", JSON.stringify(log));
   } catch(e) {}
+  // Shared copy in Supabase. The database fills in who and which property
+  // from the session; "system" events have no session, so they stay local.
+  if (userId && userId !== "system") {
+    try {
+      supabase.rpc("log_audit", { p_action: action, p_detail: detail == null ? null : String(detail) })
+        .then(function(res){ if (res.error) console.error("audit log save failed:", res.error); });
+    } catch(e) {}
+  }
 }
+function auditDay(iso) { if (!iso) return ""; var d = new Date(iso+"T00:00:00"); return isNaN(d) ? iso : (d.getMonth()+1)+"/"+d.getDate()+"/"+String(d.getFullYear()).slice(2); }
+function auditRange(a, b) { return auditDay(a) + (b && b !== a ? " to "+auditDay(b) : ""); }
 
 // ── 6. localStorage tamper detection ─────────────────
 function verifyStorageIntegrity() {
@@ -352,7 +362,7 @@ function exportCSV(emps, sched) {
  emps.forEach(function(e) {
  var row = [e.name, e.role];
  var h = 0;
- DAYS.forEach(function(d) { var s = (weekSched[d] && weekSched[d][e.id]) || ""; row.push(s); if(s) h+=8; });
+ DAYS.forEach(function(d) { var s = (sched[d] && sched[d][e.id]) || ""; row.push(s); if(s) h+=8; });
  row.push(h);
  rows.push(row);
  });
@@ -694,6 +704,59 @@ function AIChat({ emps, sched, user, volSummary }) {
 function chatDmKey(a, b) {
   var x = Number(a), y = Number(b);
   return "dm:" + Math.min(x, y) + ":" + Math.max(x, y);
+}
+// Admin-only view of the shared audit log (audit_log table, newest first).
+var AUDIT_LABELS = {
+ LOGIN_SUCCESS:"Signed in", SCHEDULE_PUBLISHED:"Posted schedule", SCHEDULE_UNPUBLISHED:"Unposted schedule",
+ PASSWORD_CHANGED:"Changed password", ACCOUNT_DELETED:"Deleted account", PTO_ADDED_BY_ADMIN:"Added time off",
+ SWAP_REQUESTED:"Requested swap", SWAP_APPROVED:"Approved swap", SWAP_DECLINED:"Declined swap", SWAP_REOPENED:"Reopened swap",
+ TIME_OFF_REQUESTED:"Requested time off", TIME_OFF_APPROVED:"Approved time off", TIME_OFF_DECLINED:"Declined time off",
+ TIME_OFF_CANCELLED:"Cancelled time off", TIME_OFF_REOPENED:"Reopened time off", CALL_IN:"Called in",
+ OPEN_SHIFT_POSTED:"Posted open shift", OPEN_SHIFT_CLAIMED:"Claimed open shift", OPEN_SHIFT_APPROVED:"Approved open shift",
+ PUNCH_ADDED:"Added punch", PUNCH_EDITED:"Edited punch", PUNCH_DELETED:"Deleted punch", FORCE_CLOCK_OUT:"Clocked someone out"
+};
+function ActivityLog({ user }) {
+ var [rows, setRows] = useState([]);
+ var [state, setState] = useState("loading"); // loading | ready | error
+ var [limit, setLimit] = useState(50);
+ function load(n) {
+  setState("loading");
+  supabase.from("audit_log").select("*").eq("property_id", user.property_id)
+   .order("created_at", { ascending:false }).limit(n)
+   .then(function(res){
+    if (res.error) { console.error("load audit log failed:", res.error); setState("error"); return; }
+    setRows(res.data || []); setState("ready");
+   });
+ }
+ useEffect(function(){ load(limit); }, [user.property_id, limit]);
+ return (
+  <div style={{ ...CARD, marginTop:14 }}>
+   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, marginBottom:12 }}>
+    <div>
+     <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Activity log</div>
+     <div style={{ fontSize:12, color:T.muted, marginTop:2 }}>Who did what, from every phone. Only admins see this.</div>
+    </div>
+    <button onClick={function(){ load(limit); }} style={{ ...GBTN, fontSize:12, minHeight:36 }}>Refresh</button>
+   </div>
+   {state==="error" && <div style={{ fontSize:13, color:T.danger }}>Couldn't load the log. Check your connection.</div>}
+   {state!=="error" && rows.length===0 && <div style={{ fontSize:13, color:T.faint }}>{state==="loading" ? "Loading…" : "Nothing recorded yet."}</div>}
+   <div style={{ display:"flex", flexDirection:"column" }}>
+    {rows.map(function(r){
+     var when = new Date(r.created_at);
+     return (
+      <div key={r.id} style={{ padding:"9px 0", borderTop:"1px solid "+T.border, fontSize:13, lineHeight:1.45 }}>
+       <div style={{ display:"flex", justifyContent:"space-between", gap:10 }}>
+        <span style={{ color:T.text }}><strong>{r.actor_name || "Someone"}</strong> {(AUDIT_LABELS[r.action] || r.action).toLowerCase()}</span>
+        <span style={{ color:T.faint, fontSize:11, whiteSpace:"nowrap" }}>{when.toLocaleDateString([], { month:"numeric", day:"numeric" })} {when.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}</span>
+       </div>
+       {r.detail && <div style={{ color:T.muted, fontSize:12, marginTop:2, wordBreak:"break-word" }}>{r.detail}</div>}
+      </div>
+     );
+    })}
+   </div>
+   {state==="ready" && rows.length >= limit && <button onClick={function(){ setLimit(limit + 100); }} style={{ ...GBTN, width:"100%", marginTop:10, fontSize:12 }}>Show more</button>}
+  </div>
+ );
 }
 function TeamChat({ user, emps }) {
   var [channel, setChannel] = useState("general");
@@ -1856,7 +1919,7 @@ function App() {
   if (res.error || !res.data) { console.error("admin PTO add failed:", res.error); showT(res.error ? ("Couldn't save — "+res.error.message) : "Couldn't save time off","error"); return; }
   var emp = emps.find(function(e){ return Number(e.id)===eid; });
   setPtos(function(p){ return [{ id:res.data.id, eid:eid, ename:emp?emp.name:"", type:adminPto.type, startDate:adminPto.start, endDate:end, note:sanitize(adminPto.note), status:"approved" }].concat(p); });
-  writeAudit("PTO_ADDED_BY_ADMIN", "employee="+eid+" "+adminPto.start+" to "+end, user.id);
+  writeAudit("PTO_ADDED_BY_ADMIN", (emp?emp.name:"employee "+eid)+" · "+adminPto.type+" · "+auditRange(adminPto.start, end), user.id);
   setAdminPto({ eid:"", type:PTO_TYPES[0], start:"", end:"", note:"" });
   setAdminPtoOpen(false);
   var removed = await clearShiftsForTimeOff(eid, adminPto.start, end);
@@ -1876,7 +1939,7 @@ function App() {
   if (!ok) { delete approvingSwaps[req.id]; return; }
   applyLocalScheduleChange(dateStr, from.id, to.id, req.shift);
   setSwaps(function(p){return p.map(function(r){return r.id===req.id?{...r,status:"approved"}:r;});});
-  showT("Swap approved"); writeAudit("SWAP_APPROVED","swap approved",user.id);
+  showT("Swap approved"); writeAudit("SWAP_APPROVED", from.name+" \u2192 "+to.name+" · "+auditDay(dateStr), user.id);
   syncScheduleCellDeleteByDate(dateStr, from.id);
   syncScheduleCellByDate(dateStr, to.id, req.shift);
   markWeekEdited(dateStr);
@@ -1887,7 +1950,8 @@ function App() {
   saveReqStatus("swap_requests", id, status).then(function(ok){
    if (!ok) return;
    setSwaps(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});});
-   showT("Swap "+(STATUS_WORD[status]||status)); writeAudit("SWAP_STATUS_CHANGE","status="+status,user.id);
+   var sw = swaps.find(function(r){ return r.id===id; });
+   showT("Swap "+(STATUS_WORD[status]||status)); writeAudit("SWAP_"+(status==="rejected"?"DECLINED":status==="pending"?"REOPENED":status.toUpperCase()), sw ? (sw.from+" \u2192 "+sw.to+" · "+auditDay(sw.workDate)) : "swap "+id, user.id);
    if (status !== "pending") sendNotification({ type:"request_decided", kind:"swap", id:id });
   });
  }
@@ -1906,6 +1970,7 @@ function App() {
  setSwaps(function(p){return p.concat([{id:res.data.id,fromId:user.eid,from:(myEmp&&myEmp.name)||user.name,toId:Number(swapForm.toId),to:(toEmp&&toEmp.name)||"",day:swapForm.day,workDate:workDate,shift:theirActualShift,myShift:myActualShift,reason:sanitize(swapForm.reason),status:"pending"}]);});
  setSwapForm({toId:"",day:DAYS[0],shift:"",reason:""});
  showT("Swap request submitted");
+ writeAudit("SWAP_REQUESTED", ((toEmp&&toEmp.name)||"coworker")+" · "+auditDay(workDate), user.id);
  }
 
  async function submitPTO() {
@@ -1919,6 +1984,7 @@ function App() {
  setPtos(function(p){return p.concat([{id:res.data.id,eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:ptoType,startDate:ptoDate,endDate:ptoEnd||ptoDate,note:sanitize(ptoNote),status:"pending"}]);});
  setPtoDate(null); setPtoEnd(null); setPtoNote("");
  showT("Time-off request submitted");
+ writeAudit("TIME_OFF_REQUESTED", ptoType+" · "+auditRange(ptoDate, ptoEnd||ptoDate), user.id);
  }
  // Approved time off means they aren't working: take them off any shift
  // already scheduled from today through the end of the time off.
@@ -1947,7 +2013,7 @@ function App() {
    setPtos(function(p){return p.map(function(r){return r.id===id?{...r,status:status}:r;});});
    var cleared = (status==="approved" && req) ? clearShiftsForTimeOff(req.eid, req.startDate, req.endDate) : Promise.resolve(0);
    cleared.then(function(n){ showT("Time off "+(STATUS_WORD[status]||status)+shiftsRemovedMsg(n)); });
-   writeAudit("PTO_STATUS_CHANGE","status="+status,user.id);
+   writeAudit("TIME_OFF_"+(status==="rejected"?"DECLINED":status==="pending"?"REOPENED":status.toUpperCase()), req ? (empName(req.eid, req.ename)+" · "+req.type+" · "+auditRange(req.startDate, req.endDate)) : "request "+id, user.id);
    if (status !== "pending") sendNotification({ type:"request_decided", kind:"pto", id:id });
   });
  }
@@ -1968,6 +2034,7 @@ function App() {
   setOpens(function(p){ return p.concat([mapOpenShift(res.data)]).sort(function(a,b){ return a.workDate < b.workDate ? -1 : a.workDate > b.workDate ? 1 : 0; }); });
   setOpenForm({day:DAYS[0],shift:"",role:"",note:""});
   showT("Open shift posted");
+  writeAudit("OPEN_SHIFT_POSTED", shiftId+" · "+auditDay(workDate), user.id);
  });
  }
  function claimShift(id) {
@@ -1982,6 +2049,7 @@ function App() {
   var row = mapOpenShift(res.data);
   setOpens(function(p){return p.map(function(o){return o.id===id?row:o;});});
   showT("Shift claimed - awaiting approval");
+  writeAudit("OPEN_SHIFT_CLAIMED", row.shift+" · "+auditDay(row.workDate), user.id);
  });
  }
  function approveOpen(s) {
@@ -1992,6 +2060,7 @@ function App() {
   markWeekEdited(s.workDate);
   setOpens(function(p){return p.map(function(o){return o.id===s.id?{...o,status:"filled"}:o;});});
   showT("Open shift approved");
+  writeAudit("OPEN_SHIFT_APPROVED", s.claimedName+" · "+s.shift+" · "+auditDay(s.workDate), user.id);
  });
  }
  function declineOpen(id) {
@@ -2023,6 +2092,7 @@ function App() {
  if (res.error || !res.data) { console.error("call-in submit failed:", res.error); showT("Couldn't submit notice — check connection","error"); return; }
  setCallins(function(p){return p.concat([{id:res.data.id,eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:callType,note:sanitize(callNote),ts:Date.now(),status:"pending"}]);});
  setCallNote(""); showT("Attendance notice submitted");
+ writeAudit("CALL_IN", callType, user.id);
  }
  function ackCallin(id) {
   setCallins(function(p){return p.map(function(c){return c.id===id?{...c,status:"acknowledged"}:c;});});
@@ -2541,7 +2611,7 @@ function App() {
  {isAdmin && (
  <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
  {conflicts.length > 0 && <div style={{ background:T.warningL, border:"1px solid var(--xFDE68A)", borderRadius:8, padding:"5px 11px", color:"var(--x92400E)", fontSize:12 }}>&#9888; {conflicts.length} conflict{conflicts.length>1?"s":""}</div>}
- <button onClick={function(){exportCSV(emps,sched);}} style={{ ...GBTN, fontSize:12 }}>Export CSV</button>
+ <button onClick={function(){exportCSV(emps,weekSched);}} style={{ ...GBTN, fontSize:12 }}>Export CSV</button>
  </div>
  )}
  </div>
@@ -3616,6 +3686,8 @@ function App() {
    />
  )}
 
+ {tab==="settings" && isAdmin && <ActivityLog user={user} />}
+
  {/* CHAT */}
  {tab==="chat" && <TeamChat user={user} emps={emps} />}
 
@@ -4241,6 +4313,7 @@ function App() {
   var rn=new Date(); setOverrideTime(String(rn.getHours()).padStart(2,"0")+":"+String(rn.getMinutes()).padStart(2,"0"));
   setOverrideDate(new Date().toISOString().slice(0,10));
                 showT("Punch added for "+(emp?emp.name:"employee"),"info");
+                writeAudit("PUNCH_ADDED", (emp?emp.name:"employee")+" · "+overrideType+" · "+new Date(ts).toLocaleString(), user.id);
               }
 
               async function forceClockOut(eid, ename) {
@@ -4248,9 +4321,12 @@ function App() {
                 var realId = await syncPunchInsert(eid, "out", now.getTime(), true);
                 setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:eid,ename:ename,type:"out",ts:now.getTime(),shift:"",overrideBy:user.name}]); });
                 showT(ename+" clocked out by admin","info");
+                writeAudit("FORCE_CLOCK_OUT", ename+" · "+now.toLocaleString(), user.id);
               }
 
               function deletePunch(id) {
+                var gone = timeclock.find(function(x){ return x.id===id; });
+                writeAudit("PUNCH_DELETED", gone ? (gone.ename+" · "+gone.type+" · "+new Date(gone.ts).toLocaleString()) : "punch "+id, user.id);
                 setTimeclock(function(p){ return p.filter(function(x){ return x.id!==id; }); });
                 showT("Punch deleted","info");
                 supabase.from("timeclock_punches").delete().eq("id", id).then(function(res){
@@ -4263,6 +4339,8 @@ function App() {
                 var dtStr = editPunchDate + "T" + editPunchTime + ":00";
                 var ts = new Date(dtStr).getTime();
                 if (isNaN(ts)) { showT("Invalid time","error"); return; }
+                var was = timeclock.find(function(x){ return x.id===id; });
+                writeAudit("PUNCH_EDITED", was ? (was.ename+" · "+was.type+" · "+new Date(was.ts).toLocaleString()+" \u2192 "+new Date(ts).toLocaleString()) : "punch "+id, user.id);
                 setTimeclock(function(p){ return p.map(function(x){ return x.id===id ? {...x, ts:ts, editedBy:user.name} : x; }); });
                 setEditingPunchId(null);
                 showT("Punch updated","info");
