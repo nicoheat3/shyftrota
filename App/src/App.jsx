@@ -581,8 +581,8 @@ function Toast({ toast }) {
 function Confirm({ show, title, body, onOk, onCancel }) {
  if (!show) return null;
  return (
- <div style={{ position:"fixed", inset:0, background:"rgba(15,23,42,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
- <div style={{ ...CARD, maxWidth:360, width:"100%", textAlign:"center", animation:"fadeIn .2s" }}>
+ <div className="sr-backdrop" style={{ position:"fixed", inset:0, background:"rgba(15,23,42,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+ <div className="sr-sheet" style={{ ...CARD, maxWidth:360, width:"100%", textAlign:"center" }}>
  <div style={{ marginBottom:12, display:"flex", justifyContent:"center", color:T.warning }}><Icon name="alert" size={34} /></div>
  <div style={{ fontWeight:700, fontSize:17, color:T.text, marginBottom:8 }}>{title}</div>
  <div style={{ fontSize:13, color:T.muted, marginBottom:22, lineHeight:1.6 }}>{body}</div>
@@ -2475,6 +2475,8 @@ function App() {
  @keyframes sIn { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
  /* Tab changes (View Transitions): iOS-like push, ~280ms on Apple's ease curve */
+ html[data-nav-dir] .main-pad { view-transition-name:tab-page; }
+ html[data-nav-dir] .tab-indicator { view-transition-name:tab-indicator; }
  ::view-transition-old(root), ::view-transition-new(root) { animation:none; }
  ::view-transition-group(tab-page) { animation-duration:280ms; animation-timing-function:cubic-bezier(0.32,0.72,0,1); }
  ::view-transition-old(tab-page), ::view-transition-new(tab-page) { animation-duration:280ms; animation-timing-function:cubic-bezier(0.32,0.72,0,1); animation-fill-mode:both; }
@@ -2491,7 +2493,30 @@ function App() {
  @keyframes srOutRight { from{transform:translateX(0);opacity:1} to{transform:translateX(12%);opacity:0} }
  @keyframes srFadeIn { from{opacity:0} to{opacity:1} }
  @keyframes srFadeOut { from{opacity:1} to{opacity:0} }
- @media (prefers-reduced-motion: reduce) { ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation:none !important; } }
+ /* Page sections rise in, one after another, when a tab opens */
+ .main-pad > div > * { animation:srRise 380ms cubic-bezier(0.32,0.72,0,1) backwards; }
+ .main-pad > div > *:nth-child(2) { animation-delay:40ms; }
+ .main-pad > div > *:nth-child(3) { animation-delay:80ms; }
+ .main-pad > div > *:nth-child(4) { animation-delay:120ms; }
+ .main-pad > div > *:nth-child(5) { animation-delay:160ms; }
+ .main-pad > div > *:nth-child(6) { animation-delay:200ms; }
+ .main-pad > div > *:nth-child(7) { animation-delay:240ms; }
+ .main-pad > div > *:nth-child(n+8) { animation-delay:280ms; }
+ @keyframes srRise { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:none} }
+ /* Pop-ups: a soft pop on desktop, an iOS bottom sheet on phones */
+ .sr-backdrop { animation:srFadeIn 220ms ease both; }
+ .sr-sheet { animation:srPopIn 320ms cubic-bezier(0.32,0.72,0,1) both; }
+ .sr-up { animation:srSheetUp 400ms cubic-bezier(0.32,0.72,0,1) both; }
+ @keyframes srPopIn { from{opacity:0;transform:translateY(12px) scale(0.97)} to{opacity:1;transform:none} }
+ @keyframes srSheetUp { from{transform:translateY(100%)} to{transform:none} }
+ /* Posted check mark */
+ .sr-check { display:inline-flex; vertical-align:-3px; margin-right:6px; animation:srPopIn 360ms cubic-bezier(0.34,1.56,0.64,1) both; }
+ .sr-check circle { stroke-dasharray:63; stroke-dashoffset:63; animation:srDraw 420ms cubic-bezier(0.32,0.72,0,1) 60ms forwards; }
+ .sr-check path { stroke-dasharray:16; stroke-dashoffset:16; animation:srDraw 260ms cubic-bezier(0.32,0.72,0,1) 380ms forwards; }
+ @keyframes srDraw { to{stroke-dashoffset:0} }
+ .sr-posted-pop { animation:srPosted 600ms cubic-bezier(0.34,1.56,0.64,1); }
+ @keyframes srPosted { 0%{transform:scale(1)} 40%{transform:scale(1.015)} 100%{transform:scale(1)} }
+ @media (prefers-reduced-motion: reduce) { ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation:none !important; } .main-pad > div > *, .sr-backdrop, .sr-sheet, .sr-up, .sr-check, .sr-check circle, .sr-check path, .sr-posted-pop { animation:none !important; stroke-dashoffset:0 !important; } }
  .hv:hover { background:var(--xF1F5F9) !important; cursor:pointer; }
  .hv2:hover { background:var(--xFDF0ED) !important; cursor:pointer; }
  input:focus, select:focus, textarea:focus { border-color:var(--xC84B31) !important; box-shadow:0 0 0 3px rgba(200,75,49,0.12); outline:none; }
@@ -2517,6 +2542,9 @@ function App() {
  .emp-th { width:84px !important; padding:10px 6px !important; }
  .two-col { grid-template-columns:1fr !important; }
  .time-grid { grid-template-columns:1fr !important; }
+ .sr-backdrop { align-items:flex-end !important; padding:0 !important; }
+ .sr-sheet { max-width:none !important; width:100% !important; border-radius:16px 16px 0 0 !important; max-height:92vh; overflow-y:auto !important; padding-bottom:calc(24px + env(safe-area-inset-bottom)) !important; animation:srSheetUp 420ms cubic-bezier(0.32,0.72,0,1) both !important; }
+ .sr-sheet::before { content:""; display:block; width:36px; height:5px; border-radius:3px; background:rgba(128,128,128,0.35); margin:-8px auto 14px; }
  }
  `}</style>
 
@@ -2557,7 +2585,7 @@ function App() {
   function NavBtn(props) {
     return (
       <button className="tab-btn" onClick={props.onClick} style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, padding:"8px 2px", minHeight:56, border:"none", background:"transparent", cursor:"pointer", fontFamily:"inherit", color:props.active?T.accent:T.muted, position:"relative" }}>
-        {props.active && <span style={{ position:"absolute", top:0, left:"30%", right:"30%", height:2, background:T.accent, viewTransitionName:"tab-indicator" }} />}
+        {props.active && <span style={{ position:"absolute", top:0, left:"30%", right:"30%", height:2, background:T.accent }} className="tab-indicator" />}
         <Icon name={props.icon} size={20} />
         <span style={{ fontSize:11, fontWeight:props.active?700:500, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:"100%" }}>{props.label}</span>
         {props.badge > 0 && <span className="mono" style={{ position:"absolute", top:5, left:"calc(50% + 6px)", background:T.accent, color:"white", fontSize:10, fontWeight:600, borderRadius:4, padding:"0 4px", lineHeight:"15px" }}>{props.badge}</span>}
@@ -2567,8 +2595,8 @@ function App() {
   return (
    <>
     {moreOpen && (
-     <div className="mobile-bottom" onClick={function(){ setMoreOpen(false); }} style={{ position:"fixed", inset:0, zIndex:60, background:"rgba(26,23,20,0.35)", alignItems:"flex-end" }}>
-      <div onClick={function(e){ e.stopPropagation(); }} style={{ width:"100%", background:T.surface, borderTop:"1px solid "+T.border, padding:"8px 8px calc(64px + env(safe-area-inset-bottom))" }}>
+     <div className="mobile-bottom sr-backdrop" onClick={function(){ setMoreOpen(false); }} style={{ position:"fixed", inset:0, zIndex:60, background:"rgba(26,23,20,0.35)", alignItems:"flex-end" }}>
+      <div className="sr-up" onClick={function(e){ e.stopPropagation(); }} style={{ width:"100%", background:T.surface, borderTop:"1px solid "+T.border, padding:"8px 8px calc(64px + env(safe-area-inset-bottom))" }}>
        {REST.map(function(t){
         var active = tab === t.id;
         return (
@@ -2657,7 +2685,7 @@ function App() {
  </div>
 
  {/* Page content */}
- <div className="main-pad" style={{ flex:1, padding:24, overflowY:"auto", overflowX:"hidden", animation:"fadeIn .2s ease", viewTransitionName:"tab-page" }}>
+ <div className="main-pad" style={{ flex:1, padding:24, overflowY:"auto", overflowX:"hidden", animation:"fadeIn .2s ease" }}>
 
  {/* SCHEDULE */}
  {tab==="schedule" && isAdmin && (
@@ -4571,8 +4599,8 @@ function App() {
       var sa = emp.shiftAvail || {};
       var availDays = emp.avail;
       return (
-        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:300, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"20px 16px", overflowY:"auto" }} onClick={function(){setShiftAvailEmp(null);}}>
-          <div style={{ background:T.surface, borderRadius:14, padding:22, width:"100%", maxWidth:400, boxSizing:"border-box", boxShadow:"0 24px 64px rgba(0,0,0,0.2)" }} onClick={function(e){e.stopPropagation();}}>
+        <div className="sr-backdrop" style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:300, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"20px 16px", overflowY:"auto" }} onClick={function(){setShiftAvailEmp(null);}}>
+          <div className="sr-sheet" style={{ background:T.surface, borderRadius:14, padding:22, width:"100%", maxWidth:400, boxSizing:"border-box", boxShadow:"0 24px 64px rgba(0,0,0,0.2)" }} onClick={function(e){e.stopPropagation();}}>
             <div style={{ fontWeight:700, fontSize:16, marginBottom:4 }}>Shift availability — {emp.name.split(" ")[0]}</div>
             <div style={{ fontSize:12, color:T.muted, marginBottom:18 }}>For each working day, select which shifts they can do. Leave all checked to allow any shift.</div>
             {availDays.length === 0 && <div style={{ color:T.faint, fontSize:13, textAlign:"center", padding:16 }}>No available days set. Toggle days on the employee card first.</div>}
@@ -4635,8 +4663,8 @@ function App() {
 
     {/* Edit Shift modal */}
     {editShift && (
-      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }} onClick={function(){setEditShift(null);}}>
-        <div style={{ ...CARD, maxWidth:380, width:"100%", padding:24, overflow:"hidden" }} onClick={function(e){e.stopPropagation();}}>
+      <div className="sr-backdrop" style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }} onClick={function(){setEditShift(null);}}>
+        <div className="sr-sheet" style={{ ...CARD, maxWidth:380, width:"100%", padding:24, overflow:"hidden" }} onClick={function(e){e.stopPropagation();}}>
           <div style={{ fontWeight:700, fontSize:17, marginBottom:18 }}>Edit Shift</div>
           <div style={{ marginBottom:12 }}>
             <label style={LBL}>Shift name</label>
@@ -4697,8 +4725,8 @@ function App() {
 
     {/* Custom shift time override modal */}
     {editOverride && (
-      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }} onClick={function(){setEditOverride(null);}}>
-        <div style={{ ...CARD, maxWidth:340, width:"100%", padding:24, overflow:"hidden" }} onClick={function(e){e.stopPropagation();}}>
+      <div className="sr-backdrop" style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }} onClick={function(){setEditOverride(null);}}>
+        <div className="sr-sheet" style={{ ...CARD, maxWidth:340, width:"100%", padding:24, overflow:"hidden" }} onClick={function(e){e.stopPropagation();}}>
           <div style={{ fontWeight:700, fontSize:16, marginBottom:4 }}>Custom time</div>
           <div style={{ fontSize:12, color:T.muted, marginBottom:18 }}>{editOverride&&editOverride.empName&&editOverride.empName.split(" ")[0]} — {editOverride&&editOverride.day} (this week only)</div>
           <div className="time-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:20 }}>

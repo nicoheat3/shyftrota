@@ -4,7 +4,7 @@
 // disappearing from someone's phone mid-week is worse than a stale one — but
 // the admin gets a flag telling them to let the team know.
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 var T = {
   bg:"var(--bg)", surface:"var(--surface)", border:"var(--border)", text:"var(--text)", muted:"var(--muted)", faint:"var(--faint)", accent:"var(--accent)", accentL:"var(--accentL)", success:"var(--success)", successL:"var(--successL)", warning:"var(--warning)", warningL:"var(--warningL)",
@@ -28,6 +28,18 @@ export function PublishBar({ publishedAt, editedSince, onPublish, onUnpublish, o
   useEffect(function(){ if (!armed) return; var t = setTimeout(function(){ setArmed(false); }, 4000); return function(){ clearTimeout(t); }; }, [armed]);
   var stale = published && !!editedSince;
 
+  // After a tap on Post/Repost, play a check mark once the week shows as posted.
+  var pending = useRef(false);
+  var [celebrate, setCelebrate] = useState(false);
+  useEffect(function(){
+    if (!pending.current || !published || stale) return;
+    pending.current = false;
+    setCelebrate(true);
+    var t = setTimeout(function(){ setCelebrate(false); }, 2000);
+    return function(){ clearTimeout(t); };
+  }, [published, stale, publishedAt]);
+  function post() { pending.current = true; onPublish(); }
+
   var tone = !published
     ? { bg:T.bg,        border:T.border,   color:T.muted,   label:"Draft" }
     : stale
@@ -41,10 +53,20 @@ export function PublishBar({ publishedAt, editedSince, onPublish, onUnpublish, o
     : "Your team can see this week. Posted " + fmtWhen(publishedAt) + ".";
 
   return (
-    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap",
+    <div className={celebrate ? "sr-posted-pop" : undefined} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap",
                   background:tone.bg, border:"1px solid "+tone.border, borderRadius:10, padding:"12px 16px", marginBottom:14 }}>
       <div style={{ minWidth:0 }}>
-        <div style={{ fontSize:13, fontWeight:700, color:tone.color }}>{tone.label}</div>
+        <div style={{ fontSize:13, fontWeight:700, color:tone.color }}>
+          {celebrate && (
+            <span className="sr-check" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M7.5 12.5l3 3 6-6.5" />
+              </svg>
+            </span>
+          )}
+          {tone.label}
+        </div>
         <div style={{ fontSize:12, color:T.muted, marginTop:2, lineHeight:1.5 }}>{note}</div>
       </div>
       {!isPastWeek && (
@@ -57,7 +79,7 @@ export function PublishBar({ publishedAt, editedSince, onPublish, onUnpublish, o
           )}
           {published && !stale && <button onClick={onUnpublish} disabled={busy} style={GBTN}>Unpost</button>}
           {(!published || stale) && (
-            <button onClick={onPublish} disabled={busy} style={{ ...BTN, opacity:busy?0.6:1 }}>
+            <button onClick={post} disabled={busy} style={{ ...BTN, opacity:busy?0.6:1 }}>
               {busy ? "Posting…" : (stale ? "Repost" : "Post to team")}
             </button>
           )}
