@@ -326,16 +326,22 @@ function shiftHours(shiftId, shiftDefs) {
   var sp = def.start.split(":"); var ep = def.end.split(":");
   var mins = (parseInt(ep[0])*60+parseInt(ep[1])) - (parseInt(sp[0])*60+parseInt(sp[1]));
   if (mins <= 0) mins += 1440;
-  return paidHours(mins/60);
+  return paidHours(mins/60, def.paidLunch);
 }
 // Every shift over 5 hours includes a 30-minute unpaid lunch, so an 8.5-hour
 // shift (7:00a–3:30p) counts as 8 paid hours toward the weekly max.
 var LUNCH_HOURS = 0.5;
-function paidHours(clockHours) {
-  var h = clockHours > 5 ? clockHours - LUNCH_HOURS : clockHours;
+// Shift types marked "paid lunch" (e.g. night audit, who can't leave the
+// desk) skip the deduction.
+function paidHours(clockHours, paidLunch) {
+  var h = (!paidLunch && clockHours > 5) ? clockHours - LUNCH_HOURS : clockHours;
   return Math.round(h*10)/10;
 }
 // Sum actual hours for an employee across the week
+function isPaidLunch(shiftId, shiftDefs) {
+  var def = shiftDefs && shiftDefs.find(function(d){ return d.id===shiftId; });
+  return !!(def && def.paidLunch);
+}
 function weekHours(empId, weekSched, shiftDefs) {
   var total = 0;
   ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].forEach(function(d){
@@ -1194,7 +1200,7 @@ function App() {
    });
    supabase.from("shift_defs").select("*").eq("property_id", user.property_id).then(function(res){
     if (res.data) {
-     setShiftDefs(res.data.map(function(r){ return { id:r.id, label:r.label, start:r.start_time, end:r.end_time, color:r.color||"Day 9-5" }; }));
+     setShiftDefs(res.data.map(function(r){ return { id:r.id, label:r.label, start:r.start_time, end:r.end_time, color:r.color||"Day 9-5", paidLunch:!!r.paid_lunch }; }));
     } else { console.error("load shift_defs failed:", res.error); }
    });
   }, [user && user.property_id]);
@@ -1350,7 +1356,7 @@ function App() {
  var [colorPickerFor, setColorPickerFor] = useState(null);
  var [editShift, setEditShift] = useState(null); // object: {idx,id,label,start,end,color} or null
  var [addingShift, setAddingShift] = useState(false);
- var [newShift, setNewShift] = useState({ label:"", start:"09:00", end:"17:00", color:"Day 9-5" });
+ var [newShift, setNewShift] = useState({ label:"", start:"09:00", end:"17:00", color:"Day 9-5", paidLunch:false });
  var [newEmp, setNewEmp] = useState({ name:"", role:"", avail:[], max:40, shiftAvail:{}, email:"", pw:"", isAdmin:false, dept:"" });
  var [swapForm, setSwapForm] = useState({ toId:"", day:DAYS[0], shift:"", reason:"" });
  var [ptoType, setPtoType] = useState(PTO_TYPES[0]);
@@ -2744,7 +2750,7 @@ function App() {
    var on = rows.filter(function(r){ return !r.off; }).sort(function(x,y){ return (x.s<6?x.s+24:x.s) - (y.s<6?y.s+24:y.s); });
    var pto = rows.filter(function(r){ return r.off && r.pto; });
    var free = rows.filter(function(r){ return r.off && !r.pto; });
-   var hrsTotal = on.reduce(function(acc, r){ return acc + (r.nobar ? shiftHours(r.sh, shiftDefs) : paidHours(r.en - r.s)); }, 0);
+   var hrsTotal = on.reduce(function(acc, r){ return acc + (r.nobar ? shiftHours(r.sh, shiftDefs) : paidHours(r.en - r.s, isPaidLunch(r.sh, shiftDefs))); }, 0);
    var LONG = { Sun:"Sunday", Mon:"Monday", Tue:"Tuesday", Wed:"Wednesday", Thu:"Thursday", Fri:"Friday", Sat:"Saturday" };
    var GRID = { display:"grid", gridTemplateColumns:"92px minmax(0, 1fr)", columnGap:8, alignItems:"center" };
    var TRACK = { position:"relative", height:26, backgroundImage:"linear-gradient(to right, var(--border) 1px, transparent 1px)", backgroundSize:"25% 100%" };
@@ -3592,6 +3598,10 @@ function App() {
  <div><label style={LBL}>Start time</label><input type="time" value={newShift.start} onChange={function(e){setNewShift(function(p){return {...p,start:e.target.value};});}} style={TINP} /></div>
  <div><label style={LBL}>End time</label><input type="time" value={newShift.end} onChange={function(e){setNewShift(function(p){return {...p,end:e.target.value};});}} style={TINP} /></div>
  </div>
+ <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:13, color:T.text, marginBottom:14, cursor:"pointer" }}>
+  <input type="checkbox" checked={!!newShift.paidLunch} onChange={function(e){ var v=e.target.checked; setNewShift(function(p){return {...p,paidLunch:v};}); }} />
+  Paid lunch <span style={{ color:T.faint, fontSize:12 }}>(don't take 30 min off this shift's hours)</span>
+ </label>
  <div style={{ marginBottom:16 }}>
  <label style={LBL}>Color theme</label>
  <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
@@ -3611,10 +3621,10 @@ function App() {
  if (!newShift.label.trim()) { showT("Shift name required","error"); return; }
  var sc = SC[newShift.color] || SC["Day 9-5"];
  var id = newShift.label.trim();
- setShiftDefs(function(p){ return p.concat([{id:id, label:newShift.label.trim(), start:newShift.start, end:newShift.end, color:newShift.color}]); });
+ setShiftDefs(function(p){ return p.concat([{id:id, label:newShift.label.trim(), start:newShift.start, end:newShift.end, color:newShift.color, paidLunch:!!newShift.paidLunch}]); });
  setAddingShift(false);
  showT(newShift.label+" shift added");
- supabase.from("shift_defs").insert({ id:id, property_id:user.property_id, label:newShift.label.trim(), start_time:newShift.start, end_time:newShift.end, color:newShift.color }).then(function(res){
+ supabase.from("shift_defs").insert({ id:id, property_id:user.property_id, label:newShift.label.trim(), start_time:newShift.start, end_time:newShift.end, color:newShift.color, paid_lunch:!!newShift.paidLunch }).then(function(res){
   if (res.error) { console.error("shift_defs insert failed:", res.error); showT("Saved locally, but the server save failed","error"); }
  });
  }} style={BTN}>Save New Shift</button>
@@ -3634,14 +3644,15 @@ function App() {
      <span style={{ fontWeight:700, fontSize:15, color:c.text }}>{s.label}</span>
    </div>
    <button onClick={function(){
-     setEditShift({ idx:i, id:s.id, label:s.label, start:s.start, end:s.end, color:s.color||s.id });
+     setEditShift({ idx:i, id:s.id, label:s.label, start:s.start, end:s.end, color:s.color||s.id, paidLunch:!!s.paidLunch });
    }} style={{ ...GBTN, padding:"4px 12px", fontSize:12 }}>Edit</button>
  </div>
  <div style={{ fontSize:13, color:T.muted, marginBottom:4 }}>{to12(s.start)} &#8594; {to12(s.end)}</div>
  <div style={{ fontSize:11, color:T.faint }}>{(function(){
    var sp=s.start.split(":"); var ep=s.end.split(":");
    var h=(parseInt(ep[0])*60+parseInt(ep[1]))-(parseInt(sp[0])*60+parseInt(sp[1]));
-   if(h<=0)h+=1440; return Math.round(h/60*10)/10+" hours";
+   if(h<=0)h+=1440; var clock=Math.round(h/60*10)/10; var paid=paidHours(h/60, s.paidLunch);
+   return clock+" hours · "+paid+" paid"+(s.paidLunch?" (paid lunch)":"");
  })()}</div>
 </div>
  );
@@ -3817,7 +3828,7 @@ function App() {
          <span style={{ color:T.accent, whiteSpace:"nowrap" }}>{cd}</span>
        </div>
        <div style={{ fontFamily:MONO, fontSize:40, fontWeight:500, letterSpacing:"-0.04em", lineHeight:1, marginTop:14, color:T.text, whiteSpace:"nowrap" }}>{A.main}<span style={{ fontSize:18, color:T.faint, letterSpacing:0 }}>{A.ap}</span><span style={{ color:T.faint, padding:"0 6px" }}>–</span>{B.main}<span style={{ fontSize:18, color:T.faint, letterSpacing:0 }}>{B.ap}</span></div>
-       <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:10, fontSize:13, color:T.muted, flexWrap:"wrap" }}><span style={{ width:8, height:8, background:c.dot }} /><span style={{ color:T.text, fontWeight:600 }}>{next.t.label}</span><span>{dept ? "· " + dept.name + " " : ""}· {paidHours(next.en - next.s)} hrs paid</span></div>
+       <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:10, fontSize:13, color:T.muted, flexWrap:"wrap" }}><span style={{ width:8, height:8, background:c.dot }} /><span style={{ color:T.text, fontWeight:600 }}>{next.t.label}</span><span>{dept ? "· " + dept.name + " " : ""}· {paidHours(next.en - next.s, isPaidLunch(next.sh, shiftDefs))} hrs paid</span></div>
        <div aria-hidden="true" style={{ position:"relative", height:6, marginTop:16, background:T.bg, border:"1px solid "+T.border }}>
          <div style={{ position:"absolute", left:(next.s / 24 * 100) + "%", width:((Math.min(24, next.en) - next.s) / 24 * 100) + "%", top:0, bottom:0, background:c.dot }} />
        </div>
@@ -4607,6 +4618,10 @@ function App() {
               <input type="time" value={editShift.end} onChange={function(e){ setEditShift(function(p){return {...p,end:e.target.value};}); }} style={TINP} />
             </div>
           </div>
+          <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:13, color:T.text, marginBottom:14, cursor:"pointer" }}>
+            <input type="checkbox" checked={!!editShift.paidLunch} onChange={function(e){ var v=e.target.checked; setEditShift(function(p){return {...p,paidLunch:v};}); }} />
+            Paid lunch <span style={{ color:T.faint, fontSize:12 }}>(don't take 30 min off this shift's hours)</span>
+          </label>
           <div style={{ marginBottom:20 }}>
             <label style={LBL}>Color theme</label>
             <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:6 }}>
@@ -4623,9 +4638,9 @@ function App() {
           <div style={{ display:"flex", gap:8 }}>
             <button onClick={function(){
               if (!editShift.label.trim()) { showT("Shift name required","error"); return; }
-              setShiftDefs(function(p){ return p.map(function(x,j){ return j===editShift.idx ? {...x, label:editShift.label, start:editShift.start, end:editShift.end, color:editShift.color} : x; }); });
+              setShiftDefs(function(p){ return p.map(function(x,j){ return j===editShift.idx ? {...x, label:editShift.label, start:editShift.start, end:editShift.end, color:editShift.color, paidLunch:!!editShift.paidLunch} : x; }); });
               showT(editShift.label+" saved");
-              supabase.from("shift_defs").update({ label:editShift.label, start_time:editShift.start, end_time:editShift.end, color:editShift.color }).eq("id", editShift.id).then(function(res){
+              supabase.from("shift_defs").update({ label:editShift.label, start_time:editShift.start, end_time:editShift.end, color:editShift.color, paid_lunch:!!editShift.paidLunch }).eq("id", editShift.id).then(function(res){
                if (res.error) { console.error("shift_defs update failed:", res.error); showT("Saved locally, but the server save failed","error"); }
               });
               setEditShift(null);
