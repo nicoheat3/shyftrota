@@ -1317,6 +1317,20 @@ function App() {
      });
     } else { console.error("load shift overrides failed:", res.error); }
    });
+  supabase.from("schedule_notes").select("work_date,employee_id,note")
+   .eq("property_id", user.property_id)
+   .gte("work_date", startStr)
+   .lte("work_date", endStr)
+   .then(function(res){
+    if (res.data) {
+     setCellNotes(function(p){
+      var n = {...p};
+      Object.keys(n).forEach(function(k){ var dt = k.split("_")[0]; if (dt >= startStr && dt <= endStr) delete n[k]; });
+      res.data.forEach(function(row){ n[row.work_date+"_"+row.employee_id] = row.note; });
+      return n;
+     });
+    } else { console.error("load schedule notes failed:", res.error); }
+   });
  supabase.from("schedule_publish").select("*")
    .eq("property_id", user.property_id)
    .eq("week_start", startStr)
@@ -1375,6 +1389,8 @@ function App() {
   var [shiftAvailEmp,  setShiftAvailEmp]  = useState(null); // emp.id being edited for shift-window avail
   var [shiftOverrides, setShiftOverrides] = useState({}); // {ISOdate_eid: {start,end}} — loaded from Supabase below
   var [editOverride,   setEditOverride]   = useState(null); // {day, eid, start, end}
+  var [cellNotes,      setCellNotes]      = useState({}); // {ISOdate_eid: "La Jolla"} — free-text cell notes
+  var [editNote,       setEditNote]       = useState(null); // {day, eid, empName, text}
   var [schedView,      setSchedView]      = useState(function(){ try { return window.innerWidth < 680 ? "day" : "week"; } catch(e) { return "week"; } });
   var [newDeptName,   setNewDeptName]   = useState("");
   var [overrideEid,    setOverrideEid]    = useState(null);
@@ -2883,7 +2899,7 @@ function App() {
            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
              {free.map(function(r){ var avail = (r.emp.avail || []).indexOf(sel) >= 0; return (
                <span key={r.emp.id} style={{ display:"inline-flex", alignItems:"center", gap:6, height:28, padding:"0 10px 0 3px", border:"1px solid "+T.border, borderRadius:14, fontSize:12, color:avail?T.text:T.faint }}>
-                 <Avatar emp={r.emp} size={22} />{r.emp.name.split(" ")[0]}{!avail && <span style={{ fontFamily:MONO, fontSize:10 }}>OFF</span>}
+                 <Avatar emp={r.emp} size={22} />{r.emp.name.split(" ")[0]}{cellNotes[iso+"_"+r.emp.id] ? <span style={{ fontSize:11, fontWeight:600, color:T.text }}>· {cellNotes[iso+"_"+r.emp.id]}</span> : (!avail && <span style={{ fontFamily:MONO, fontSize:10 }}>OFF</span>)}
                </span>
              ); })}
            </div>
@@ -2983,10 +2999,13 @@ function App() {
  {conflict && !isOvr && <span style={{ color:T.danger, marginLeft:2 }}>!</span>}
  {isOvr && <span style={{ color:T.text, marginLeft:2 }}>&#10003;</span>}
  </div>
- ) : avail ? (
+ ) : cellNotes[overrideKey(weekOff,d,emp.id)] ? null : avail ? (
  <span style={{ color:T.border, fontSize:16 }}>+</span>
  ) : (
  <span style={{ color:T.border }}>&#8212;</span>
+ )}
+ {cellNotes[overrideKey(weekOff,d,emp.id)] && (
+   <div title={cellNotes[overrideKey(weekOff,d,emp.id)]} style={{ fontSize:10, fontWeight:600, color:T.text, marginTop:shift?3:0, maxWidth:96, marginLeft:"auto", marginRight:"auto", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", padding:"2px 6px", borderRadius:4, border:"1px dashed "+T.border, background:T.surface }}>{cellNotes[overrideKey(weekOff,d,emp.id)]}</div>
  )}
  {isSel && (
  <div data-shift-pop="1" role="menu" aria-label={"Shift for "+emp.name+" on "+d} onClick={function(e){ e.stopPropagation(); }} style={popPlacement(selCell.rect)}>
@@ -2998,6 +3017,13 @@ function App() {
  </div>
  );
  })}
+ <div onClick={function(e){
+   e.stopPropagation();
+   setEditNote({ day:d, eid:emp.id, empName:emp.name, text:cellNotes[overrideKey(weekOff,d,emp.id)]||"" });
+   setSelCell(null);
+ }} style={{ display:"flex", alignItems:"center", padding:"6px 10px", borderRadius:7, fontSize:12, color:T.text, cursor:"pointer", marginTop:4, borderTop:"1px solid "+T.border }} className="hv">
+   &#9998; {cellNotes[overrideKey(weekOff,d,emp.id)] ? "Edit note" : "Add a note (e.g. La Jolla)"}
+ </div>
  {shift && (
    <div onClick={function(e){
      e.stopPropagation();
@@ -3937,11 +3963,14 @@ function App() {
     <span className="mono" style={{ fontSize:13, color:T.muted, whiteSpace:"nowrap", marginLeft:"auto" }}>{hours}</span>
    </span>
   );
+ } else if (cellNotes[dayIso+"_"+me.id]) {
+  body = <span style={{ fontSize:14, fontWeight:600, color:T.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", display:"block" }}>{cellNotes[dayIso+"_"+me.id]}</span>;
  } else if (!avail) {
   body = <span style={{ fontSize:13, color:T.muted }}>Off</span>;
  } else {
   body = <span style={{ fontSize:13, color:T.faint, whiteSpace:"nowrap" }}>Not scheduled</span>;
  }
+ var myNote = shift && !pto ? cellNotes[dayIso+"_"+me.id] : null;
  var trackEl = null;
  if (shift && !pto) { var tt = shiftTimesFor(d, me.id, shift); var ta = hrsOf(tt.start), tb = hrsOf(tt.end); if (ta !== null && tb !== null) { if (tb <= ta) tb += 24; trackEl = <div aria-hidden="true" style={{ position:"relative", height:3, background:T.border, marginTop:7 }}><div style={{ position:"absolute", left:(ta/24*100)+"%", width:((Math.min(24, tb) - ta)/24*100)+"%", top:0, bottom:0, background:shiftColor(shift).dot }} /></div>; } }
  return (
@@ -3950,7 +3979,7 @@ function App() {
    <div style={{ fontSize:11, fontWeight:700, color:isToday?T.accent:T.faint, letterSpacing:"0.04em", textTransform:"uppercase" }}>{isToday ? "Today" : d}</div>
    <div className="mono" style={{ fontSize:12, color:T.text }}>{dd}</div>
   </div>
-  <div style={{ flex:1, minWidth:0 }}>{body}{trackEl}</div>
+  <div style={{ flex:1, minWidth:0 }}>{body}{myNote && <div style={{ fontSize:12, color:T.muted, marginTop:3 }}>{myNote}</div>}{trackEl}</div>
  </div>
  );
  })}
@@ -4723,6 +4752,49 @@ function App() {
         </div>
       </div>
     )}
+
+    {/* Cell note modal */}
+    {editNote && (function(){
+      var recent = [];
+      Object.keys(cellNotes).forEach(function(k){ var v = cellNotes[k]; if (v && recent.indexOf(v) < 0 && v !== editNote.text) recent.push(v); });
+      recent = recent.slice(0, 4);
+      function save(text){
+        var t = (text || "").trim().slice(0, 40);
+        var iso = dayToISODate(weekOff, editNote.day); var key = iso+"_"+editNote.eid;
+        if (!t) {
+          setCellNotes(function(p){ var n={...p}; delete n[key]; return n; });
+          supabase.from("schedule_notes").delete().eq("property_id", user.property_id).eq("work_date", iso).eq("employee_id", editNote.eid)
+            .then(function(res){ if (res.error) { console.error("note delete failed:", res.error); showT("Removed locally, but the server save failed","error"); } });
+          showT("Note removed","info");
+        } else {
+          setCellNotes(function(p){ var n={...p}; n[key]=t; return n; });
+          supabase.from("schedule_notes").upsert({ property_id:user.property_id, work_date:iso, employee_id:editNote.eid, note:t, updated_at:new Date().toISOString() }, { onConflict:"property_id,work_date,employee_id" })
+            .then(function(res){ if (res.error) { console.error("note save failed:", res.error); showT("Saved locally, but the server save failed","error"); } });
+          showT((editNote.empName||"Employee").split(" ")[0]+"'s "+editNote.day+": "+t);
+        }
+        setEditNote(null);
+      }
+      return (
+      <div className="sr-backdrop" style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }} onClick={function(){ setEditNote(null); }}>
+        <div className="sr-sheet" style={{ ...CARD, maxWidth:360, width:"100%", padding:24, overflow:"hidden" }} onClick={function(e){ e.stopPropagation(); }}>
+          <div style={{ fontWeight:700, fontSize:16, marginBottom:4 }}>Note</div>
+          <div style={{ fontSize:12, color:T.muted, marginBottom:14 }}>{(editNote.empName||"").split(" ")[0]} — {editNote.day}. Shows in the cell and in their My Schedule. Doesn't count as a shift here.</div>
+          <label style={LBL} htmlFor="cell-note-input">Text</label>
+          <input id="cell-note-input" autoFocus maxLength={40} value={editNote.text} placeholder="e.g. La Jolla, Training, Meeting 2p" onChange={function(e){ var v=e.target.value; setEditNote(function(p){ return {...p, text:v}; }); }} onKeyDown={function(e){ if (e.key === "Enter") save(editNote.text); }} style={{ ...TINP, marginBottom:10 }} />
+          {recent.length > 0 && (
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:16 }}>
+              {recent.map(function(r){ return <button key={r} onClick={function(){ save(r); }} style={{ ...GBTN, fontSize:12, padding:"6px 10px", minHeight:32 }}>{r}</button>; })}
+            </div>
+          )}
+          <div style={{ display:"flex", gap:8, marginTop:recent.length ? 0 : 6 }}>
+            <button onClick={function(){ save(editNote.text); }} style={{ ...BTN, flex:1, padding:"10px" }}>Save</button>
+            {cellNotes[dayToISODate(weekOff, editNote.day)+"_"+editNote.eid] && <button onClick={function(){ save(""); }} style={{ ...GBTN, padding:"10px 14px", color:T.danger }}>Remove</button>}
+            <button onClick={function(){ setEditNote(null); }} style={{ ...GBTN, padding:"10px 14px" }}>Cancel</button>
+          </div>
+        </div>
+      </div>
+      );
+    })()}
 
     {/* Custom shift time override modal */}
     {editOverride && (
