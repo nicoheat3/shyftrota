@@ -1,3 +1,4 @@
+import { t as tr, getLang, setLang } from "./i18n.js";
 import { useState, useEffect, useRef } from "react";
 import { flushSync } from "react-dom";
 import { supabase } from "./lib/supabaseClient.js";
@@ -600,7 +601,7 @@ function Badge({ status }) {
  var map = { pending:{bg:"var(--xFEF9C3)",color:"var(--x854D0E)"}, approved:{bg:T.successL,color:"var(--x065F46)"}, rejected:{bg:T.dangerL,color:"var(--x991B1B)"}, expired:{bg:"var(--xF1EFEC)",color:"var(--x6B6460)"}, cancelled:{bg:"var(--xF1EFEC)",color:"var(--x6B6460)"} };
  var labels = { rejected:"Declined", denied:"Declined", expired:"Expired", cancelled:"Cancelled" };
  var s = map[status] || map.pending;
- return <span style={{ padding:"2px 8px", borderRadius:20, fontSize:11, fontWeight:600, background:s.bg, color:s.color, textTransform:"capitalize" }}>{labels[status] || status}</span>;
+ return <span style={{ padding:"2px 8px", borderRadius:20, fontSize:11, fontWeight:600, background:s.bg, color:s.color, textTransform:"capitalize" }}>{tr(labels[status] || status)}</span>;
 }
 
 // ── AI Chat ───────────────────────────────────────────
@@ -762,6 +763,63 @@ function ActivityLog({ user }) {
     })}
    </div>
    {state==="ready" && rows.length >= limit && <button onClick={function(){ setLimit(limit + 100); }} style={{ ...GBTN, width:"100%", marginTop:10, fontSize:12 }}>Show more</button>}
+  </div>
+ );
+}
+// "Add to calendar": a private subscription link (api/calendar.js) so shifts
+// show up in Apple/Google Calendar and update when the schedule changes.
+function CalendarSync() {
+ var [open, setOpen] = useState(false);
+ var [token, setToken] = useState(null);
+ var [state, setState] = useState("idle"); // idle | loading | ready | error
+ var [resetArmed, setResetArmed] = useState(false);
+ var [copied, setCopied] = useState(false);
+ function load(rpc) {
+  setState("loading");
+  supabase.rpc(rpc).then(function(res){
+   if (res.error || !res.data) { console.error(rpc+" failed:", res.error); setState("error"); return; }
+   setToken(res.data); setState("ready"); setResetArmed(false);
+  });
+ }
+ var host = typeof window !== "undefined" ? window.location.host : "app.shyftrota.com";
+ var https = token ? "https://"+host+"/api/calendar?t="+token : "";
+ var webcal = token ? "webcal://"+host+"/api/calendar?t="+token : "";
+ var google = token ? "https://calendar.google.com/calendar/r?cid="+encodeURIComponent(webcal) : "";
+ function copy() {
+  try { navigator.clipboard.writeText(https).then(function(){ setCopied(true); setTimeout(function(){ setCopied(false); }, 2000); }); } catch(e) {}
+ }
+ var LINK = { ...BTN, fontSize:12, padding:"8px 12px", textDecoration:"none", display:"inline-flex", alignItems:"center", justifyContent:"center", flex:"1 1 140px" };
+ return (
+  <div style={{ ...CARD, marginTop:14 }}>
+   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
+    <div>
+     <div style={{ fontSize:14, fontWeight:700, color:T.text }}>{tr("Add shifts to your calendar")}</div>
+     <div style={{ fontSize:12, color:T.muted, marginTop:2 }}>{tr("Your posted shifts show up in your phone's calendar and update on their own.")}</div>
+    </div>
+    {!open && <button onClick={function(){ setOpen(true); if (!token) load("get_calendar_token"); }} style={{ ...GBTN, fontSize:12, flexShrink:0 }}>{tr("Set up")}</button>}
+   </div>
+   {open && (
+    <div style={{ marginTop:12 }}>
+     {state==="loading" && <div style={{ fontSize:13, color:T.faint }}>{tr("Getting your link…")}</div>}
+     {state==="error" && <div style={{ fontSize:13, color:T.danger }}>{tr("Couldn't get your calendar link. Check your connection and try again.")}</div>}
+     {state==="ready" && (
+      <div>
+       <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+        <a href={webcal} style={LINK}>{tr("Apple Calendar")}</a>
+        <a href={google} target="_blank" rel="noopener noreferrer" style={LINK}>{tr("Google Calendar")}</a>
+        <button onClick={copy} style={{ ...GBTN, fontSize:12, flex:"1 1 140px" }}>{tr(copied ? "Copied" : "Copy link")}</button>
+       </div>
+       <div style={{ fontSize:11, color:T.faint, marginTop:10, lineHeight:1.5 }}>
+        {tr("Apple opens Calendar and asks to subscribe. Google opens in your browser; tap Add. Calendars check for changes every hour or so (Google can take longer). Only posted weeks show, and days off are left out.")}
+       </div>
+       <div style={{ fontSize:11, color:T.faint, marginTop:8, lineHeight:1.5 }}>
+        {tr("This link is private to you; anyone with it can see your shifts.")}{" "}
+        <button onClick={function(){ if (!resetArmed) { setResetArmed(true); return; } load("reset_calendar_token"); }} style={{ background:"none", border:"none", padding:0, color:resetArmed?T.danger:T.accent, fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>{tr(resetArmed ? "Tap again to reset (old link stops working)" : "Reset link")}</button>
+       </div>
+      </div>
+     )}
+    </div>
+   )}
   </div>
  );
 }
@@ -1366,6 +1424,8 @@ function App() {
    });
  }, [user && user.property_id, weekOff, weekStartDow]);
  var [tab, setTab] = useState("schedule");
+ var [lang, setLangState] = useState(getLang()); // "en" | "es" (employee screens; see i18n.js)
+ function changeLang(l) { setLang(l); setLangState(l); }
  var [theme, setThemeState] = useState(function(){ try { return document.documentElement.getAttribute("data-theme") || "dark"; } catch(e) { return "dark"; } });
  function applyTheme(t) { try { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("sr_theme", t); } catch(e) {} setThemeState(t); }
  var [tlDay, setTlDay] = useState(null);
@@ -1997,7 +2057,7 @@ function App() {
     if (res.error || !res.data) { console.error("swap submit failed:", res.error); showT("Couldn't submit swap request — check connection","error"); return; }
  setSwaps(function(p){return p.concat([{id:res.data.id,fromId:user.eid,from:(myEmp&&myEmp.name)||user.name,toId:Number(swapForm.toId),to:(toEmp&&toEmp.name)||"",day:swapForm.day,workDate:workDate,shift:theirActualShift,myShift:myActualShift,reason:sanitize(swapForm.reason),status:"pending"}]);});
  setSwapForm({toId:"",day:DAYS[0],shift:"",reason:""});
- showT("Swap request submitted");
+ showT(tr("Swap request submitted"));
  writeAudit("SWAP_REQUESTED", ((toEmp&&toEmp.name)||"coworker")+" · "+auditDay(workDate), user.id);
  }
 
@@ -2011,7 +2071,7 @@ function App() {
  if (res.error || !res.data) { console.error("PTO submit failed:", res.error); showT("Couldn't submit request — check connection","error"); return; }
  setPtos(function(p){return p.concat([{id:res.data.id,eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:ptoType,startDate:ptoDate,endDate:ptoEnd||ptoDate,note:sanitize(ptoNote),status:"pending"}]);});
  setPtoDate(null); setPtoEnd(null); setPtoNote("");
- showT("Time-off request submitted");
+ showT(tr("Time-off request submitted"));
  writeAudit("TIME_OFF_REQUESTED", ptoType+" · "+auditRange(ptoDate, ptoEnd||ptoDate), user.id);
  }
  // Approved time off means they aren't working: take them off any shift
@@ -2070,13 +2130,13 @@ function App() {
   if (res.error || !res.data) {
    console.error("claim failed:", res.error);
    var taken = res.error && /taken/.test(res.error.message||"");
-   showT(taken ? "Someone already claimed that shift" : "Couldn't claim — check connection","error");
+   showT(tr(taken ? "Someone already claimed that shift" : "Couldn't claim — check connection"),"error");
    if (taken) setOpens(function(p){ return p.filter(function(o){ return o.id!==id; }); });
    return;
   }
   var row = mapOpenShift(res.data);
   setOpens(function(p){return p.map(function(o){return o.id===id?row:o;});});
-  showT("Shift claimed - awaiting approval");
+  showT(tr("Shift claimed - awaiting approval"));
   writeAudit("OPEN_SHIFT_CLAIMED", row.shift+" · "+auditDay(row.workDate), user.id);
  });
  }
@@ -2119,7 +2179,7 @@ function App() {
  }).select().single();
  if (res.error || !res.data) { console.error("call-in submit failed:", res.error); showT("Couldn't submit notice — check connection","error"); return; }
  setCallins(function(p){return p.concat([{id:res.data.id,eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:callType,note:sanitize(callNote),ts:Date.now(),status:"pending",workDate:res.data.work_date}]);});
- setCallNote(""); showT("Attendance notice submitted");
+ setCallNote(""); showT(tr("Attendance notice submitted"));
  writeAudit("CALL_IN", callType, user.id);
  }
  // ── Find Coverage ───────────────────────────────────────
@@ -2474,15 +2534,15 @@ function App() {
     {id:"settings",   label:"Settings"},
   ];
   var EMP_TABS = [
-    {id:"myschedule",label:"My Schedule"},
-    {id:"today",     label:"Who's Working"},
-    {id:"openShifts",label:"Open Shifts"},
-    {id:"timeoff",   label:"Time Off"},
-    {id:"swap",      label:"Shift Swap"},
-    {id:"callin",    label:"Call In"},
-    {id:"clockin",   label:"Clock In"},
-    {id:"chat",      label:"Team Chat"},
-    {id:"settings",  label:"Settings"},
+    {id:"myschedule",label:tr("My Schedule")},
+    {id:"today",     label:tr("Who's Working")},
+    {id:"openShifts",label:tr("Open Shifts")},
+    {id:"timeoff",   label:tr("Time Off")},
+    {id:"swap",      label:tr("Shift Swap")},
+    {id:"callin",    label:tr("Call In")},
+    {id:"clockin",   label:tr("Clock In")},
+    {id:"chat",      label:tr("Team Chat")},
+    {id:"settings",  label:tr("Settings")},
   ];
  var TABS = isAdmin ? ADMIN_TABS : EMP_TABS;
   // iOS-style tab change: the page slides toward the tab you picked.
@@ -3997,6 +4057,14 @@ function App() {
    </div>
   </div>
  )}
+ {tab==="settings" && (
+  <div style={{ ...CARD, marginBottom:16, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
+   <div><div style={{ fontSize:14, fontWeight:700, color:T.text }}>{tr("Language")}</div><div style={{ fontSize:12, color:T.muted, marginTop:2 }}>{tr("Changes the employee screens on this phone.")}</div></div>
+   <div role="group" aria-label="Language" style={{ display:"flex", border:"1px solid "+T.border, borderRadius:8, padding:2 }}>
+    {[["en","English"],["es","Español"]].map(function(o){ var on = lang === o[0]; return <button key={o[0]} aria-pressed={on} onClick={function(){ changeLang(o[0]); }} style={{ minHeight:36, padding:"0 14px", border:"none", borderRadius:6, background:on?T.surface:"transparent", color:on?T.text:T.faint, fontWeight:on?700:400, fontSize:12, cursor:"pointer", fontFamily:"inherit" }}>{o[1]}</button>; })}
+   </div>
+  </div>
+ )}
  {tab==="settings" && <NotificationSettings user={user} emps={emps} isAdmin={isAdmin} showT={showT} weeks={[0,1].map(function(o){ return { key:isoDate(getWeekStart(o)), label:fmtWeekRange(o) }; })} defaultWeek={weekOff === 1 ? 1 : 0} />}
  {tab==="settings" && (
    <Settings
@@ -4073,11 +4141,11 @@ function App() {
  {/* EMPLOYEE: MY SCHEDULE */}
  {tab==="myschedule" && (function(){
  var me = emps.find(function(e){return e.id===user.eid;});
- if (!me) return <div style={{ color:T.faint, padding:28, textAlign:"center" }}>No schedule found.</div>;
+ if (!me) return <div style={{ color:T.faint, padding:28, textAlign:"center" }}>{tr("No schedule found.")}</div>;
  if (!isAdmin && !isPublished) return (
    <div>
      <div style={{ marginBottom:14 }}>
-       <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>My Schedule</h2>
+       <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("My Schedule")}</h2>
        <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{weekLabel}</p>
      </div>
      <NotPosted weekLabel={weekLabel} />
@@ -4099,7 +4167,7 @@ function App() {
    var minsUntil = Math.round((shiftStart - nowT) / 60000);
    var lastP = timeclock.slice().reverse().find(function(p){ return p.eid===user.eid && new Date(p.ts).toDateString()===new Date().toDateString(); });
    var isClockedIn = lastP && (lastP.type==="in" || lastP.type==="lunch_in" || lastP.type==="lunch_out");
-   if (isClockedIn) { reminderMsg = "You are clocked in. Have a great shift!"; reminderType = "success"; }
+   if (isClockedIn) { reminderMsg = tr("You are clocked in. Have a great shift!"); reminderType = "success"; }
   else if (minsUntil > 0 && minsUntil <= 60) { reminderMsg = "Your " + (shiftDef?shiftDef.label:todayShift) + " shift (" + to12(effStart) + ") starts in " + minsUntil + " min. Remember to clock in!"; reminderType = "warning"; }
   else if (minsUntil > 60 && minsUntil <= 180) { reminderMsg = "Heads up — your " + (shiftDef?shiftDef.label:todayShift) + " shift starts at " + to12(effStart) + " (" + Math.round(minsUntil/60*10)/10 + " hrs away)."; reminderType = "info"; }
    else if (minsUntil <= 0 && minsUntil > -60 && !isClockedIn) { reminderMsg = "Your shift started " + Math.abs(minsUntil) + " min ago — clock in now!"; reminderType = "danger"; }
@@ -4115,7 +4183,7 @@ function App() {
    </div>
  )}
  <div style={{ marginBottom:14 }}>
- <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>My Schedule</h2>
+ <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("My Schedule")}</h2>
  <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{me.name} - {me.role}</p>
  </div>
  {(function(){
@@ -4131,10 +4199,10 @@ function App() {
      var endAt = new Date(startAt.getTime() + (b - a) * 3600000);
      if (endAt > now) next = { day:d, di:i, sh:sh, t:t, startAt:startAt, s:a, en:b };
    }
-   if (!next) return <div style={{ ...CARD, marginBottom:14, padding:"16px 18px" }}><div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>NEXT SHIFT</div><div style={{ fontSize:15, fontWeight:600, color:T.text, marginTop:6 }}>No more shifts this week</div></div>;
+   if (!next) return <div style={{ ...CARD, marginBottom:14, padding:"16px 18px" }}><div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>{t(tr("NEXT SHIFT"))}</div><div style={{ fontSize:15, fontWeight:600, color:T.text, marginTop:6 }}>{tr("No more shifts this week")}</div></div>;
    var mins = Math.round((next.startAt - now) / 60000);
    var live = mins <= 0;
-   var cd = live ? "ON NOW" : mins >= 1440 ? "IN " + Math.floor(mins/1440) + "D " + Math.floor((mins%1440)/60) + "H" : "IN " + Math.floor(mins/60) + "H " + (mins%60) + "M";
+   var cd = live ? tr("ON NOW") : mins >= 1440 ? tr("IN ") + Math.floor(mins/1440) + "D " + Math.floor((mins%1440)/60) + "H" : tr("IN ") + Math.floor(mins/60) + "H " + (mins%60) + "M";
    var c = shiftColor(next.sh);
    var mates = emps.filter(function(e){
      if (e.id === me.id) return false; var sh2 = weekSched[next.day] && weekSched[next.day][e.id]; if (!sh2) return false;
@@ -4147,7 +4215,7 @@ function App() {
    return (
      <section aria-label="Next shift" style={{ background:T.surface, border:"1px solid "+T.border, borderRadius:10, padding:18, marginBottom:14 }}>
        <div style={{ display:"flex", justifyContent:"space-between", gap:10, fontFamily:MONO, fontSize:11 }}>
-         <span style={{ color:T.muted }}>{live ? "ON SHIFT" : "NEXT SHIFT"} · {(next.day + " " + getDayDate(next.di, weekOff)).toUpperCase()}</span>
+         <span style={{ color:T.muted }}>{live ? tr("ON SHIFT") : tr("NEXT SHIFT")} · {(next.day + " " + getDayDate(next.di, weekOff)).toUpperCase()}</span>
          <span style={{ color:T.accent, whiteSpace:"nowrap" }}>{cd}</span>
        </div>
        <div style={{ fontFamily:MONO, fontSize:40, fontWeight:500, letterSpacing:"-0.04em", lineHeight:1, marginTop:14, color:T.text, whiteSpace:"nowrap" }}>{A.main}<span style={{ fontSize:18, color:T.faint, letterSpacing:0 }}>{A.ap}</span><span style={{ color:T.faint, padding:"0 6px" }}>–</span>{B.main}<span style={{ fontSize:18, color:T.faint, letterSpacing:0 }}>{B.ap}</span></div>
@@ -4164,8 +4232,8 @@ function App() {
        )}
        {!isAdmin && (
          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, minmax(0, 1fr))", gap:8, marginTop:14 }}>
-           <button onClick={function(){ goTab("swap"); }} style={{ ...GBTN, color:T.text, minHeight:44, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="swap" size={16} />Swap</button>
-           <button onClick={function(){ goTab("callin"); }} style={{ ...GBTN, color:T.text, minHeight:44 }}>Can't make it</button>
+           <button onClick={function(){ goTab("swap"); }} style={{ ...GBTN, color:T.text, minHeight:44, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="swap" size={16} />{tr("Swap")}</button>
+           <button onClick={function(){ goTab("callin"); }} style={{ ...GBTN, color:T.text, minHeight:44 }}>{tr("Can't make it")}</button>
          </div>
        )}
      </section>
@@ -4200,9 +4268,9 @@ function App() {
  } else if (cellNotes[dayIso+"_"+me.id]) {
   body = <span style={{ fontSize:14, fontWeight:600, color:T.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", display:"block" }}>{cellNotes[dayIso+"_"+me.id]}</span>;
  } else if (!avail) {
-  body = <span style={{ fontSize:13, color:T.muted }}>Off</span>;
+  body = <span style={{ fontSize:13, color:T.muted }}>{tr("Off")}</span>;
  } else {
-  body = <span style={{ fontSize:13, color:T.faint, whiteSpace:"nowrap" }}>Not scheduled</span>;
+  body = <span style={{ fontSize:13, color:T.faint, whiteSpace:"nowrap" }}>{tr("Not scheduled")}</span>;
  }
  var myNote = shift && !pto ? cellNotes[dayIso+"_"+me.id] : null;
  var trackEl = null;
@@ -4210,7 +4278,7 @@ function App() {
  return (
  <div key={d} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", minHeight:52, borderBottom:di<arr.length-1?"1px solid "+T.border:"none", borderLeft:"3px solid "+(isToday?T.accent:"transparent"), background:shift&&!pto?shiftColor(shift).bg:"transparent" }}>
   <div style={{ width:54, flexShrink:0 }}>
-   <div style={{ fontSize:11, fontWeight:700, color:isToday?T.accent:T.faint, letterSpacing:"0.04em", textTransform:"uppercase" }}>{isToday ? "Today" : d}</div>
+   <div style={{ fontSize:11, fontWeight:700, color:isToday?T.accent:T.faint, letterSpacing:"0.04em", textTransform:"uppercase" }}>{isToday ? tr("Today") : tr(d)}</div>
    <div className="mono" style={{ fontSize:12, color:T.text }}>{dd}</div>
   </div>
   <div style={{ flex:1, minWidth:0 }}>{body}{myNote && <div style={{ fontSize:12, color:T.muted, marginTop:3 }}>{myNote}</div>}{trackEl}</div>
@@ -4220,13 +4288,14 @@ function App() {
  </div>
  <div style={CARD}>
  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:9 }}>
- <span style={{ fontSize:13, color:T.muted }}>Hours this week</span>
+ <span style={{ fontSize:13, color:T.muted }}>{tr("Hours this week")}</span>
  <span className="mono" style={{ fontSize:13, fontWeight:600, color:T.success, whiteSpace:"nowrap" }}>{weekHours(me.id, weekSched, shiftDefs)}h / {me.max}h</span>
  </div>
  <div style={{ height:5, background:T.bg, borderRadius:4, border:"1px solid "+T.border }}>
  <div style={{ height:"100%", width:Math.min(100,weekHours(me.id, weekSched, shiftDefs)/me.max*100)+"%", borderRadius:4, background:T.accent, transition:"width .4s" }} />
  </div>
  </div>
+ <CalendarSync />
  </div>
  );
  })()}
@@ -4245,7 +4314,7 @@ function App() {
                   <div style={{ marginBottom:18 }}>
                     <div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>{new Date().toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}).toUpperCase()}</div>
                     <div style={{ fontFamily:MONO, fontSize:56, fontWeight:500, letterSpacing:"-0.06em", lineHeight:1, color:T.text, margin:"10px 0 14px" }}>{(function(){ var n = new Date(); var h = n.getHours(); return (h % 12 || 12) + ":" + String(n.getMinutes()).padStart(2,"0"); })()}<span style={{ fontSize:18, letterSpacing:0, color:T.faint, marginLeft:6 }}>{new Date().getHours() >= 12 ? "PM" : "AM"}</span></div>
-                    <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>Who's working today</h2>
+                    <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Who's working today")}</h2>
                   </div>
                   <NotPosted weekLabel={weekLabel} />
                 </div>
@@ -4255,11 +4324,11 @@ function App() {
                   <div style={{ marginBottom:18 }}>
                     <div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>{new Date().toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}).toUpperCase()}</div>
                     <div style={{ fontFamily:MONO, fontSize:56, fontWeight:500, letterSpacing:"-0.06em", lineHeight:1, color:T.text, margin:"10px 0 14px" }}>{(function(){ var n = new Date(); var h = n.getHours(); return (h % 12 || 12) + ":" + String(n.getMinutes()).padStart(2,"0"); })()}<span style={{ fontSize:18, letterSpacing:0, color:T.faint, marginLeft:6 }}>{new Date().getHours() >= 12 ? "PM" : "AM"}</span></div>
-                    <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>Who's working today</h2>
+                    <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Who's working today")}</h2>
                     <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{todayDay} — your department{visibleDepts.length>1?" and linked teams":""}</p>
                   </div>
                   {visibleDepts.length===0 && (
-                    <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:32 }}>You haven't been assigned to a department yet. Ask your admin to set this up in the Departments tab.</div>
+                    <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:32 }}>{tr("You haven't been assigned to a department yet. Ask your admin to set this up in the Departments tab.")}</div>
                   )}
                   {visibleDepts.map(function(dept){
                     var deptEmps     = emps.filter(function(e){ return e.dept===dept.id; });
@@ -4270,7 +4339,7 @@ function App() {
                         <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
                           <div style={{ width:10, height:10, borderRadius:"50%", background:dept.color }} />
                           <span style={{ fontWeight:700, fontSize:14 }}>{dept.name}</span>
-                          {isMyDept && <span style={{ padding:"2px 8px", borderRadius:20, background:dept.color+"22", color:deptInk(dept.color), fontSize:11, fontWeight:600 }}>Your team</span>}
+                          {isMyDept && <span style={{ padding:"2px 8px", borderRadius:20, background:dept.color+"22", color:deptInk(dept.color), fontSize:11, fontWeight:600 }}>{tr("Your team")}</span>}
                           <span style={{ fontSize:12, color:T.faint }}>{workingToday.length} on shift</span>
                         </div>
                         {workingToday.length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:18 }}>Nobody from {dept.name} is scheduled today</div>}
@@ -4303,8 +4372,8 @@ function App() {
  {/* EMPLOYEE: OPEN SHIFTS */}
  {tab==="openShifts" && !isAdmin && (
  <div>
- <div style={{ fontSize:13, color:T.muted, marginBottom:16 }}>Pick up available shifts posted by your manager</div>
- {opens.filter(function(s){return s.status==="open";}).length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:32 }}>No open shifts available right now</div>}
+ <div style={{ fontSize:13, color:T.muted, marginBottom:16 }}>{tr("Pick up available shifts posted by your manager")}</div>
+ {opens.filter(function(s){return s.status==="open";}).length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13, padding:32 }}>{tr("No open shifts available right now")}</div>}
  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
  {opens.filter(function(s){return s.status==="open";}).map(function(s){
  return (
@@ -4316,14 +4385,14 @@ function App() {
  {s.role && <div style={{ fontSize:12, color:T.muted, marginBottom:5 }}>Role: {s.role}</div>}
  {s.note && <div style={{ fontSize:12, color:T.faint, marginBottom:9 }}>{s.note}</div>}
  <div style={{ fontSize:11, color:T.faint, marginBottom:11 }}>Posted by {s.postedBy}</div>
- <button onClick={function(){claimShift(s.id);}} style={{ ...BTN, width:"100%", fontSize:13 }}>Claim this shift</button>
+ <button onClick={function(){claimShift(s.id);}} style={{ ...BTN, width:"100%", fontSize:13 }}>{tr("Claim this shift")}</button>
  </div>
  );
  })}
  </div>
  {opens.filter(function(s){return s.claimedBy===user.eid;}).length > 0 && (
  <div style={{ marginTop:24 }}>
- <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>My Claimed Shifts</div>
+ <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>{tr("My Claimed Shifts")}</div>
  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
  {opens.filter(function(s){return s.claimedBy===user.eid;}).map(function(s){
  return (
@@ -4348,21 +4417,21 @@ function App() {
  {tab==="timeoff" && !isAdmin && (
  <div>
  <div style={{ marginBottom:14 }}>
- <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>Time Off</h2>
- <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Request vacation, sick days, or personal time</p>
+ <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Time Off")}</h2>
+ <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{tr("Request vacation, sick days, or personal time")}</p>
  </div>
  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, maxWidth:640 }} className="two-col">
  <div style={CARD}>
- <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>New Request</div>
- <div style={{ marginBottom:11 }}><label style={LBL}>Request type</label><select value={ptoType} onChange={function(e){setPtoType(e.target.value);}} style={INP}>{PTO_TYPES.map(function(t){return <option key={t}>{t}</option>;})}</select></div>
- <div style={{ marginBottom:11, position:"relative" }}><DateInput label="Start date" value={ptoDate} onChange={setPtoDate} rangeEnd={ptoEnd} onRangeEnd={setPtoEnd} allowRange placeholder="Select start date" /></div>
- {ptoDate && <div style={{ marginBottom:11, position:"relative" }}><DateInput label="End date (optional)" value={ptoEnd} onChange={setPtoEnd} placeholder="Same as start" /></div>}
- <div style={{ marginBottom:14 }}><label style={LBL}>Note for manager</label><input value={ptoNote} onChange={function(e){setPtoNote(e.target.value);}} placeholder="Any details..." style={INP} /></div>
- <button onClick={submitPTO} style={{ ...BTN, width:"100%", padding:"10px" }}>Submit Request</button>
+ <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>{tr("New Request")}</div>
+ <div style={{ marginBottom:11 }}><label style={LBL}>{tr("Request type")}</label><select value={ptoType} onChange={function(e){setPtoType(e.target.value);}} style={INP}>{PTO_TYPES.map(function(pt){return <option key={pt} value={pt}>{tr(pt)}</option>;})}</select></div>
+ <div style={{ marginBottom:11, position:"relative" }}><DateInput label={tr("Start date")} value={ptoDate} onChange={setPtoDate} rangeEnd={ptoEnd} onRangeEnd={setPtoEnd} allowRange placeholder={tr("Select start date")} /></div>
+ {ptoDate && <div style={{ marginBottom:11, position:"relative" }}><DateInput label={tr("End date (optional)")} value={ptoEnd} onChange={setPtoEnd} placeholder={tr("Same as start")} /></div>}
+ <div style={{ marginBottom:14 }}><label style={LBL}>{tr("Note for manager")}</label><input value={ptoNote} onChange={function(e){setPtoNote(e.target.value);}} placeholder={tr("Any details...")} style={INP} /></div>
+ <button onClick={submitPTO} style={{ ...BTN, width:"100%", padding:"10px" }}>{tr("Submit Request")}</button>
  </div>
  <div>
- <div style={{ fontSize:13, fontWeight:600, marginBottom:11 }}>Your Requests</div>
- {ptos.filter(function(r){return r.eid===user.eid;}).length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13 }}>No requests yet</div>}
+ <div style={{ fontSize:13, fontWeight:600, marginBottom:11 }}>{tr("Your Requests")}</div>
+ {ptos.filter(function(r){return r.eid===user.eid;}).length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13 }}>{tr("No requests yet")}</div>}
  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
  {ptos.filter(function(r){return r.eid===user.eid;}).map(function(req){
  return (
@@ -4386,14 +4455,14 @@ function App() {
  {tab==="swap" && !isAdmin && (
  <div>
  <div style={{ marginBottom:14 }}>
- <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>Shift Swap</h2>
- <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Request a swap with a colleague</p>
+ <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Shift Swap")}</h2>
+ <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{tr("Request a swap with a colleague")}</p>
  </div>
  {!isPublished && <div style={{ marginBottom:16 }}><NotPosted weekLabel={weekLabel} compact /></div>}
  {isPublished && (
  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, maxWidth:640 }} className="two-col">
  <div style={CARD}>
- <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>New Request</div>
+ <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>{tr("New Request")}</div>
 
  {(function(){
    var myShift = weekSched[swapForm.day] && weekSched[swapForm.day][user.eid];
@@ -4404,7 +4473,7 @@ function App() {
        {myShift && sc
          ? <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:9, background:sc.bg, border:"1px solid "+sc.border }}>
              <Icon name="calendar" size={14} />
-             <div><div style={{ fontSize:13, fontWeight:700, color:sc.text }}>{(function(){ var _sd=shiftDefs.find(function(d){return d.id===myShift;}); return _sd?(_sd.label+" "+to12(_sd.start)+"-"+to12(_sd.end)):myShift; })()}</div><div style={{ fontSize:11, color:sc.text, opacity:0.8 }}>Your current shift — this is what you're swapping</div></div>
+             <div><div style={{ fontSize:13, fontWeight:700, color:sc.text }}>{(function(){ var _sd=shiftDefs.find(function(d){return d.id===myShift;}); return _sd?(_sd.label+" "+to12(_sd.start)+"-"+to12(_sd.end)):myShift; })()}</div><div style={{ fontSize:11, color:sc.text, opacity:0.8 }}>{tr("Your current shift — this is what you're swapping")}</div></div>
            </div>
          : <div style={{ padding:"10px 12px", borderRadius:9, background:T.bg, border:"1px solid "+T.border, fontSize:13, color:T.faint }}>You have no shift on {swapForm.day}</div>
        }
@@ -4412,9 +4481,9 @@ function App() {
    );
  })()}
 
- <div style={{ marginBottom:11 }}><label style={LBL}>Swap with</label><select value={swapForm.toId} onChange={function(e){setSwapForm(function(p){return {...p,toId:e.target.value};});}} style={INP}><option value="">Select a colleague...</option>{emps.filter(function(e){return e.id!==user.eid;}).map(function(e){return <option key={e.id} value={e.id}>{e.name} — {e.role}</option>; })}</select></div>
+ <div style={{ marginBottom:11 }}><label style={LBL}>{tr("Swap with")}</label><select value={swapForm.toId} onChange={function(e){setSwapForm(function(p){return {...p,toId:e.target.value};});}} style={INP}><option value="">{tr("Select a colleague...")}</option>{emps.filter(function(e){return e.id!==user.eid;}).map(function(e){return <option key={e.id} value={e.id}>{e.name} — {e.role}</option>; })}</select></div>
 
- <div style={{ marginBottom:11 }}><label style={LBL}>Day</label><select value={swapForm.day} onChange={function(e){setSwapForm(function(p){return {...p,day:e.target.value};});}} style={INP}>{orderedDays().map(function(d){return <option key={d}>{d}</option>;})}</select></div>
+ <div style={{ marginBottom:11 }}><label style={LBL}>{tr("Day")}</label><select value={swapForm.day} onChange={function(e){setSwapForm(function(p){return {...p,day:e.target.value};});}} style={INP}>{orderedDays().map(function(d){return <option key={d}>{d}</option>;})}</select></div>
 
  {swapForm.toId ? (function(){
    var toEmp      = emps.find(function(e){ return e.id===Number(swapForm.toId); });
@@ -4422,24 +4491,24 @@ function App() {
    var sc2 = theirShift ? shiftColor(theirShift) : null;
    return (
      <div style={{ marginBottom:14 }}>
-       <label style={LBL}>{toEmp ? toEmp.name.split(" ")[0] : "Their"} shift on {swapForm.day}</label>
+       <label style={LBL}>{toEmp ? toEmp.name.split(" ")[0] : tr("Their")} {tr("shift on")} {tr(swapForm.day)}</label>
        {theirShift && sc2
          ? <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:9, background:sc2.bg, border:"1px solid "+sc2.border }}>
              <Icon name="swap" size={14} />
-             <div><div style={{ fontSize:13, fontWeight:700, color:sc2.text }}>{(function(){ var _sd=shiftDefs.find(function(d){return d.id===theirShift;}); return _sd?(_sd.label+" "+to12(_sd.start)+"-"+to12(_sd.end)):theirShift; })()}</div><div style={{ fontSize:11, color:sc2.text, opacity:0.8 }}>You would take this shift</div></div>
+             <div><div style={{ fontSize:13, fontWeight:700, color:sc2.text }}>{(function(){ var _sd=shiftDefs.find(function(d){return d.id===theirShift;}); return _sd?(_sd.label+" "+to12(_sd.start)+"-"+to12(_sd.end)):theirShift; })()}</div><div style={{ fontSize:11, color:sc2.text, opacity:0.8 }}>{tr("You would take this shift")}</div></div>
            </div>
-         : <div style={{ padding:"10px 12px", borderRadius:9, background:T.bg, border:"1px solid "+T.border, fontSize:13, color:T.faint }}>{toEmp ? toEmp.name.split(" ")[0] : "They"} has no shift on {swapForm.day}</div>
+         : <div style={{ padding:"10px 12px", borderRadius:9, background:T.bg, border:"1px solid "+T.border, fontSize:13, color:T.faint }}>{toEmp ? toEmp.name.split(" ")[0] : tr("They")} {tr("has no shift on")} {tr(swapForm.day)}</div>
        }
      </div>
    );
  })() : null}
 
- <div style={{ marginBottom:14 }}><label style={LBL}>Reason (optional)</label><input value={swapForm.reason} onChange={function(e){setSwapForm(function(p){return {...p,reason:e.target.value};});}} placeholder="e.g. Family event" style={INP} /></div>
- <button onClick={submitSwap} style={{ ...BTN, width:"100%", padding:"10px" }}>Submit Request</button>
+ <div style={{ marginBottom:14 }}><label style={LBL}>{tr("Reason (optional)")}</label><input value={swapForm.reason} onChange={function(e){setSwapForm(function(p){return {...p,reason:e.target.value};});}} placeholder="e.g. Family event" style={INP} /></div>
+ <button onClick={submitSwap} style={{ ...BTN, width:"100%", padding:"10px" }}>{tr("Submit Request")}</button>
  </div>
  <div>
- <div style={{ fontSize:13, fontWeight:600, marginBottom:11 }}>Your Requests</div>
- {swaps.filter(function(r){return r.fromId===user.eid;}).length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13 }}>No requests yet</div>}
+ <div style={{ fontSize:13, fontWeight:600, marginBottom:11 }}>{tr("Your Requests")}</div>
+ {swaps.filter(function(r){return r.fromId===user.eid;}).length===0 && <div style={{ ...CARD, textAlign:"center", color:T.faint, fontSize:13 }}>{tr("No requests yet")}</div>}
  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
  {swaps.filter(function(r){return r.fromId===user.eid;}).map(function(req){
  return (
@@ -4463,37 +4532,37 @@ function App() {
  {tab==="callin" && !isAdmin && (
  <div style={{ maxWidth:420 }}>
  <div style={{ marginBottom:14 }}>
- <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>Call In</h2>
- <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Notify your manager if you will be absent, late, or leaving early.</p>
+ <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Call In")}</h2>
+ <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{tr("Notify your manager if you will be absent, late, or leaving early.")}</p>
  </div>
  <div style={CARD}>
- <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>Attendance Notice</div>
+ <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>{tr("Attendance Notice")}</div>
  <div style={{ marginBottom:11 }}>
- <label style={LBL}>Type</label>
+ <label style={LBL}>{tr("Type")}</label>
  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7 }}>
  {ATTEND.map(function(t){
  return (
- <button key={t} onClick={function(){setCallType(t);}} style={{ padding:"9px 12px", borderRadius:9, border:"2px solid "+(callType===t?T.accent:T.border), background:callType===t?T.accentL:T.surface, color:callType===t?T.accent:T.muted, cursor:"pointer", fontSize:12, fontWeight:callType===t?600:400, fontFamily:"inherit" }}>{t}</button>
+ <button key={t} onClick={function(){setCallType(t);}} style={{ padding:"9px 12px", borderRadius:9, border:"2px solid "+(callType===t?T.accent:T.border), background:callType===t?T.accentL:T.surface, color:callType===t?T.accent:T.muted, cursor:"pointer", fontSize:12, fontWeight:callType===t?600:400, fontFamily:"inherit" }}>{tr(t)}</button>
  );
  })}
  </div>
  </div>
  <div style={{ marginBottom:16 }}>
- <label style={LBL}>Note</label>
- <textarea value={callNote} onChange={function(e){setCallNote(e.target.value);}} placeholder="Let your manager know what's happening..." rows={3} style={{ ...INP, resize:"vertical" }} />
+ <label style={LBL}>{tr("Note")}</label>
+ <textarea value={callNote} onChange={function(e){setCallNote(e.target.value);}} placeholder={tr("Let your manager know what's happening...")} rows={3} style={{ ...INP, resize:"vertical" }} />
  </div>
- <button onClick={submitCallin} style={{ ...BTN, width:"100%", background:T.danger, padding:"10px" }}>Send Notice</button>
+ <button onClick={submitCallin} style={{ ...BTN, width:"100%", background:T.danger, padding:"10px" }}>{tr("Send Notice")}</button>
  </div>
  {callins.filter(function(c){return c.eid===user.eid;}).length > 0 && (
  <div style={{ marginTop:20 }}>
- <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>Your Recent Notices</div>
+ <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>{tr("Your Recent Notices")}</div>
  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
  {callins.filter(function(c){return c.eid===user.eid;}).map(function(c){
  return (
  <div key={c.id} style={CARD}>
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
  <span style={{ padding:"2px 8px", borderRadius:20, background:T.dangerL, color:T.danger, fontSize:11, fontWeight:600 }}>{c.type}</span>
- <span style={{ fontSize:11, color:c.status==="acknowledged"?T.success:T.faint }}>{c.status==="acknowledged"?"Acknowledged":"Pending"}</span>
+ <span style={{ fontSize:11, color:c.status==="acknowledged"?T.success:T.faint }}>{c.status==="acknowledged"?tr("Acknowledged"):tr("Pending")}</span>
  </div>
  {c.note && <div style={{ fontSize:12, color:T.muted, marginTop:6 }}>{c.note}</div>}
  <div style={{ fontSize:10, color:T.faint, marginTop:4 }}>{fmtAgo(c.ts)}</div>
@@ -4520,24 +4589,24 @@ function App() {
               var shiftStartPunch = null;
               if (onShift) { for (var spi = timeclock.length-1; spi >= 0; spi--) { var spp = timeclock[spi]; if (spp.eid!==user.eid) continue; if (spp.type==="out") break; if (spp.type==="in") { shiftStartPunch = spp; break; } } }
               var todayPunches = timeclock.filter(function(p){ return p.eid===user.eid && new Date(p.ts).toDateString()===new Date().toDateString(); });
-              async function clockIn()  { var realId = await syncPunchInsert(user.eid, "in", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"in",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked in! Have a great shift."); }
-              async function clockOut() { var realId = await syncPunchInsert(user.eid, "out", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"out",ts:Date.now(),shift:todayShift||""}]); }); showT("Clocked out! See you next time."); }
+              async function clockIn()  { var realId = await syncPunchInsert(user.eid, "in", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"in",ts:Date.now(),shift:todayShift||""}]); }); showT(tr("Clocked in! Have a great shift.")); }
+              async function clockOut() { var realId = await syncPunchInsert(user.eid, "out", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"out",ts:Date.now(),shift:todayShift||""}]); }); showT(tr("Clocked out! See you next time.")); }
               var now = new Date();
               var hr = now.getHours(); var mn = String(now.getMinutes()).padStart(2,"0"); var ap = hr>=12?"PM":"AM"; hr=hr%12||12;
               var sc = todayShift ? shiftColor(todayShift) : null;
               return (
                 <div style={{ maxWidth:400 }}>
                   <div style={{ marginBottom:16 }}>
-                    <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>Clock In / Out</h2>
-                    <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Track your hours for payroll</p>
+                    <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Clock In / Out")}</h2>
+                    <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{tr("Track your hours for payroll")}</p>
                   </div>
                   <div style={{ ...CARD, textAlign:"center", padding:28, marginBottom:16 }}>
                     {todayShift && sc ? (
                       <div style={{ marginBottom:14 }}>
-                        <div style={{ fontSize:11, color:T.faint, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:6 }}>Today's Shift</div>
+                        <div style={{ fontSize:11, color:T.faint, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:6 }}>{tr("Today's Shift")}</div>
                         <span style={{ padding:"5px 14px", borderRadius:20, background:sc.bg, color:sc.text, fontSize:13, fontWeight:600, border:"1px solid "+sc.border }}>{todayShift}</span>
                       </div>
-                    ) : <div style={{ marginBottom:14, fontSize:13, color:T.faint }}>No shift scheduled today</div>}
+                    ) : <div style={{ marginBottom:14, fontSize:13, color:T.faint }}>{tr("No shift scheduled today")}</div>}
                     <div style={{ fontFamily:MONO, fontSize:60, fontWeight:500, letterSpacing:"-0.06em", lineHeight:1, color:T.text, marginBottom:8 }}>{hr}:{mn}<span style={{ fontSize:18, letterSpacing:0, color:T.faint, marginLeft:6 }}>{ap}</span></div>
                     <div style={{ fontSize:12, color:T.faint, marginBottom:18 }}>{now.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</div>
                     {isClockedIn && lastPunch && (function(){
@@ -4554,26 +4623,26 @@ function App() {
                     })()}
                     <div style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"5px 12px", borderRadius:20, background:isClockedIn?T.successL:onBreak?"var(--xFEF9C3)":T.bg, border:"1px solid "+(isClockedIn?"var(--x6EE7B7)":onBreak?"var(--xFDE047)":T.border), marginBottom:18 }}>
                       <div style={{ width:8, height:8, borderRadius:"50%", background:isClockedIn?T.success:onBreak?"var(--x854D0E)":T.faint, animation:isClockedIn?"pulse 2s infinite":"none" }} />
-                      <span style={{ fontSize:12, fontWeight:600, color:isClockedIn?T.success:onBreak?"var(--x854D0E)":T.faint }}>{isClockedIn?"Clocked In":onBreak?"On Lunch":"Not Clocked In"}</span>
+                      <span style={{ fontSize:12, fontWeight:600, color:isClockedIn?T.success:onBreak?"var(--x854D0E)":T.faint }}>{isClockedIn?tr("Clocked In"):onBreak?tr("On Lunch"):tr("Not Clocked In")}</span>
                     </div>
                     {onBreak
-                      ? <button onClick={async function(){ var realId = await syncPunchInsert(user.eid, "lunch_in", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_in",ts:Date.now(),shift:todayShift||""}]); }); showT("Back from lunch!"); }}
-                          style={{ ...BTN, width:"100%", padding:"14px", fontSize:15, fontWeight:700, background:"var(--btnLunchIn)", color:"var(--btnOn)", borderRadius:12 }}>Back From Lunch</button>
+                      ? <button onClick={async function(){ var realId = await syncPunchInsert(user.eid, "lunch_in", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_in",ts:Date.now(),shift:todayShift||""}]); }); showT(tr("Back from lunch!")); }}
+                          style={{ ...BTN, width:"100%", padding:"14px", fontSize:15, fontWeight:700, background:"var(--btnLunchIn)", color:"var(--btnOn)", borderRadius:12 }}>{tr("Back From Lunch")}</button>
                       : !isClockedIn
-                      ? <button onClick={clockIn}  style={{ ...BTN, width:"100%", padding:"14px", fontSize:15, fontWeight:700, background:"var(--btnIn)", color:"var(--btnOn)", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="login" size={17} />Clock In</button>
+                      ? <button onClick={clockIn}  style={{ ...BTN, width:"100%", padding:"14px", fontSize:15, fontWeight:700, background:"var(--btnIn)", color:"var(--btnOn)", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="login" size={17} />{tr("Clock In")}</button>
                       : (
                         <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
-                          <button onClick={clockOut} style={{ ...BTN, width:"100%", padding:"13px", fontSize:15, fontWeight:700, background:"var(--btnOut)", color:"var(--btnOn)", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="logout" size={17} />Clock Out</button>
+                          <button onClick={clockOut} style={{ ...BTN, width:"100%", padding:"13px", fontSize:15, fontWeight:700, background:"var(--btnOut)", color:"var(--btnOn)", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Icon name="logout" size={17} />{tr("Clock Out")}</button>
                           <div style={{ display:"grid", gridTemplateColumns:"1fr", gap:9 }}>
-                            <button onClick={async function(){ var realId = await syncPunchInsert(user.eid, "lunch_out", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_out",ts:Date.now(),shift:todayShift||""}]); }); showT("Lunch started - enjoy your break!"); }}
-                              style={{ ...BTN, padding:"10px", fontSize:13, fontWeight:600, background:"var(--btnLunchOut)", color:"var(--btnOn)", borderRadius:10 }}>Lunch Out</button>
+                            <button onClick={async function(){ var realId = await syncPunchInsert(user.eid, "lunch_out", Date.now(), false); setTimeclock(function(p){ return p.concat([{id:realId||Date.now(),eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:"lunch_out",ts:Date.now(),shift:todayShift||""}]); }); showT(tr("Lunch started - enjoy your break!")); }}
+                              style={{ ...BTN, padding:"10px", fontSize:13, fontWeight:600, background:"var(--btnLunchOut)", color:"var(--btnOn)", borderRadius:10 }}>{tr("Lunch Out")}</button>
                           </div>
                         </div>
                       )}
                   </div>
                   {todayPunches.length > 0 && (
                     <div style={CARD}>
-                      <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:10 }}>Today's punches</div>
+                      <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:10 }}>{tr("Today's punches")}</div>
                       <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
                         {todayPunches.map(function(p){
                           var t   = new Date(p.ts);

@@ -4,6 +4,7 @@
 // disappearing from someone's phone mid-week is worse than a stale one — but
 // the admin gets a flag telling them to let the team know.
 
+import { t as tr } from "./i18n.js";
 import { useState, useEffect, useRef } from "react";
 
 var T = {
@@ -94,9 +95,9 @@ export function NotPosted({ weekLabel, compact }) {
   return (
     <div style={{ background:T.surface, border:"1px dashed "+T.border, borderRadius:12,
                   padding:compact ? 20 : 34, textAlign:"center" }}>
-            <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:5 }}>Not posted yet</div>
+            <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:5 }}>{tr("Not posted yet")}</div>
       <div style={{ fontSize:12, color:T.muted, lineHeight:1.6, maxWidth:320, margin:"0 auto" }}>
-        Your manager is still working on {weekLabel ? weekLabel : "this week"}. It'll show up here once it's posted.
+        {tr("Your manager is still working on")} {weekLabel ? weekLabel : tr("this week")}. {tr("It'll show up here once it's posted.")}
       </div>
     </div>
   );
