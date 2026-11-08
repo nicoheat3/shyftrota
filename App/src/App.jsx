@@ -2312,7 +2312,9 @@ function App() {
     {id:"timeclock",  label:"Time Clock"},
     {id:"shifts",     label:"Shift Types"},
     {id:"chat",       label:"Team Chat"},
-    {id:"ai",         label:"AI"},
+    // AI tab hidden until it calls Claude from a server function; from the
+    // browser it has no key and every message fails. Code below is kept.
+    // {id:"ai",         label:"AI"},
     {id:"settings",   label:"Settings"},
   ];
   var EMP_TABS = [
