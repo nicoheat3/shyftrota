@@ -4203,7 +4203,7 @@ function App() {
      var endAt = new Date(startAt.getTime() + (b - a) * 3600000);
      if (endAt > now) next = { day:d, di:i, sh:sh, t:t, startAt:startAt, s:a, en:b };
    }
-   if (!next) return <div style={{ ...CARD, marginBottom:14, padding:"16px 18px" }}><div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>{t(tr("NEXT SHIFT"))}</div><div style={{ fontSize:15, fontWeight:600, color:T.text, marginTop:6 }}>{tr("No more shifts this week")}</div></div>;
+   if (!next) return <div style={{ ...CARD, marginBottom:14, padding:"16px 18px" }}><div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>{tr("NEXT SHIFT")}</div><div style={{ fontSize:15, fontWeight:600, color:T.text, marginTop:6 }}>{tr("No more shifts this week")}</div></div>;
    var mins = Math.round((next.startAt - now) / 60000);
    var live = mins <= 0;
    var cd = live ? tr("ON NOW") : mins >= 1440 ? tr("IN ") + Math.floor(mins/1440) + "D " + Math.floor((mins%1440)/60) + "H" : tr("IN ") + Math.floor(mins/60) + "H " + (mins%60) + "M";
