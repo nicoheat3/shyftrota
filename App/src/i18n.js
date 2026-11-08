@@ -36,6 +36,11 @@ var ES = {
   "Clock In": "Marcar entrada",
   "Team Chat": "Chat del equipo",
   "Settings": "Ajustes",
+  "Schedule": "Horario",
+  "Requests": "Solicitudes",
+  "Chat": "Chat",
+  "Time off": "Tiempo libre",
+  "Call in": "Ausencia",
 
   // Days
   "Mon": "Lun", "Tue": "Mar", "Wed": "Mié", "Thu": "Jue", "Fri": "Vie", "Sat": "Sáb", "Sun": "Dom",

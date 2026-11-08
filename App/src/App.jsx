@@ -1424,6 +1424,7 @@ function App() {
    });
  }, [user && user.property_id, weekOff, weekStartDow]);
  var [tab, setTab] = useState("schedule");
+ var [reqSub, setReqSub] = useState("timeoff"); // employee Requests tab: timeoff | swap | callin
  var [lang, setLangState] = useState(getLang()); // "en" | "es" (employee screens; see i18n.js)
  function changeLang(l) { setLang(l); setLangState(l); }
  var [theme, setThemeState] = useState(function(){ try { return document.documentElement.getAttribute("data-theme") || "dark"; } catch(e) { return "dark"; } });
@@ -2533,15 +2534,16 @@ function App() {
     // {id:"ai",         label:"AI"},
     {id:"settings",   label:"Settings"},
   ];
+  // Bottom bar shows the first 4; the rest live under More. Time off, swaps
+  // and call-ins share one Requests tab (sub-tabs below) so the things people
+  // do weekly sit in the bar instead of behind More.
   var EMP_TABS = [
-    {id:"myschedule",label:tr("My Schedule")},
+    {id:"myschedule",label:tr("Schedule")},
+    {id:"myrequests",label:tr("Requests")},
+    {id:"clockin",   label:tr("Clock In")},
+    {id:"chat",      label:tr("Chat")},
     {id:"today",     label:tr("Who's Working")},
     {id:"openShifts",label:tr("Open Shifts")},
-    {id:"timeoff",   label:tr("Time Off")},
-    {id:"swap",      label:tr("Shift Swap")},
-    {id:"callin",    label:tr("Call In")},
-    {id:"clockin",   label:tr("Clock In")},
-    {id:"chat",      label:tr("Team Chat")},
     {id:"settings",  label:tr("Settings")},
   ];
  var TABS = isAdmin ? ADMIN_TABS : EMP_TABS;
@@ -2549,6 +2551,7 @@ function App() {
   // Falls back to an instant switch where the browser lacks View Transitions
   // or the person has Reduce Motion turned on.
   function goTab(id, also) {
+    if (!isAdmin && (id==="timeoff" || id==="swap" || id==="callin")) { var sub = id; id = "myrequests"; var prevAlso = also; also = function(){ setReqSub(sub); if (prevAlso) prevAlso(); }; }
     function apply() { setTab(id); if (also) also(); }
     if (id === tab) { apply(); return; }
     var order = TABS.map(function(t){ return t.id; });
@@ -2560,7 +2563,7 @@ function App() {
     var vt = document.startViewTransition(function(){ flushSync(apply); });
     vt.finished.finally(function(){ delete document.documentElement.dataset.navDir; });
   }
-  var TAB_ICONS = {schedule:"calendar",employees:"users",depts:"building",openShifts:"plusSquare",requests:"clipboard",timeclock:"clock",shifts:"list",chat:"message",ai:"terminal",myschedule:"calendarCheck",today:"eye",timeoff:"sun",swap:"swap",callin:"phone",clockin:"login",settings:"sliders"};
+  var TAB_ICONS = {myrequests:"clipboard",schedule:"calendar",employees:"users",depts:"building",openShifts:"plusSquare",requests:"clipboard",timeclock:"clock",shifts:"list",chat:"message",ai:"terminal",myschedule:"calendarCheck",today:"eye",timeoff:"sun",swap:"swap",callin:"phone",clockin:"login",settings:"sliders"};
 
  if (authLoading) return (
   <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--xF8F6F3)", color:"var(--x8A8478)", fontFamily:"'Archivo',system-ui,sans-serif", fontSize:14 }}>
@@ -2756,16 +2759,17 @@ function App() {
  .hv2:hover { background:var(--xFDF0ED) !important; cursor:pointer; }
  input:focus, select:focus, textarea:focus { border-color:var(--xC84B31) !important; box-shadow:0 0 0 3px rgba(200,75,49,0.12); outline:none; }
  button { transition: transform 0.12s cubic-bezier(0.34,1.56,0.64,1), opacity 0.12s ease, box-shadow 0.12s ease; }
- button:active { transform: scale(0.88); opacity:0.75; box-shadow: 0 0 0 4px rgba(26,23,20,0.18); }
+ button:active { transform: scale(0.97); opacity:0.8; }
  .tab-btn { transition: color 0.18s ease, border-color 0.18s ease, transform 0.12s cubic-bezier(0.34,1.56,0.64,1) !important; }
- .tab-btn:active { transform: scale(0.82) !important; }
- .press-pop:active { transform: scale(0.85) !important; box-shadow: 0 0 0 5px rgba(26,23,20,0.2) !important; }
+ .tab-btn:active { transform: scale(0.94) !important; }
+ .press-pop:active { transform: scale(0.95) !important; }
  .sidebar { display:flex !important; }
  .mobile-nav { display:none !important; }
  .mobile-bottom { display:none !important; }
  .nm-short { display:none; }
  .dtop-bar { display:flex !important; }
  @media (max-width:680px) {
+ input, select, textarea { font-size:16px !important; }
  .sidebar { display:none !important; }
  .mobile-nav { display:flex !important; }
  .dtop-bar { display:none !important; }
@@ -2798,17 +2802,17 @@ function App() {
  <div style={{ display:"flex", gap:7, alignItems:"center" }}>
  {conflicts.length > 0 && <div style={{ background:T.warningL, border:"1px solid var(--xFDE68A)", borderRadius:6, padding:"3px 8px", color:"var(--x92400E)", fontSize:11 }}>&#9888; {conflicts.length}</div>}
  <div style={{ width:26, height:26, borderRadius:"50%", background:colorFor(user.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"white" }}>{user.name[0]}</div>
- <button onClick={logout} style={{ ...GBTN, fontSize:12, padding:"4px 10px", whiteSpace:"nowrap" }}>Sign out</button>
+ <button onClick={logout} style={{ ...GBTN, fontSize:13, minHeight:36, padding:"0 12px", whiteSpace:"nowrap" }}>Sign out</button>
  </div>
  </div>
 
  {/* Row 2: Week nav - ALWAYS rendered, fixed height 36px, fades when not on schedule */}
- <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, height:36, borderTop:"1px solid "+T.border, background:T.bg, flexShrink:0, opacity:(tab==="schedule"||tab==="myschedule")?1:0.35, transition:"opacity 0.2s ease", pointerEvents:(tab==="schedule"||tab==="myschedule")?"auto":"none" }}>
- <button className="tab-btn" onClick={function(){setWeekOff(function(p){return p-1;});}} style={{ background:"none", border:"1px solid "+T.border, borderRadius:6, padding:"2px 10px", cursor:"pointer", fontSize:15, color:T.muted, lineHeight:1 }}>&#8249;</button>
+ {(tab==="schedule"||tab==="myschedule") && <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, height:44, borderTop:"1px solid "+T.border, background:T.bg, flexShrink:0 }}>
+ <button className="tab-btn" onClick={function(){setWeekOff(function(p){return p-1;});}} style={{ background:"none", border:"1px solid "+T.border, borderRadius:6, minWidth:44, minHeight:36, padding:"0 10px", cursor:"pointer", fontSize:18, color:T.muted, lineHeight:1 }} aria-label="Previous week">&#8249;</button>
  <span className="mono" style={{ fontWeight:500, fontSize:12, color:T.text }}>{weekLabel}</span>
- <button className="tab-btn" onClick={function(){setWeekOff(function(p){return p+1;});}} style={{ background:"none", border:"1px solid "+T.border, borderRadius:6, padding:"2px 10px", cursor:"pointer", fontSize:15, color:T.muted, lineHeight:1 }}>&#8250;</button>
- {weekOff !== 0 && <button className="tab-btn" onClick={function(){setWeekOff(0);}} style={{ fontSize:10, color:T.accent, background:T.accentL, border:"none", borderRadius:20, padding:"2px 8px", cursor:"pointer", fontWeight:600 }}>Today</button>}
- </div>
+ <button className="tab-btn" onClick={function(){setWeekOff(function(p){return p+1;});}} style={{ background:"none", border:"1px solid "+T.border, borderRadius:6, minWidth:44, minHeight:36, padding:"0 10px", cursor:"pointer", fontSize:18, color:T.muted, lineHeight:1 }} aria-label="Next week">&#8250;</button>
+ {weekOff !== 0 && <button className="tab-btn" onClick={function(){setWeekOff(0);}} style={{ fontSize:12, minHeight:32, color:T.accent, background:T.accentL, border:"none", borderRadius:20, padding:"0 12px", cursor:"pointer", fontWeight:600 }}>Today</button>}
+ </div>}
 
  </div>
 
@@ -4223,7 +4227,7 @@ function App() {
        <div aria-hidden="true" style={{ position:"relative", height:6, marginTop:16, background:T.bg, border:"1px solid "+T.border }}>
          <div style={{ position:"absolute", left:(next.s / 24 * 100) + "%", width:((Math.min(24, next.en) - next.s) / 24 * 100) + "%", top:0, bottom:0, background:c.dot }} />
        </div>
-       <div aria-hidden="true" style={{ display:"flex", justifyContent:"space-between", fontFamily:MONO, fontSize:10, color:T.faint, marginTop:5 }}><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
+       <div aria-hidden="true" style={{ display:"flex", justifyContent:"space-between", fontFamily:MONO, fontSize:11, color:T.faint, marginTop:5 }}><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
        {mates.length > 0 && (
          <div style={{ display:"flex", alignItems:"center", marginTop:14, paddingTop:12, borderTop:"1px solid "+T.border }}>
            {mates.slice(0,3).map(function(e, k){ return <Avatar key={e.id} emp={e} ring={true} overlap={k > 0} />; })}
@@ -4351,10 +4355,10 @@ function App() {
                             return (
                               <div key={e.id} style={{ ...CARD, padding:14, border:"1px solid "+(isMe?dept.color:T.border), background:isMe?(dept.color+"0D"):T.surface }}>
                                 <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
-                                  <div style={{ width:30, height:30, borderRadius:"50%", background:colorFor(e.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"white", flexShrink:0 }}>{initials(e.name)}</div>
+                                  <div style={{ width:30, height:30, borderRadius:"50%", background:colorFor(e.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:"white", flexShrink:0 }}>{initials(e.name)}</div>
                                   <div style={{ minWidth:0 }}>
                                     <div style={{ fontSize:12, fontWeight:600, color:T.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.name.split(" ")[0]}{isMe?" (You)":""}</div>
-                                    <div style={{ fontSize:10, color:T.faint, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.role}</div>
+                                    <div style={{ fontSize:11, color:T.faint, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.role}</div>
                                   </div>
                                 </div>
                                 {sc && <span style={{ padding:"3px 9px", borderRadius:20, background:sc.bg, color:sc.text, border:"1px solid "+sc.border, fontSize:11, fontWeight:600 }}>{(function(){ var def=shiftDefs.find(function(d){return d.id===shift;}); var ov=shiftOverrides[overrideKey(0,todayDay,e.id)]; if(ov) return def?(def.label+" "+to12(ov.start)+"-"+to12(ov.end)):(to12(ov.start)+"-"+to12(ov.end)); return def?(def.label+" "+to12(def.start)+"-"+to12(def.end)):shift; })()}</span>}
@@ -4414,7 +4418,14 @@ function App() {
  )}
 
  {/* EMPLOYEE: TIME OFF */}
- {tab==="timeoff" && !isAdmin && (
+ {tab==="myrequests" && !isAdmin && (
+  <div role="tablist" aria-label={tr("Requests")} style={{ display:"grid", gridTemplateColumns:"repeat(3, minmax(0, 1fr))", gap:4, padding:3, border:"1px solid "+T.border, borderRadius:10, marginBottom:16, background:T.bg }}>
+   {[["timeoff",tr("Time off")],["swap",tr("Swap")],["callin",tr("Call in")]].map(function(o){ var on = reqSub===o[0]; return (
+    <button key={o[0]} role="tab" aria-selected={on} onClick={function(){ setReqSub(o[0]); }} style={{ minHeight:44, border:"none", borderRadius:8, background:on?T.surface:"transparent", color:on?T.text:T.muted, fontWeight:on?700:500, fontSize:14, cursor:"pointer", fontFamily:"inherit", boxShadow:on?"var(--shadow)":"none" }}>{o[1]}</button>
+   ); })}
+  </div>
+ )}
+ {tab==="myrequests" && reqSub==="timeoff" && !isAdmin && (
  <div>
  <div style={{ marginBottom:14 }}>
  <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Time Off")}</h2>
@@ -4452,7 +4463,7 @@ function App() {
  )}
 
  {/* EMPLOYEE: SWAP */}
- {tab==="swap" && !isAdmin && (
+ {tab==="myrequests" && reqSub==="swap" && !isAdmin && (
  <div>
  <div style={{ marginBottom:14 }}>
  <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Shift Swap")}</h2>
@@ -4529,7 +4540,7 @@ function App() {
  )}
 
  {/* EMPLOYEE: CALL IN */}
- {tab==="callin" && !isAdmin && (
+ {tab==="myrequests" && reqSub==="callin" && !isAdmin && (
  <div style={{ maxWidth:420 }}>
  <div style={{ marginBottom:14 }}>
  <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Call In")}</h2>
@@ -4565,7 +4576,7 @@ function App() {
  <span style={{ fontSize:11, color:c.status==="acknowledged"?T.success:T.faint }}>{c.status==="acknowledged"?tr("Acknowledged"):tr("Pending")}</span>
  </div>
  {c.note && <div style={{ fontSize:12, color:T.muted, marginTop:6 }}>{c.note}</div>}
- <div style={{ fontSize:10, color:T.faint, marginTop:4 }}>{fmtAgo(c.ts)}</div>
+ <div style={{ fontSize:11, color:T.faint, marginTop:4 }}>{fmtAgo(c.ts)}</div>
  </div>
  );
  })}
