@@ -720,7 +720,7 @@ var AUDIT_LABELS = {
  TIME_OFF_REQUESTED:"Requested time off", TIME_OFF_APPROVED:"Approved time off", TIME_OFF_DECLINED:"Declined time off",
  TIME_OFF_CANCELLED:"Cancelled time off", TIME_OFF_REOPENED:"Reopened time off", CALL_IN:"Called in",
  OPEN_SHIFT_POSTED:"Posted open shift", OPEN_SHIFT_CLAIMED:"Claimed open shift", OPEN_SHIFT_APPROVED:"Approved open shift",
- COVERAGE_ASSIGNED:"Assigned coverage", PUNCH_ADDED:"Added punch", PUNCH_EDITED:"Edited punch", PUNCH_DELETED:"Deleted punch", FORCE_CLOCK_OUT:"Clocked someone out"
+ COVERAGE_ASSIGNED:"Assigned coverage", TEMPLATE_SAVED:"Saved template", TEMPLATE_APPLIED:"Applied template", PUNCH_ADDED:"Added punch", PUNCH_EDITED:"Edited punch", PUNCH_DELETED:"Deleted punch", FORCE_CLOCK_OUT:"Clocked someone out"
 };
 function ActivityLog({ user }) {
  var [rows, setRows] = useState([]);
@@ -1233,6 +1233,10 @@ function App() {
  var [histEmp, setHistEmp] = useState("");             // employee filter in history
  var [dailyVol, setDailyVol] = useState({});           // { "2026-09-14": {arrivals, departures, occupancy} }
  var [volOpen, setVolOpen] = useState(false);
+ var [tplOpen, setTplOpen] = useState(false);      // Templates panel on the Schedule tab
+ var [templates, setTemplates] = useState(null);   // null = not loaded yet
+ var [tplName, setTplName] = useState("");
+ var [tplConfirm, setTplConfirm] = useState(null); // key of a "replace this week?" button waiting for a second tap
  var [roomCount, setRoomCount] = useState(null);
  var [volThresholds, setVolThresholds] = useState(DEFAULT_THRESHOLDS);
  var [weekStartDow, setWeekStartDow] = useState(1); // 0=Sun, 1=Mon — this property's first day of week
@@ -2214,6 +2218,88 @@ function App() {
   .then(function(res){ if (res.error) console.error("clear week sync failed:", res.error); });
  }
 
+ // ── Schedule templates ─────────────────────────────────
+ // A template is a week's pattern by day name: { Mon: { "<employee id>": "<shift id>" } }.
+ // Applying one never touches other weeks, skips anyone on approved time off,
+ // and skips people or shift types that no longer exist.
+ function loadTemplates() {
+  supabase.from("schedule_templates").select("*").eq("property_id", user.property_id).order("created_at", { ascending:true })
+   .then(function(res){
+    if (res.error) { console.error("load templates failed:", res.error); setTemplates([]); showT("Couldn't load templates","error"); return; }
+    setTemplates(res.data || []);
+   });
+ }
+ function saveTemplate() {
+  var name = sanitize(tplName).trim().slice(0, 60);
+  if (!name) { showT("Name the template first","error"); return; }
+  var pattern = {}; var count = 0;
+  DAYS.forEach(function(d){ var day = weekSched[d] || {}; pattern[d] = {}; Object.keys(day).forEach(function(eid){ if (day[eid]) { pattern[d][eid] = day[eid]; count++; } }); });
+  if (count === 0) { showT("This week has no shifts to save","error"); return; }
+  supabase.from("schedule_templates").insert({ property_id:user.property_id, name:name, pattern:pattern }).select().single().then(function(res){
+   if (res.error || !res.data) { console.error("save template failed:", res.error); showT("Couldn't save — check connection","error"); return; }
+   setTemplates(function(p){ return (p||[]).concat([res.data]); });
+   setTplName("");
+   showT("Saved \""+name+"\" ("+count+" shifts)");
+   writeAudit("TEMPLATE_SAVED", name+" · "+count+" shifts", user.id);
+  });
+ }
+ function deleteTemplate(t) {
+  supabase.from("schedule_templates").delete().eq("id", t.id).then(function(res){
+   if (res.error) { console.error("delete template failed:", res.error); showT("Couldn't delete — check connection","error"); return; }
+   setTemplates(function(p){ return (p||[]).filter(function(x){ return x.id!==t.id; }); });
+   setTplConfirm(null);
+   showT("Template deleted","info");
+  });
+ }
+ // mode "replace" = the week becomes exactly the pattern; "fill" = only empty cells get filled.
+ function applyPattern(pattern, mode, label) {
+  if (isPastWeek) { showT("Past schedules are locked","error"); return; }
+  var gen = {}; var added = []; var skippedPto = 0, skippedGone = 0;
+  DAYS.forEach(function(d){ gen[d] = mode==="replace" ? {} : {...(weekSched[d]||{})}; });
+  DAYS.forEach(function(d){
+   var day = (pattern && pattern[d]) || {};
+   var date = dayToISODate(weekOff, d);
+   Object.keys(day).forEach(function(k){
+    var eid = Number(k); var sh = day[k];
+    if (!emps.some(function(e){ return e.id===eid; }) || !shiftDefs.some(function(x){ return x.id===sh; })) { skippedGone++; return; }
+    if (onPtoOn(eid, date)) { skippedPto++; return; }
+    if (mode==="fill" && gen[d][eid]) return;
+    gen[d][eid] = sh;
+    added.push({ property_id:user.property_id, work_date:date, employee_id:eid, shift_id:sh });
+   });
+  });
+  setSched(function(p){ var n={...p}; n[weekOff]=gen; return n; });
+  markWeekEdited();
+  setTplConfirm(null);
+  var ws = getWeekStart(weekOff); var we = new Date(ws); we.setDate(ws.getDate()+6);
+  function saveRows() {
+   if (!added.length) return;
+   supabase.from("schedule_entries").upsert(added, { onConflict:"property_id,work_date,employee_id" }).then(function(res){
+    if (res.error) { console.error("apply template save failed:", res.error); showT("Applied here, but the server save failed","error"); }
+   });
+  }
+  if (mode==="replace") {
+   supabase.from("schedule_entries").delete().eq("property_id", user.property_id).gte("work_date", isoDate(ws)).lte("work_date", isoDate(we))
+    .then(function(res){ if (res.error) { console.error("apply template clear failed:", res.error); showT("Couldn't replace the week — check connection","error"); return; } saveRows(); });
+  } else saveRows();
+  var notes = [];
+  if (skippedPto) notes.push(skippedPto+" skipped for time off");
+  if (skippedGone) notes.push(skippedGone+" skipped (person or shift type removed)");
+  showT(label+": "+added.length+" shift"+(added.length===1?"":"s")+(mode==="fill"?" added":" placed")+(notes.length ? " · "+notes.join(", ") : ""));
+  writeAudit("TEMPLATE_APPLIED", label+" · "+(mode==="fill"?"filled gaps":"replaced week")+" · week of "+auditDay(isoDate(ws)), user.id);
+ }
+ function copyLastWeek(mode) {
+  var ws = getWeekStart(weekOff-1); var we = new Date(ws); we.setDate(ws.getDate()+6);
+  supabase.from("schedule_entries").select("employee_id, work_date, shift_id").eq("property_id", user.property_id)
+   .gte("work_date", isoDate(ws)).lte("work_date", isoDate(we)).then(function(res){
+    if (res.error) { console.error("copy last week failed:", res.error); showT("Couldn't load last week — check connection","error"); return; }
+    if (!res.data || !res.data.length) { showT("Last week has no shifts to copy","info"); return; }
+    var pattern = {}; DAYS.forEach(function(d){ pattern[d] = {}; });
+    res.data.forEach(function(x){ var d = DAYS[(new Date(x.work_date+"T00:00:00").getDay()+6)%7]; pattern[d][x.employee_id] = x.shift_id; });
+    applyPattern(pattern, mode, "Last week");
+   });
+ }
+
  // Picks shifts for one employee across the week, respecting availability, PTO,
  // per-day shift restrictions, and max weekly hours. Shared by the bulk
  // Auto-Generate button and the per-employee "click their tag" fill.
@@ -2855,6 +2941,7 @@ function App() {
   </div>
   <button onClick={function(){setVolOpen(!volOpen);}} style={{ ...GBTN, fontSize:12, color:volOpen?T.accent:T.muted, borderColor:volOpen?T.accent:T.border }}>{volOpen?"Hide volume":"Volume"}</button>
  {!isPastWeek && <button onClick={clearWeek} style={{ ...GBTN, fontSize:12, display:"flex", alignItems:"center", gap:6, color:T.danger, borderColor:"var(--xFCA5A5)" }}>Clear</button>}
+  {!isPastWeek && <button onClick={function(){ var o=!tplOpen; setTplOpen(o); setTplConfirm(null); if (o && templates===null) loadTemplates(); }} style={{ ...GBTN, fontSize:12, color:tplOpen?T.accent:T.muted, borderColor:tplOpen?T.accent:T.border }}>Templates</button>}
   {!isPastWeek && <button onClick={autoGenerate} style={{ ...BTN, fontSize:12, display:"flex", alignItems:"center", gap:6, background:"linear-gradient(135deg,var(--xC84B31),var(--xE05C40))" }}>Auto-Generate</button>}
  </div>
  </div>
@@ -2981,6 +3068,46 @@ function App() {
    );
  })()}
 
+ {tplOpen && !isPastWeek && (function(){
+  var weekHasShifts = DAYS.some(function(d){ return weekSched[d] && Object.keys(weekSched[d]).some(function(k){ return weekSched[d][k]; }); });
+  function replaceBtn(key, onGo, text) {
+   var armed = tplConfirm === key;
+   return <button onClick={function(){ if (weekHasShifts && !armed) { setTplConfirm(key); return; } onGo(); }} style={armed ? { ...BTN, fontSize:12, padding:"5px 12px", minHeight:0, background:T.danger } : { ...BTN, fontSize:12, padding:"5px 12px", minHeight:0 }}>{armed ? "Tap again to replace this week" : text}</button>;
+  }
+  var ROW = { display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", padding:"10px 0", borderTop:"1px solid "+T.border };
+  return (
+   <div style={{ ...CARD, marginBottom:16 }}>
+    <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Templates</div>
+    <div style={{ fontSize:12, color:T.muted, marginTop:2, marginBottom:10 }}>Reuse a week you've already built. Applies to {weekLabel} only; anyone on time off is skipped.</div>
+    <div style={ROW}>
+     <div><div style={{ fontSize:13, fontWeight:600, color:T.text }}>Last week</div><div style={{ fontSize:11, color:T.faint }}>Copy the week before this one</div></div>
+     <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+      {replaceBtn("last", function(){ copyLastWeek("replace"); }, "Copy")}
+      {weekHasShifts && <button onClick={function(){ copyLastWeek("fill"); }} style={{ ...GBTN, fontSize:12, padding:"5px 12px" }}>Fill gaps only</button>}
+     </div>
+    </div>
+    {templates===null && <div style={{ ...ROW, fontSize:13, color:T.faint }}>Loading…</div>}
+    {(templates||[]).map(function(t){
+     var n = 0; Object.keys(t.pattern||{}).forEach(function(d){ n += Object.keys(t.pattern[d]||{}).length; });
+     var delArmed = tplConfirm === "del-"+t.id;
+     return (
+      <div key={t.id} style={ROW}>
+       <div style={{ minWidth:0 }}><div style={{ fontSize:13, fontWeight:600, color:T.text }}>{t.name}</div><div style={{ fontSize:11, color:T.faint }}>{n} shifts</div></div>
+       <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+        {replaceBtn("tpl-"+t.id, function(){ applyPattern(t.pattern, "replace", t.name); }, "Apply")}
+        {weekHasShifts && <button onClick={function(){ applyPattern(t.pattern, "fill", t.name); }} style={{ ...GBTN, fontSize:12, padding:"5px 12px" }}>Fill gaps only</button>}
+        <button onClick={function(){ if (!delArmed) { setTplConfirm("del-"+t.id); return; } deleteTemplate(t); }} style={{ ...GBTN, fontSize:12, padding:"5px 10px", color:T.danger, borderColor:"var(--xFCA5A5)" }}>{delArmed ? "Tap to delete" : "Delete"}</button>
+       </div>
+      </div>
+     );
+    })}
+    <div style={{ ...ROW, flexWrap:"nowrap" }}>
+     <input value={tplName} onChange={function(e){ setTplName(e.target.value); }} placeholder="Name this week, e.g. Standard week" maxLength={60} style={{ ...INP, flex:1, minWidth:0 }} />
+     <button onClick={saveTemplate} disabled={!weekHasShifts} style={{ ...GBTN, fontSize:12, flexShrink:0, opacity:weekHasShifts?1:0.5 }}>Save this week</button>
+    </div>
+   </div>
+  );
+ })()}
  {schedView==="week" && (
  <div style={{ ...CARD, padding:0, overflow:"hidden", marginBottom:16 }}>
  <div style={{ overflowX:"auto" }}>
