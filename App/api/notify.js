@@ -13,7 +13,7 @@
 //                      test sender only delivers to your own Resend email.
 
 import { createClient } from "@supabase/supabase-js";
-import { FROM, hasEmailKey, esc, unesc, to12, fmtDay, addDays, layout, sendAll } from "./_email.js";
+import { FROM, hasEmailKey, esc, unesc, to12, fmtDay, addDays, layout, sendAll, kicker, para, strong, status, shiftTable } from "./_email.js";
 import { loadSubs, sendPush, itemsFor, prefOn } from "./_push.js";
 
 var SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -68,6 +68,11 @@ export default async function handler(req, res) {
     return esc(unesc(label)) + (s && e ? " · " + to12(s) + "–" + to12(e) : "");
   }
   function shiftPlain(shiftId, ov) { return unesc(shiftText(shiftId, ov)); }
+  function shiftParts(shiftId, ov) {
+    var d = defById[shiftId];
+    var s = ov ? ov.start_time : d && d.start_time, e = ov ? ov.end_time : d && d.end_time;
+    return { label: unesc(d ? d.label : shiftId), time: s && e ? to12(s) + " – " + to12(e) : "" };
+  }
 
   var messages = [];
 
@@ -85,7 +90,7 @@ export default async function handler(req, res) {
     var mine = prof.data.employee_id != null ? settings[prof.data.employee_id] : null;
     if (!mine) return res.status(200).json({ skipped: "no_email" });
     var t = await sendAll([{ from: FROM, to: [mine.email], subject: "ShyftRota test email",
-      html: layout("Email notifications are working", '<div style="font-size:14px;line-height:1.6">If you can read this, ShyftRota can email you. Schedule and request emails will arrive just like this one.</div>', appUrl) }]);
+      html: layout("Email notifications are working", kicker("Test email") + para("If you can read this, ShyftRota can email you. Schedule and request emails will arrive just like this one."), appUrl) }]);
     t.to = mine.email;
     return res.status(200).json(t);
   }
@@ -124,18 +129,19 @@ export default async function handler(req, res) {
       var s = settings[eid];
       if (!s.on_schedule) return;
       var mine = (byEmp[eid] || []).sort(function (a, b) { return a.work_date < b.work_date ? -1 : 1; });
-      var rows = mine.length
-        ? mine.map(function (r) {
-            return '<tr><td style="padding:6px 12px 6px 0;font-weight:600;white-space:nowrap">' + fmtDay(r.work_date) + '</td><td style="padding:6px 0">' + shiftText(r.shift_id, ovByKey[r.work_date + "_" + eid]) + '</td></tr>';
-          }).join("")
-        : '<tr><td style="padding:6px 0;color:#7A7469">No shifts for you this week.</td></tr>';
+      var rows = mine.map(function (r) {
+        var sp = shiftParts(r.shift_id, ovByKey[r.work_date + "_" + eid]);
+        return { day: fmtDay(r.work_date), label: sp.label, time: sp.time };
+      });
       var title = body.repost ? "Your schedule was updated" : "Your schedule is posted";
       messages.push({
         from: FROM, to: [s.email],
         subject: (body.repost ? "Updated schedule: " : "Schedule posted: ") + range,
         html: layout(title,
-          '<div style="font-size:14px;color:#7A7469;margin-bottom:10px">Hi ' + esc((empName[eid] || "").split(" ")[0]) + ', here are your shifts for ' + esc(range) + '.</div>' +
-          '<table style="font-size:14px;border-collapse:collapse">' + rows + '</table>', appUrl),
+          kicker(range) +
+          para("Hi " + esc((empName[eid] || "").split(" ")[0]) + ", here " + (rows.length === 1 ? "is your shift" : "are your " + rows.length + " shifts") + " this week.") +
+          shiftTable(rows, "No shifts for you this week."), appUrl,
+          { preheader: rows.length ? rows.map(function (x) { return x.day + " " + x.label; }).join(" · ") : "No shifts for you this week", cta: "See your schedule" }),
       });
     });
   }
@@ -152,29 +158,30 @@ export default async function handler(req, res) {
     var cancelled = r.status === "cancelled";
     if (!approved && !declined && !cancelled) return res.status(200).json({ skipped: "Request is still pending" });
     var word = approved ? "approved" : cancelled ? "cancelled" : "declined";
-    var color = approved ? "#047857" : "#B91C1C";
+    var badge = status(word, approved);
 
     function tell(eid, subject, title, html) {
       phone(eid, "on_requests", { title: title, body: subject, url: "/", tag: "request-" + table + "-" + r.id + "-" + eid });
       var s = settings[eid];
       if (!s || !s.on_requests) return;
-      messages.push({ from: FROM, to: [s.email], subject: subject, html: layout(title, html, appUrl) });
+      messages.push({ from: FROM, to: [s.email], subject: subject, html: layout(title, html, appUrl, { preheader: subject }) });
     }
 
     if (table === "pto_requests") {
       var when = fmtDay(r.start_date) + (r.end_date && r.end_date !== r.start_date ? " – " + fmtDay(r.end_date) : "");
       tell(r.employee_id, "Time off " + word + ": " + when, "Your time off was " + word,
-        '<div style="font-size:14px;line-height:1.6"><b style="color:' + color + '">' + esc(word[0].toUpperCase() + word.slice(1)) + '</b> — ' +
-        esc(r.pto_type) + ', ' + esc(when) + '.</div>');
+        '<div style="margin:0 0 14px">' + badge + '</div>' +
+        shiftTable([{ day: unesc(r.pto_type) || "Time off", label: when, time: "" }]));
     } else {
       var day = fmtDay(r.work_date);
       tell(r.from_employee_id, "Shift swap " + word + ": " + day, "Your swap request was " + word,
-        '<div style="font-size:14px;line-height:1.6"><b style="color:' + color + '">' + esc(word[0].toUpperCase() + word.slice(1)) + '</b> — ' +
-        esc(empName[r.to_employee_id] || "your coworker") + ' covering ' + shiftText(r.shift_id) + ' on ' + esc(day) + '.</div>');
+        '<div style="margin:0 0 14px">' + badge + '</div>' +
+        para(strong(empName[r.to_employee_id] || "Your coworker") + " covering your shift.") +
+        shiftTable([{ day: day, label: shiftParts(r.shift_id).label, time: shiftParts(r.shift_id).time }]));
       if (approved) {
         tell(r.to_employee_id, "You're picking up a shift on " + day, "You picked up a shift",
-          '<div style="font-size:14px;line-height:1.6">Your manager approved a swap: you\'re now working ' + shiftText(r.shift_id) +
-          ' on ' + esc(day) + ' (covering ' + esc(empName[r.from_employee_id] || "a coworker") + ').</div>');
+          para("Your manager approved a swap. You're covering for " + strong(empName[r.from_employee_id] || "a coworker") + ".") +
+          shiftTable([{ day: day, label: shiftParts(r.shift_id).label, time: shiftParts(r.shift_id).time }]));
       }
     }
   }

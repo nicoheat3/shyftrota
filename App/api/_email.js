@@ -31,16 +31,71 @@ export function addDays(iso, n) {
   return d.toISOString().slice(0, 10);
 }
 
-export function layout(title, bodyHtml, appUrl) {
-  return '<!doctype html><html><body style="margin:0;background:#F5F2ED;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;color:#1A1714">' +
-    '<div style="max-width:520px;margin:0 auto;padding:28px 18px">' +
-    '<div style="font-weight:800;font-size:15px;letter-spacing:-0.01em;margin-bottom:18px">ShyftRota</div>' +
-    '<div style="background:#fff;border:1px solid #E0D9D0;border-radius:10px;padding:22px">' +
-    '<div style="font-size:18px;font-weight:700;margin-bottom:12px">' + title + '</div>' + bodyHtml +
-    '<a href="' + esc(appUrl) + '" style="display:inline-block;margin-top:18px;background:#C84B31;color:#fff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:7px">Open ShyftRota</a>' +
-    '</div>' +
-    '<div style="font-size:11px;color:#7A7469;margin-top:14px;line-height:1.5">You get these because email notifications are on in your ShyftRota settings. Turn them off any time under Settings → Email notifications.</div>' +
-    '</div></body></html>';
+// ── Look (matches the app: black, hairlines, one red-orange accent) ──
+// Email clients ignore web fonts and most CSS, so everything is inline and
+// falls back to system fonts. Monospace is used for days and times, like the app.
+export var C = {
+  bg: "#000000", card: "#0A0A0A", line: "#1F1F1F", text: "#FFFFFF", sub: "#A3A3A3", muted: "#5C5C5C",
+  accent: "#E44E35", ok: "#4ADE80", bad: "#F87171",
+};
+export var SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
+export var MONO = "'IBM Plex Mono',SFMono-Regular,Menlo,Consolas,'Courier New',monospace";
+
+// A small uppercase label with the accent dot, like the app's section headers.
+export function kicker(text) {
+  return '<div style="font-family:' + MONO + ';font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:' + C.sub + ';margin-bottom:10px">' +
+    '<span style="color:' + C.accent + '">&#9679;</span>&nbsp; ' + esc(text) + '</div>';
+}
+export function para(html) {
+  return '<div style="font-size:15px;line-height:1.6;color:' + C.sub + ';margin:0 0 14px">' + html + '</div>';
+}
+export function strong(text) { return '<span style="color:' + C.text + ';font-weight:600">' + esc(text) + '</span>'; }
+export function status(word, good) {
+  return '<span style="display:inline-block;font-family:' + MONO + ';font-size:11px;letter-spacing:0.06em;text-transform:uppercase;padding:3px 8px;border:1px solid ' + (good ? C.ok : C.bad) + ';color:' + (good ? C.ok : C.bad) + ';border-radius:3px">' + esc(word) + '</span>';
+}
+// rows: [{ day: "Sun, Nov 1", label: "Night Audit", time: "11:00 PM – 7:00 AM" }]
+export function shiftTable(rows, emptyText) {
+  if (!rows.length) return '<div style="font-size:14px;color:' + C.sub + ';padding:14px 0;border-top:1px solid ' + C.line + '">' + esc(emptyText || "No shifts.") + '</div>';
+  return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">' + rows.map(function (r) {
+    return '<tr>' +
+      '<td style="padding:12px 12px 12px 0;border-top:1px solid ' + C.line + ';font-family:' + MONO + ';font-size:12px;letter-spacing:0.04em;text-transform:uppercase;color:' + C.sub + ';white-space:nowrap;vertical-align:top;width:96px">' + esc(r.day) + '</td>' +
+      '<td style="padding:12px 0;border-top:1px solid ' + C.line + ';vertical-align:top">' +
+        '<div style="font-size:15px;font-weight:600;color:' + C.text + '">' + esc(r.label) + '</div>' +
+        (r.time ? '<div style="font-family:' + MONO + ';font-size:13px;color:' + C.sub + ';margin-top:3px">' + esc(r.time) + '</div>' : '') +
+      '</td></tr>';
+  }).join("") + '<tr><td colspan="2" style="border-top:1px solid ' + C.line + ';font-size:0;line-height:0">&nbsp;</td></tr></table>';
+}
+
+// title: plain text heading. bodyHtml: built with the helpers above.
+// opts.preheader: the grey preview line inbox lists show under the subject.
+export function layout(title, bodyHtml, appUrl, opts) {
+  opts = opts || {};
+  var base = String(appUrl || "https://app.shyftrota.com").replace(/\/$/, "");
+  var pre = opts.preheader ? '<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">' + esc(opts.preheader) + '&#8199;&#65279;&#847;'.repeat(30) + '</div>' : '';
+  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark"><title>' + esc(title) + '</title></head>' +
+    '<body style="margin:0;padding:0;background:' + C.bg + ';color:' + C.text + ';font-family:' + SANS + ';-webkit-font-smoothing:antialiased">' + pre +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:' + C.bg + '"><tr><td align="center" style="padding:28px 16px 36px">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px">' +
+      // Header: logo + wordmark
+      '<tr><td style="padding:0 0 20px">' +
+        '<a href="' + esc(base) + '" style="text-decoration:none;color:' + C.text + '">' +
+        '<img src="' + esc(base) + '/icon-192.png" width="36" height="36" alt="ShyftRota" style="display:inline-block;vertical-align:middle;border:1px solid ' + C.line + ';border-radius:6px">' +
+        '<span style="display:inline-block;vertical-align:middle;margin-left:10px;font-size:15px;font-weight:700;letter-spacing:-0.01em;color:' + C.text + '">ShyftRota</span></a>' +
+      '</td></tr>' +
+      // Card
+      '<tr><td style="background:' + C.card + ';border:1px solid ' + C.line + ';border-radius:6px;padding:24px 22px">' +
+        '<div style="font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-0.02em;color:' + C.text + ';margin:0 0 14px">' + esc(title) + '</div>' +
+        bodyHtml +
+        '<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:22px"><tr><td style="background:' + C.accent + ';border-radius:4px">' +
+          '<a href="' + esc(base) + '" style="display:inline-block;padding:12px 20px;font-size:14px;font-weight:600;color:#FFFFFF;text-decoration:none">' + esc(opts.cta || "Open ShyftRota") + ' &rarr;</a>' +
+        '</td></tr></table>' +
+      '</td></tr>' +
+      // Footer
+      '<tr><td style="padding:16px 2px 0;font-size:12px;line-height:1.6;color:' + C.muted + '">' +
+        'You get these because email notifications are on in ShyftRota. Turn them off any time in Settings &rarr; Email notifications.' +
+      '</td></tr>' +
+    '</table></td></tr></table></body></html>';
 }
 
 export async function sendAll(messages) {

@@ -13,7 +13,7 @@
 // app_secrets table, which only the server key can read.
 
 import { createClient } from "@supabase/supabase-js";
-import { FROM, hasEmailKey, esc, unesc, to12, fmtDay, addDays, layout, sendAll } from "./_email.js";
+import { FROM, hasEmailKey, esc, unesc, to12, fmtDay, addDays, layout, sendAll, kicker, para, shiftTable, C, MONO } from "./_email.js";
 import { loadSubs, sendPush, itemsFor, prefOn } from "./_push.js";
 
 var SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -160,8 +160,10 @@ export default async function handler(req, res) {
           from: FROM, to: [settings[String(x.eid)].email],
           subject: "Reminder: " + x.label + " " + when,
           html: layout("Your shift starts soon",
-            '<div style="font-size:14px;line-height:1.7">Hi ' + esc((empName[x.eid] || "").split(" ")[0]) + ', your <b>' + esc(x.label) + '</b>' + (/shift\s*$/i.test(x.label) ? '' : ' shift') + ' starts <b>' + esc(when) + '</b>' +
-            (x.end ? ' and runs until ' + esc(to12(x.end)) : '') + ' (' + esc(fmtDay(x.date)) + ').</div>', appUrl),
+            kicker(x.isToday ? "Today" : "Tomorrow") +
+            para("Hi " + esc((empName[x.eid] || "").split(" ")[0]) + ", heads up: you start " + esc(when) + ".") +
+            shiftTable([{ day: fmtDay(x.date), label: x.label, time: to12(x.start) + (x.end ? " – " + to12(x.end) : "") }]),
+            appUrl, { preheader: x.label + " " + when, cta: "Open ShyftRota" }),
         };
       });
       var r1 = await sendAll(msgs);
@@ -203,7 +205,7 @@ export default async function handler(req, res) {
           var lines = unread.slice(-5).map(function (m) {
             var where = m.channel === "general" ? "#team-general" : "Direct message";
             var text = unesc(m.body); if (text.length > 140) text = text.slice(0, 137) + "…";
-            return '<div style="padding:8px 0;border-top:1px solid #EEE9E2"><div style="font-size:12px;color:#7A7469">' + esc(where) + ' · ' + esc(unesc(m.sender_name)) + '</div><div style="font-size:14px;margin-top:2px">' + esc(text) + '</div></div>';
+            return '<div style="padding:12px 0;border-top:1px solid ' + C.line + '"><div style="font-family:' + MONO + ';font-size:11px;letter-spacing:0.04em;text-transform:uppercase;color:' + C.sub + '">' + esc(where) + ' · ' + esc(unesc(m.sender_name)) + '</div><div style="font-size:15px;line-height:1.5;color:' + C.text + ';margin-top:4px">' + esc(text) + '</div></div>';
           }).join("");
           var n = unread.length;
           var last = unread[unread.length - 1], lastText = unesc(last.body);
@@ -217,7 +219,8 @@ export default async function handler(req, res) {
             from: FROM, to: [settings[String(eid)].email],
             subject: n === 1 ? "New message from " + unesc(unread[0].sender_name) : n + " unread messages in ShyftRota",
             html: layout(n === 1 ? "You have a new message" : "You have " + n + " unread messages",
-              lines + (n > 5 ? '<div style="font-size:12px;color:#7A7469;padding-top:8px">…and ' + (n - 5) + ' more</div>' : ''), appUrl),
+              kicker("Team chat") + lines + '<div style="border-top:1px solid ' + C.line + '"></div>' + (n > 5 ? '<div style="font-size:13px;color:' + C.sub + ';padding-top:10px">…and ' + (n - 5) + ' more</div>' : ''),
+              appUrl, { preheader: unesc(last.sender_name) + ": " + lastText, cta: "Reply in ShyftRota" }),
           });
         });
 

@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import crypto from "node:crypto";
-import { sendAll, layout, hasEmailKey, FROM } from "./_email.js";
+import { sendAll, layout, hasEmailKey, FROM, kicker, para, strong, shiftTable, unesc } from "./_email.js";
 
 // Creates a brand new customer workspace: auth login, property, admin profile,
 // and enough shifts and departments that the first screen isn't empty.
@@ -187,17 +187,19 @@ export default async function handler(req, res) {
     if (hasEmailKey()) {
       try {
         var bodyHtml =
-          "<p>Your ShyftRota workspace for <strong>" + propertyName + "</strong> is ready.</p>" +
-          "<p><strong>Sign in:</strong> <a href=\"" + APP_URL + "\">" + APP_URL + "</a><br>" +
-          "<strong>Email:</strong> " + adminEmail + "<br>" +
-          "<strong>Temporary password:</strong> " + password + "</p>" +
-          "<p>Change the password once you're in, under Settings. Add your team, then hit Auto-generate to build your first week.</p>" +
-          "<p>Reply to this email if anything looks wrong and I'll sort it out.</p>";
+          kicker("Workspace ready") +
+          para("Your ShyftRota workspace for " + strong(unesc(propertyName)) + " is ready. Here's how to sign in:") +
+          shiftTable([
+            { day: "Sign in", label: APP_URL.replace(/^https?:\/\//, ""), time: "" },
+            { day: "Email", label: adminEmail, time: "" },
+            { day: "Password", label: password, time: "Temporary. Change it under Settings." },
+          ]) +
+          para("Add your team, then tap Auto-Generate to build your first week. Reply to this email if anything looks wrong and I'll sort it out.");
         var sendRes = await sendAll([{
           from: FROM,
           to: [adminEmail],
           subject: "Your ShyftRota workspace is ready",
-          html: layout("Welcome to ShyftRota", bodyHtml, APP_URL),
+          html: layout("Welcome to ShyftRota", bodyHtml, APP_URL, { preheader: "Your workspace is ready. Sign-in details inside.", cta: "Sign in" }),
         }]);
         emailed = !!(sendRes && sendRes.sent > 0);
       } catch (e) {
