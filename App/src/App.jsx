@@ -720,7 +720,7 @@ var AUDIT_LABELS = {
  TIME_OFF_REQUESTED:"Requested time off", TIME_OFF_APPROVED:"Approved time off", TIME_OFF_DECLINED:"Declined time off",
  TIME_OFF_CANCELLED:"Cancelled time off", TIME_OFF_REOPENED:"Reopened time off", CALL_IN:"Called in",
  OPEN_SHIFT_POSTED:"Posted open shift", OPEN_SHIFT_CLAIMED:"Claimed open shift", OPEN_SHIFT_APPROVED:"Approved open shift",
- PUNCH_ADDED:"Added punch", PUNCH_EDITED:"Edited punch", PUNCH_DELETED:"Deleted punch", FORCE_CLOCK_OUT:"Clocked someone out"
+ COVERAGE_ASSIGNED:"Assigned coverage", PUNCH_ADDED:"Added punch", PUNCH_EDITED:"Edited punch", PUNCH_DELETED:"Deleted punch", FORCE_CLOCK_OUT:"Clocked someone out"
 };
 function ActivityLog({ user }) {
  var [rows, setRows] = useState([]);
@@ -1210,6 +1210,7 @@ function App() {
  var [ptos, setPtos] = useState([]);
  var [opens, setOpens] = useState([]); // open shifts, from the open_shifts table
  var [callins, setCallins] = useState([]);
+ var [cover, setCover] = useState(null); // Find Coverage panel: { id, state, date, day, shift, picks, others, msg }
  var [timeclock, setTimeclockRaw] = useState([]); // array of punch records, always oldest -> newest
  // Everything that reads punches ("who's clocked in", hours, the employee
  // clock button) assumes the newest punch is LAST. The database returns
@@ -1262,7 +1263,7 @@ function App() {
    if (res.data) {
     setCallins(res.data.map(function(r){
      var emp = emps.find(function(e){return e.id===r.employee_id;});
-     return { id:r.id, eid:r.employee_id, ename:emp?emp.name:"", type:r.reason_type, note:r.note||"", ts:new Date(r.created_at).getTime(), status:r.status||"pending" };
+     return { id:r.id, eid:r.employee_id, ename:emp?emp.name:"", type:r.reason_type, note:r.note||"", ts:new Date(r.created_at).getTime(), status:r.status||"pending", workDate:r.work_date||isoDate(new Date(r.created_at)) };
     }));
    } else { console.error("load call-ins failed:", res.error); }
   });
@@ -2113,9 +2114,78 @@ function App() {
   reason_type: callType, note: sanitize(callNote), status: "pending",
  }).select().single();
  if (res.error || !res.data) { console.error("call-in submit failed:", res.error); showT("Couldn't submit notice — check connection","error"); return; }
- setCallins(function(p){return p.concat([{id:res.data.id,eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:callType,note:sanitize(callNote),ts:Date.now(),status:"pending"}]);});
+ setCallins(function(p){return p.concat([{id:res.data.id,eid:user.eid,ename:(myEmp&&myEmp.name)||user.name,type:callType,note:sanitize(callNote),ts:Date.now(),status:"pending",workDate:res.data.work_date}]);});
  setCallNote(""); showT("Attendance notice submitted");
  writeAudit("CALL_IN", callType, user.id);
+ }
+ // ── Find Coverage ───────────────────────────────────────
+ // For a call-in: find the caller's shift that day, then rank who could take
+ // it. Eligible = not already working that day, available that day (and for
+ // that shift, if they've limited shifts), not on approved time off, and the
+ // shift keeps them at or under their weekly max. Fewest hours first.
+ async function openCoverage(c) {
+  if (cover && cover.id === c.id) { setCover(null); return; }
+  var date = c.workDate;
+  setCover({ id:c.id, state:"loading" });
+  var off = weekOffForDate(date);
+  var ws = getWeekStart(off); var we = new Date(ws); we.setDate(we.getDate()+6);
+  var res = await supabase.from("schedule_entries").select("employee_id, work_date, shift_id")
+   .eq("property_id", user.property_id).gte("work_date", isoDate(ws)).lte("work_date", isoDate(we));
+  if (res.error) { console.error("coverage lookup failed:", res.error); setCover({ id:c.id, state:"error", msg:"Couldn't load the schedule. Check your connection." }); return; }
+  var rows = res.data || [];
+  var mine = rows.find(function(x){ return x.work_date===date && Number(x.employee_id)===c.eid; });
+  var dayName = DAYS[(new Date(date+"T00:00:00").getDay()+6)%7];
+  if (!mine) { setCover({ id:c.id, state:"noshift", date:date, day:dayName }); return; }
+  var shiftId = mine.shift_id;
+  var need = shiftHours(shiftId, shiftDefs);
+  var hours = {}; var workingThatDay = {};
+  rows.forEach(function(x){
+   var id = Number(x.employee_id);
+   hours[id] = (hours[id]||0) + shiftHours(x.shift_id, shiftDefs);
+   if (x.work_date===date) workingThatDay[id] = true;
+  });
+  var picks = [], others = [];
+  emps.forEach(function(e){
+   if (e.id===c.eid || workingThatDay[e.id]) return;
+   var h = hours[e.id]||0;
+   var why = null;
+   if (onPtoOn(e.id, date)) why = "Time off";
+   else if (e.avail.indexOf(dayName) < 0) why = "Not available "+dayName;
+   else if (e.shiftAvail && e.shiftAvail[dayName] && e.shiftAvail[dayName].length && e.shiftAvail[dayName].indexOf(shiftId) < 0) why = "Not for this shift";
+   else if (h + need > (e.max||40)) why = "Would go over "+(e.max||40)+"h";
+   (why ? others : picks).push({ emp:e, hours:h, why:why });
+  });
+  picks.sort(function(a,b){ return a.hours - b.hours; });
+  setCover({ id:c.id, state:"ready", date:date, day:dayName, shift:shiftId, need:need, picks:picks, others:others });
+ }
+ function assignCoverage(c, e) {
+  var cv = cover; if (!cv || cv.state!=="ready") return;
+  applyLocalScheduleChange(cv.date, c.eid, e.id, cv.shift);
+  syncScheduleCellDeleteByDate(cv.date, c.eid);
+  syncScheduleCellByDate(cv.date, e.id, cv.shift);
+  markWeekEdited(cv.date);
+  if (c.status!=="acknowledged") ackCallin(c.id);
+  writeAudit("COVERAGE_ASSIGNED", e.name+" covers "+empName(c.eid, c.ename)+" · "+cv.shift+" · "+auditDay(cv.date), user.id);
+  setCover(null);
+  showT(e.name.split(" ")[0]+" is covering "+cv.day+"'s "+cv.shift);
+ }
+ function postCoverageAsOpen(c) {
+  var cv = cover; if (!cv || cv.state!=="ready") return;
+  var myEmp = emps.find(function(e){return e.id===user.eid;});
+  supabase.from("open_shifts").insert({
+   property_id:user.property_id, work_date:cv.date, shift_id:cv.shift,
+   note:"Covering for "+empName(c.eid, c.ename), posted_name:(myEmp&&myEmp.name)||user.name,
+  }).select().single().then(function(res){
+   if (res.error || !res.data) { console.error("post coverage open shift failed:", res.error); showT("Couldn't post — check connection","error"); return; }
+   applyLocalScheduleChange(cv.date, c.eid, null, null);
+   syncScheduleCellDeleteByDate(cv.date, c.eid);
+   markWeekEdited(cv.date);
+   setOpens(function(p){ return p.concat([mapOpenShift(res.data)]).sort(function(a,b){ return a.workDate < b.workDate ? -1 : a.workDate > b.workDate ? 1 : 0; }); });
+   if (c.status!=="acknowledged") ackCallin(c.id);
+   writeAudit("OPEN_SHIFT_POSTED", cv.shift+" · "+auditDay(cv.date)+" · covering for "+empName(c.eid, c.ename), user.id);
+   setCover(null);
+   showT("Posted as an open shift");
+  });
  }
  function ackCallin(id) {
   setCallins(function(p){return p.map(function(c){return c.id===id?{...c,status:"acknowledged"}:c;});});
@@ -3532,8 +3602,43 @@ function App() {
  {c.note && <div style={{ fontSize:12, color:T.muted, marginTop:5 }}>{c.note}</div>}
  <div style={{ fontSize:10, color:T.faint, marginTop:4 }}>{fmtAgo(c.ts)}</div>
  </div>
+ <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"flex-start" }}>
+ {c.workDate >= isoDate(new Date()) && <button onClick={function(){ openCoverage(c); }} style={{ ...BTN, fontSize:12, padding:"5px 12px", minHeight:0 }}>{cover && cover.id===c.id ? "Close" : "Find coverage"}</button>}
  <button onClick={function(){ackCallin(c.id);}} style={{ ...GBTN, fontSize:12, padding:"5px 12px", color:c.status==="acknowledged"?T.success:T.muted }}>{c.status==="acknowledged"?"&#10003; Acknowledged":"Acknowledge"}</button>
  </div>
+ </div>
+ {cover && cover.id===c.id && (
+  <div style={{ marginTop:12, paddingTop:12, borderTop:"1px solid "+T.border }}>
+   {cover.state==="loading" && <div style={{ fontSize:13, color:T.faint }}>Checking who's free…</div>}
+   {cover.state==="error" && <div style={{ fontSize:13, color:T.danger }}>{cover.msg}</div>}
+   {cover.state==="noshift" && <div style={{ fontSize:13, color:T.muted }}>{empName(c.eid, c.ename)} isn't scheduled on {cover.day} {auditDay(cover.date)}, so there's nothing to cover.</div>}
+   {cover.state==="ready" && (
+    <div>
+     <div style={{ fontSize:12, color:T.muted, marginBottom:10 }}>Covering <strong style={{ color:T.text }}>{cover.shift}</strong> · {cover.day} {auditDay(cover.date)} · {cover.need}h</div>
+     {cover.picks.length===0 && <div style={{ fontSize:13, color:T.faint, marginBottom:10 }}>Nobody is free, available and under their max hours.</div>}
+     <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+      {cover.picks.map(function(p, i){
+       return (
+        <div key={p.emp.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"8px 10px", border:"1px solid "+(i===0?"var(--x6EE7B7)":T.border), background:i===0?T.successL:"transparent" }}>
+         <div style={{ minWidth:0 }}>
+          <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{p.emp.name}{i===0 && <span style={{ fontSize:10, color:T.success, marginLeft:6, fontWeight:700 }}>BEST FIT</span>}</div>
+          <div style={{ fontSize:11, color:T.muted }}>{p.emp.role} · {Math.round(p.hours*10)/10}h this week → {Math.round((p.hours+cover.need)*10)/10}h of {p.emp.max||40}</div>
+         </div>
+         <button onClick={function(){ assignCoverage(c, p.emp); }} style={{ ...BTN, fontSize:12, padding:"5px 12px", minHeight:0, flexShrink:0 }}>Assign</button>
+        </div>
+       );
+      })}
+     </div>
+     {cover.others.length > 0 && (
+      <div style={{ marginTop:10, fontSize:11, color:T.faint, lineHeight:1.6 }}>
+       Not suggested: {cover.others.map(function(o){ return o.emp.name.split(" ")[0]+" ("+o.why+")"; }).join(", ")}
+      </div>
+     )}
+     <button onClick={function(){ postCoverageAsOpen(c); }} style={{ ...GBTN, width:"100%", marginTop:10, fontSize:12 }}>Post as open shift instead</button>
+    </div>
+   )}
+  </div>
+ )}
  </div>
  );
  })}
