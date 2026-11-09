@@ -20,7 +20,7 @@
 <meta name="twitter:title" content="ShyftRota — Workforce scheduling for people who work shifts">
 <meta name="twitter:description" content="Build the week in a tap. Short shifts flagged before they happen. Built by someone who works in hospitality.">
 <meta name="twitter:image" content="https://www.shyftrota.com/og-image.png">
-<meta name="theme-color" content="#0B0B0A">
+<meta name="theme-color" content="#0A0B0E">
 <link rel="icon" href="/favicon.ico">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -28,8 +28,8 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <script>document.documentElement.className += " js";</script>
 <style>
-:root{--bg:#0B0B0A;--s1:#131210;--s2:#171614;--line:#2A2925;--line2:#1F1E1B;--text:#F4F1EC;--muted:#A3A09A;--faint:#8A867F;--accent:#E44E35;--accent-ink:#0B0B0A;
---am:#D9A441;--am-bg:rgba(217,164,65,.16);--am-t:#E3B65E;--mid:#7FA3BF;--mid-bg:rgba(127,163,191,.16);--mid-t:#9DBBD3;--pm:#C98A6B;--pm-bg:rgba(201,138,107,.18);--pm-t:#DCA285;--nt-bg:rgba(160,155,148,.14);--nt-t:#B5B0A8;
+:root{--bg:#0A0B0E;--s1:#14161B;--s2:#1B1E25;--line:#262A33;--line2:#1B1E25;--text:#F5F6F8;--muted:#A9AFBC;--faint:#8C93A1;--accent:#E44E35;--accent-ink:#0A0B0E;
+--am:#F5B53D;--am-bg:rgba(245,181,61,.15);--am-t:#F5B53D;--mid:#7DB7FF;--mid-bg:rgba(125,183,255,.15);--mid-t:#7DB7FF;--pm:#F28CB1;--pm-bg:rgba(242,140,177,.15);--pm-t:#F28CB1;--nt-bg:rgba(201,210,227,.12);--nt-t:#C9D2E3;
 --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;--sans:'Archivo',system-ui,-apple-system,sans-serif}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
@@ -41,7 +41,7 @@ img{display:block}
 .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:var(--faint);text-transform:uppercase}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:46px;padding:0 20px;border-radius:6px;font:700 15px/1 var(--sans);text-decoration:none;cursor:pointer;border:1px solid transparent;transition:background .15s,border-color .15s,transform .15s}
 .btn-primary{background:var(--accent);color:var(--accent-ink)}.btn-primary:hover{background:#F0644C;color:var(--accent-ink);transform:translateY(-1px)}
-.btn-ghost{border-color:#3A3833;color:var(--text);background:transparent}.btn-ghost:hover{border-color:#5A5750;color:#fff}
+.btn-ghost{border-color:#3A3F4B;color:var(--text);background:transparent}.btn-ghost:hover{border-color:#5A5750;color:#fff}
 .btn .arr{transition:transform .18s}.btn:hover .arr{transform:translateX(3px)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
@@ -126,7 +126,7 @@ td.tcol,th.tcol{background:#121110}
 .hrs{text-align:right!important;padding-right:10px!important;color:var(--text)}
 .needs{flex:1 1 250px;min-width:0;display:flex;flex-direction:column;gap:10px}
 .card{border:1px solid var(--line);border-radius:8px;background:var(--s2);transition:border-color .2s}
-.card:hover{border-color:#3A3833}
+.card:hover{border-color:#3A3F4B}
 .card .h{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px}
 .card .h::before{content:"";width:6px;height:6px;background:var(--accent);flex-shrink:0}
 .card .m{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:4px}
@@ -174,7 +174,7 @@ section{padding:88px 0;border-top:1px solid var(--line2)}
 /* sneak peek */
 .peek{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:40px}
 @media (max-width:760px){.peek{grid-template-columns:minmax(0,1fr)}}
-.pk{border:1px solid var(--line);border-left:2px solid #3A3833;border-radius:8px;padding:20px 22px;background:var(--s1);transition:border-left-color .25s,transform .25s}
+.pk{border:1px solid var(--line);border-left:2px solid #3A3F4B;border-radius:8px;padding:20px 22px;background:var(--s1);transition:border-left-color .25s,transform .25s}
 .pk:hover{border-left-color:var(--accent);transform:translateX(2px)}
 .pk .tag{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
 .pk h3{font-size:17px;margin:8px 0 6px;letter-spacing:-.01em}
@@ -385,8 +385,11 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
       <div class="f" data-rv style="--i:1"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3L2 20h20zM12 10v4M12 17h.01"/></svg><h3>Short shifts, flagged early</h3><p>See which shifts are short days ahead, with the people who are available and still under their hours.</p></div>
       <div class="f" data-rv style="--i:2"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><h3>Staffing from volume</h3><p>Type in the arrivals, due outs and occupancy from your morning report and ShyftRota sets how many people each shift needs.</p><span class="only">Hotels</span></div>
       <div class="f" data-rv style="--i:3"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4L3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/></svg><h3>Swaps, time off, call-ins</h3><p>Requests come to you in one place. Approved time off blocks scheduling automatically.</p></div>
-      <div class="f" data-rv style="--i:4"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><h3>Time clock and payroll CSV</h3><p>Staff clock in and out from their phone, lunches included. Export the hours as a CSV for Paychex, ADP, Gusto and other providers.</p></div>
+      <div class="f" data-rv style="--i:4"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><h3>Time clock, if you want it</h3><p>Staff clock in and out from their phone, lunches included, and you export a CSV for Paychex, ADP, Gusto and others. Already clock in through payroll? Switch it off.</p></div>
       <div class="f" data-rv style="--i:5"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg><h3>Team chat and email alerts</h3><p>Message the team or one person in the app. Emails go out when the schedule posts, before each shift, and when messages sit unread.</p></div>
+      <div class="f" data-rv style="--i:6"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 15h7M14 19h5"/></svg><h3>Six ways to see the week</h3><p>Grid, Cards, Slots, Timeline, List or Month. Pick the one that looks like the schedule you already know, and change it whenever you like.</p></div>
+      <div class="f" data-rv style="--i:7"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l-4 4 4 4M5 9h9a5 5 0 0 1 5 5v5"/></svg><h3>Drag to move or swap</h3><p>Grab a shift and drop it on another day or person. Drop it on someone else's shift and the two swap. Works on a phone with a press and hold.</p></div>
+      <div class="f" data-rv style="--i:8"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg><h3>Open shifts they can claim</h3><p>Post a shift nobody's on. Staff who can work it pick it up from their phone, and you approve who gets it.</p></div>
     </div>
   </div>
 </section>
@@ -399,7 +402,7 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
       <p data-rv style="--i:2">An honest look at what's coming. None of this is in the product yet, so don't buy on it.</p>
     </div>
     <div class="peek">
-      <div class="pk" data-rv style="--i:0"><div class="tag">In progress</div><h3>Open shifts your team can claim</h3><p>Post a shift nobody is covering and let qualified staff take it from their phone, with your approval on the way through.</p></div>
+      <div class="pk" data-rv style="--i:0"><div class="tag">Planned</div><h3>One login for several properties</h3><p>Switch between locations without signing out, for managers and owners who run more than one.</p></div>
       <div class="pk" data-rv style="--i:1"><div class="tag">In progress</div><h3>Text message alerts</h3><p>Email goes out today. Texts are next, for the people who never open email on a shift.</p></div>
       <div class="pk" data-rv style="--i:2"><div class="tag">Planned</div><h3>More industry presets</h3><p>Shift patterns and role sets for more kinds of teams, built from what pilot properties actually run.</p></div>
       <div class="pk" data-rv style="--i:3"><div class="tag">Planned</div><h3>Apps on the App Store and Play Store</h3><p>The web app already works on a phone. Real installable apps with push notifications come after that's solid.</p></div>
@@ -474,10 +477,11 @@ footer{border-top:1px solid var(--line2);padding:48px 0 40px;color:var(--faint);
       <details><summary>Do my employees need to download an app?</summary><p>No. ShyftRota runs in the phone's browser, so there's nothing to install from an app store. Staff can add it to their home screen so it opens like an app.</p></details>
       <details><summary>Is this only for hotels?</summary><p>No. The scheduling, swaps, time clock, chat and payroll export work for any team that runs on shifts, and ShyftRota ships with role presets for hotels, restaurants, healthcare, retail and general teams. One feature is hotel-specific: setting your daily cover from arrivals, due outs and occupancy. Hotels are where it's been proven week to week, so that's the version I can show you working today.</p></details>
       <details><summary>Where do the volume numbers come from?</summary><p>You type in each day's arrivals, due outs and occupancy, the numbers you already read off your morning report. There's no integration with your property management system, so nothing has to be connected before you start. You set the thresholds for your own property.</p></details>
-      <details><summary>Does it replace our payroll system?</summary><p>No. Staff clock in and out in ShyftRota, and you export the hours as a CSV to bring into Paychex, ADP, Gusto or another provider. ShyftRota doesn't calculate pay or file anything.</p></details>
+      <details><summary>Does it replace our payroll system?</summary><p>No. If you use the time clock, staff clock in and out in ShyftRota and you export the hours as a CSV for Paychex, ADP, Gusto or another provider. If your team already clocks in through payroll, turn the time clock off and use ShyftRota just for the schedule. Either way, ShyftRota doesn't calculate pay or file anything.</p></details>
       <details><summary>How are lunch breaks handled?</summary><p>Every shift over five hours counts a 30-minute unpaid lunch, so a 7:00a–3:30p shift is 8 paid hours toward each person's weekly max. ShyftRota is a scheduling tool, not a compliance service, so you stay responsible for meeting your own break and overtime rules.</p></details>
       <details><summary>Can staff at one property see another property's schedule?</summary><p>No. Each property's data is separated in the database, and staff only see their own property.</p></details>
-      <details><summary>How does a pilot start?</summary><p>Send the form below. We'll set up your property with you, load your team and shifts, and help you post your first weeks. You'll have my direct email the whole way.</p></details>
+      <details><summary>Can my staff use it in Spanish?</summary><p>Yes. Each person can switch their screens to Spanish in Settings. They can also add their shifts to Apple or Google Calendar so the schedule shows up where they already look.</p></details>
+      <details><summary>How does a pilot start?</summary><p>Send the form below. I'll set up your property the same day. Then a short checklist walks you through it: paste your team's names and emails, pick your layout, auto-fill the week and post it. You'll have my direct email the whole way.</p></details>
     </div>
   </div>
 </section>
