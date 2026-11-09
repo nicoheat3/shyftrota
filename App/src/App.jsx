@@ -4,6 +4,7 @@ import { flushSync } from "react-dom";
 import { supabase } from "./lib/supabaseClient.js";
 import { VolumePanel, CoverBadge, suggestCover, coverageForDay, shiftBucket, seedThresholds, DEFAULT_THRESHOLDS } from "./volume.jsx";
 import { Settings } from "./settings.jsx";
+import { AltSchedule, LayoutPicker, getLayout, saveLayout } from "./layouts.jsx";
 import { PublishBar, NotPosted } from "./publish.jsx";
 import { NotificationSettings, sendNotification } from "./notify.jsx";
 import { refreshPush } from "./push.js";
@@ -385,12 +386,12 @@ function exportCSV(emps, sched) {
 var T = {
  bg:"var(--bg)", surface:"var(--surface)", border:"var(--border)", text:"var(--text)", muted:"var(--muted)", faint:"var(--faint)", accent:"var(--accent)", accentL:"var(--accentL)", accent2:"var(--accent2)", danger:"var(--danger)", dangerL:"var(--dangerL)", success:"var(--success)", successL:"var(--successL)", warning:"var(--warning)", warningL:"var(--warningL)", raised:"var(--raised)", onAccent:"var(--onAccent)",
 };
-var CARD = { background:T.surface, border:"1px solid "+T.border, borderRadius:12, padding:20, boxShadow:"var(--shadow)", boxSizing:"border-box", overflow:"hidden" };
-var INP = { width:"100%", background:T.surface, border:"1px solid "+T.border, borderRadius:8, padding:"9px 12px", color:T.text, fontSize:13, outline:"none", fontFamily:"inherit", boxSizing:"border-box" };
-var TINP = { width:"100%", background:T.surface, border:"1px solid "+T.border, borderRadius:8, padding:"8px 8px", color:T.text, fontSize:13, outline:"none", fontFamily:"inherit", textAlign:"center", fontWeight:600, boxSizing:"border-box", maxWidth:"100%" };
+var CARD = { background:T.surface, border:"1px solid "+T.border, borderRadius:"var(--r-card)", padding:20, boxShadow:"var(--shadow)", boxSizing:"border-box", overflow:"hidden" };
+var INP = { width:"100%", background:T.surface, border:"1px solid "+T.border, borderRadius:"var(--r-ctl)", padding:"9px 12px", color:T.text, fontSize:13, outline:"none", fontFamily:"inherit", boxSizing:"border-box" };
+var TINP = { width:"100%", background:T.surface, border:"1px solid "+T.border, borderRadius:"var(--r-ctl)", padding:"8px 8px", color:T.text, fontSize:13, outline:"none", fontFamily:"inherit", textAlign:"center", fontWeight:600, boxSizing:"border-box", maxWidth:"100%" };
 var LBL = { fontSize:11, color:T.muted, display:"block", marginBottom:5, fontWeight:600, letterSpacing:"0.04em", textTransform:"uppercase" };
-var BTN = { background:T.accent, border:"none", borderRadius:8, padding:"8px 16px", color:T.onAccent, cursor:"pointer", fontSize:13, fontWeight:600, fontFamily:"inherit" };
-var GBTN = { background:"transparent", border:"1px solid "+T.border, borderRadius:8, padding:"8px 16px", color:T.muted, cursor:"pointer", fontSize:13, fontWeight:500, fontFamily:"inherit" };
+var BTN = { background:T.accent, border:"none", borderRadius:"var(--r-ctl)", padding:"8px 16px", color:T.onAccent, cursor:"pointer", fontSize:13, fontWeight:600, fontFamily:"inherit" };
+var GBTN = { background:"transparent", border:"1px solid "+T.border, borderRadius:"var(--r-ctl)", padding:"8px 16px", color:T.muted, cursor:"pointer", fontSize:13, fontWeight:500, fontFamily:"inherit" };
 // Shorthand style snippets
 var PILL = { borderRadius:20 };
 var ROW = { display:"flex", alignItems:"center" };
@@ -1015,6 +1016,7 @@ function LogoMark({ size }) {
 
 // ── Welcome / Auth ────────────────────────────────────
 function Welcome({ onLogin, onSignup, accounts, authError }) {
+ var [layoutPick, setLayoutPick] = useState("grid");
  var [mode, setMode] = useState("home");
  var [email, setEmail] = useState("");
  var [pw, setPw] = useState("");
@@ -1051,6 +1053,7 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  }
  function doSignup() {
  if (!name.trim() || !email.trim() || !pw.trim()) { setErr("All fields required."); return; }
+ saveLayout(layoutPick);
  var pwErr = validatePassword(pw);
  if (pwErr) { setErr(pwErr); return; }
  if (accounts.find(function(a){return a.email.toLowerCase()===email.toLowerCase().trim();})) { setErr("Email already in use."); return; }
@@ -1064,12 +1067,12 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  }
 
  if (mode === "login") return (
- <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,var(--xF8F6F3),var(--xEDE8E0))", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Archivo',system-ui,sans-serif", padding:20 }}>
+ <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,var(--xF8F6F3),var(--xEDE8E0))", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"var(--font-ui)", padding:20 }}>
  <div style={{ width:"100%", maxWidth:400 }}>
  <button onClick={function(){setMode("home");setErr("");}} style={{ ...GBTN, marginBottom:20, fontSize:12 }}>&#8592; Back</button>
  <div style={{ ...CARD, padding:28 }}>
  <div style={{ textAlign:"center", marginBottom:22 }}>
- <div style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:800, fontSize:22, color:T.text }}>Welcome back</div>
+ <div style={{ fontFamily:"var(--font-ui)", fontWeight:800, fontSize:22, color:T.text }}>Welcome back</div>
  <div style={{ color:T.muted, fontSize:13, marginTop:4 }}>Sign in to ShyftRota</div>
  </div>
  <div style={{ marginBottom:13 }}><label style={LBL}>Email</label><input value={email} onChange={function(e){setEmail(e.target.value);setErr("");}} placeholder="you@company.com" style={INP} /></div>
@@ -1088,12 +1091,12 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  // This form never created a real account (see handleSignup below). Kept only
  // so the markup is here if self-serve signup is wired up properly later.
  if (mode === "signup") return (
- <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,var(--xF8F6F3),var(--xEDE8E0))", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Archivo',system-ui,sans-serif", padding:20 }}>
+ <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,var(--xF8F6F3),var(--xEDE8E0))", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"var(--font-ui)", padding:20 }}>
  <div style={{ width:"100%", maxWidth:440 }}>
  <button onClick={function(){setMode("home");setErr("");}} style={{ ...GBTN, marginBottom:20, fontSize:12 }}>&#8592; Back</button>
  <div style={{ ...CARD, padding:28 }}>
  <div style={{ textAlign:"center", marginBottom:22 }}>
- <div style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:800, fontSize:22, color:T.text }}>Create your workspace</div>
+ <div style={{ fontFamily:"var(--font-ui)", fontWeight:800, fontSize:22, color:T.text }}>Create your workspace</div>
  <div style={{ color:T.muted, fontSize:13, marginTop:4 }}>Set up ShyftRota for your team</div>
  </div>
  <div style={{ marginBottom:13 }}><label style={LBL}>Your name</label><input value={name} onChange={function(e){setName(e.target.value);setErr("");}} placeholder="Your full name" style={INP} /></div>
@@ -1145,6 +1148,11 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
               {PAYROLL_PROVIDERS.map(function(p){ return <option key={p.id} value={p.id}>{p.label}</option>; })}
             </select>
           </div>
+ <div style={{ marginBottom:18 }}>
+   <label style={LBL}>How do you like to see your schedule?</label>
+   <LayoutPicker value={layoutPick} onChange={setLayoutPick} T={T} compact={true} />
+   <div style={{ fontSize:11, color:T.faint, marginTop:6 }}>You can change this any time in Settings.</div>
+ </div>
  <button onClick={doSignup} style={{ ...BTN, width:"100%", padding:"11px", fontSize:14 }}>Create workspace</button>
  </div>
  </div>
@@ -1152,10 +1160,10 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  );
 
  return (
- <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,var(--xF8F6F3),var(--xEDE8E0))", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", fontFamily:"'Archivo',system-ui,sans-serif", padding:24 }}>
+ <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,var(--xF8F6F3),var(--xEDE8E0))", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", fontFamily:"var(--font-ui)", padding:24 }}>
  <div style={{ textAlign:"center", maxWidth:540, animation:"fadeIn .5s ease" }}>
   <div style={{ marginBottom:24, display:"flex", justifyContent:"center" }}><LogoMark size={88} /></div>
- <h1 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:800, fontSize:40, color:T.text, marginBottom:12, lineHeight:1.15 }}>ShyftRota</h1>
+ <h1 style={{ fontFamily:"var(--font-ui)", fontWeight:800, fontSize:40, color:T.text, marginBottom:12, lineHeight:1.15 }}>ShyftRota</h1>
  <p style={{ fontSize:17, color:T.muted, marginBottom:10, lineHeight:1.6 }}>Intelligent workforce scheduling for hospitality, healthcare, and beyond.</p>
  <p style={{ fontSize:14, color:T.faint, marginBottom:36 }}>AI schedules - Shift swaps - Team chat - PTO management</p>
  <div style={{ display:"flex", gap:20, justifyContent:"center", flexWrap:"wrap", marginBottom:36 }}>
@@ -1457,7 +1465,31 @@ function App() {
   var [editOverride,   setEditOverride]   = useState(null); // {day, eid, start, end}
   var [cellNotes,      setCellNotes]      = useState({}); // {ISOdate_eid: "La Jolla"} — free-text cell notes
   var [editNote,       setEditNote]       = useState(null); // {day, eid, empName, text}
-  var [schedView,      setSchedView]      = useState(function(){ try { return window.innerWidth < 680 ? "day" : "week"; } catch(e) { return "week"; } });
+  var [schedView,      setSchedView]      = useState(function(){ try { return (window.innerWidth < 680 || getLayout() === "timeline") ? "day" : "week"; } catch(e) { return "week"; } });
+  var [schedLayout,    setSchedLayoutS]   = useState(getLayout());
+  var [settingsSub,    setSettingsSub]    = useState("general");
+  function setSchedLayout(v) { saveLayout(v); setSchedLayoutS(v); setSchedView(v === "timeline" ? "day" : "week"); }
+ // Month layout: read the surrounding weeks too (display only; edits still go through the week in view)
+ var [monthSched, setMonthSched] = useState({});
+ useEffect(function(){
+  if (!user || !user.property_id || schedLayout !== "month") return;
+  var ws = getWeekStart(weekOff), first = new Date(ws.getFullYear(), ws.getMonth(), 1), startOff = weekOff, probe = new Date(ws);
+  while (probe > first) { probe.setDate(probe.getDate() - 7); startOff--; }
+  var s0 = getWeekStart(startOff), e0 = new Date(s0); e0.setDate(s0.getDate() + 41);
+  var ordered = orderedDays(), cancelled = false;
+  supabase.from("schedule_entries").select("employee_id,work_date,shift_id").eq("property_id", user.property_id).gte("work_date", isoDate(s0)).lte("work_date", isoDate(e0)).then(function(res){
+   if (cancelled || !res.data) return;
+   var out = {};
+   for (var w = 0; w < 6; w++) { var o = {}; DAYS.forEach(function(d){ o[d] = {}; }); out[startOff + w] = o; }
+   res.data.forEach(function(row){
+    var dt = new Date(row.work_date + "T00:00:00"), idx = Math.round((dt - s0) / 86400000), wk = startOff + Math.floor(idx / 7), dn = ordered[idx % 7];
+    if (out[wk] && dn) out[wk][dn][row.employee_id] = row.shift_id;
+   });
+   setMonthSched(out);
+  });
+  return function(){ cancelled = true; };
+ }, [user && user.property_id, schedLayout, weekOff]);
+
   var [newDeptName,   setNewDeptName]   = useState("");
   var [overrideEid,    setOverrideEid]    = useState(null);
   var [overrideType,   setOverrideType]   = useState("out");
@@ -2566,7 +2598,7 @@ function App() {
   var TAB_ICONS = {myrequests:"clipboard",schedule:"calendar",employees:"users",depts:"building",openShifts:"plusSquare",requests:"clipboard",timeclock:"clock",shifts:"list",chat:"message",ai:"terminal",myschedule:"calendarCheck",today:"eye",timeoff:"sun",swap:"swap",callin:"phone",clockin:"login",settings:"sliders"};
 
  if (authLoading) return (
-  <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--xF8F6F3)", color:"var(--x8A8478)", fontFamily:"'Archivo',system-ui,sans-serif", fontSize:14 }}>
+  <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--xF8F6F3)", color:"var(--x8A8478)", fontFamily:"var(--font-ui)", fontSize:14 }}>
    Loading…
   </div>
  );
@@ -2697,10 +2729,10 @@ function App() {
  var tz = getTZ();
 
  return (
- <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"'Archivo',system-ui,sans-serif", color:T.text }}>
+ <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"var(--font-ui)", color:T.text }}>
        <meta httpEquiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com https://api.anthropic.com;" />
       <style>{`
- @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+ @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
  .mono { font-family:'IBM Plex Mono',ui-monospace,monospace; font-variant-numeric:tabular-nums; }
  .vol-in::-webkit-outer-spin-button, .vol-in::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
  .vol-in { -moz-appearance:textfield; appearance:textfield; }
@@ -2767,9 +2799,11 @@ function App() {
  .mobile-nav { display:none !important; }
  .mobile-bottom { display:none !important; }
  .nm-short { display:none; }
+ .ph-only, .ph-flex { display:none !important; }
  .dtop-bar { display:flex !important; }
  @media (max-width:680px) {
  input, select, textarea { font-size:16px !important; }
+ .ph-only { display:block !important; } .ph-flex { display:flex !important; } .dk-only { display:none !important; }
  .sidebar { display:none !important; }
  .mobile-nav { display:flex !important; }
  .dtop-bar { display:none !important; }
@@ -2797,7 +2831,7 @@ function App() {
  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"9px 16px", height:48, flexShrink:0 }}>
  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
             <LogoMark size={28} />
- <span style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:800, fontSize:14, color:T.text }}>ShyftRota</span>
+ <span style={{ fontFamily:"var(--font-ui)", fontWeight:800, fontSize:14, color:T.text }}>ShyftRota</span>
  </div>
  <div style={{ display:"flex", gap:7, alignItems:"center" }}>
  {conflicts.length > 0 && <div style={{ background:T.warningL, border:"1px solid var(--xFDE68A)", borderRadius:6, padding:"3px 8px", color:"var(--x92400E)", fontSize:11 }}>&#9888; {conflicts.length}</div>}
@@ -2823,8 +2857,7 @@ function App() {
   var restActive = REST.some(function(t){ return t.id === tab; });
   function NavBtn(props) {
     return (
-      <button className="tab-btn" onClick={props.onClick} style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, padding:"8px 2px", minHeight:56, border:"none", background:"transparent", cursor:"pointer", fontFamily:"inherit", color:props.active?T.accent:T.muted, position:"relative" }}>
-        {props.active && <span style={{ position:"absolute", top:0, left:"30%", right:"30%", height:2, background:T.accent }} className="tab-indicator" />}
+      <button className="tab-btn" onClick={props.onClick} style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, padding:"6px 2px", minHeight:54, border:"none", borderRadius:16, background:props.active?T.text:"transparent", cursor:"pointer", fontFamily:"inherit", color:props.active?T.bg:T.muted, position:"relative" }}>
         <Icon name={props.icon} size={20} />
         <span style={{ fontSize:11, fontWeight:props.active?700:500, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:"100%" }}>{props.label}</span>
         {props.badge > 0 && <span className="mono" style={{ position:"absolute", top:5, left:"calc(50% + 6px)", background:T.accent, color:"white", fontSize:10, fontWeight:600, borderRadius:4, padding:"0 4px", lineHeight:"15px" }}>{props.badge}</span>}
@@ -2849,7 +2882,7 @@ function App() {
       </div>
      </div>
     )}
-    <div className="mobile-bottom" style={{ position:"fixed", left:0, right:0, bottom:0, zIndex:70, background:T.surface, borderTop:"1px solid "+T.border, paddingBottom:"env(safe-area-inset-bottom)" }}>
+    <div className="mobile-bottom" style={{ position:"fixed", left:12, right:12, bottom:"calc(10px + env(safe-area-inset-bottom))", zIndex:70, background:T.surface, border:"1px solid "+T.border, borderRadius:22, padding:5, gap:4, boxShadow:"0 12px 30px -14px rgba(0,0,0,0.45)" }}>
      {MAIN.map(function(t){
       return <NavBtn key={t.id} icon={TAB_ICONS[t.id]} label={t.label.replace(/ \(\d+\)/,"").replace("My Schedule","Mine")} active={tab===t.id && !moreOpen} badge={t.id==="requests"?pendingAll:0} onClick={function(){ goTab(t.id, function(){ setMoreOpen(false); }); }} />;
      })}
@@ -2868,7 +2901,7 @@ function App() {
  <div style={{ display:"flex", alignItems:"center", gap:9 }}>
           <LogoMark size={32} />
  <div>
- <div style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:800, fontSize:14, color:T.text }}>ShyftRota</div>
+ <div style={{ fontFamily:"var(--font-ui)", fontWeight:800, fontSize:14, color:T.text }}>ShyftRota</div>
  <div style={{ fontSize:10, color:T.faint }}>{(INDUSTRIES[industry]&&INDUSTRIES[industry].label)||"General"}</div>
  </div>
  </div>
@@ -2904,7 +2937,7 @@ function App() {
  {/* Desktop top bar */}
  <div className="dtop-bar" style={{ background:T.surface, borderBottom:"1px solid "+T.border, padding:"13px 24px", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
  <div>
- <h1 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:17, color:T.text }}>
+ <h1 style={{ fontFamily:"var(--font-ui)", fontWeight:700, fontSize:17, color:T.text }}>
  {(TABS.find(function(t){return t.id===tab;})&&TABS.find(function(t){return t.id===tab;}).label.replace(/ \(\d+\)/,""))||""}
  </h1>
  <div style={{ fontSize:11, color:T.faint, marginTop:2, display:"flex", alignItems:"center", gap:8 }}>
@@ -3172,7 +3205,16 @@ function App() {
    </div>
   );
  })()}
- {schedView==="week" && (
+ {schedView==="week" && schedLayout !== "grid" && schedLayout !== "timeline" && (
+   <AltSchedule layout={schedLayout} T={T} days={orderedDays()} weekSched={weekSched} emps={scopedEmps()} shiftDefs={shiftDefs}
+     timesFor={shiftTimesFor} color={shiftColor} hrsOf={hrsOf} shortT={shortT}
+     todayName={weekOff === 0 ? todayName : null} todayIso={isoDate(new Date())} locked={isPastWeek}
+     iso={function(d){ return dayToISODate(weekOff, d); }} dayIso={dayToISODate} dayDate={function(i){ return getDayDate(i, weekOff); }}
+     onPto={onPtoOn} assign={assignShift} remove={removeShift}
+     sched={Object.assign({}, monthSched, sched)} weekOff={weekOff} weekStartDate={getWeekStart(weekOff)}
+     openDay={function(off, d){ setWeekOff(off); setTlDay(d); setSchedView("day"); }} />
+ )}
+ {schedView==="week" && (schedLayout === "grid" || schedLayout === "timeline") && (
  <div style={{ ...CARD, padding:0, overflow:"hidden", marginBottom:16 }}>
  <div style={{ overflowX:"auto" }}>
  <table style={{ width:"100%", borderCollapse:"collapse", minWidth:620 }}>
@@ -3531,7 +3573,7 @@ function App() {
               return (
                 <div>
                   <div style={{ marginBottom:14 }}>
-                    <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>Departments</h2>
+                    <h2 style={{ fontFamily:"var(--font-ui)", fontWeight:700, fontSize:18 }}>Departments</h2>
                     <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Create departments, assign staff, and link teams that work together. Linked teams can see each other in the "Who's Working" view.</p>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:12 }}>
@@ -3971,7 +4013,7 @@ function App() {
  <div>
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18, flexWrap:"wrap", gap:10 }}>
  <div>
- <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>Shift Types</h2>
+ <h2 style={{ fontFamily:"var(--font-ui)", fontWeight:700, fontSize:18 }}>Shift Types</h2>
  <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Edit existing shifts or add new ones. Save to apply changes to the schedule.</p>
  </div>
  <button onClick={function(){setAddingShift(true);setNewShift({label:"",start:"09:00",end:"17:00",color:"Day 9-5"});}} style={BTN}>+ Add Shift</button>
@@ -4053,7 +4095,19 @@ function App() {
  )}
 
  {/* SETTINGS */}
- {tab==="settings" && (
+ {tab==="settings" && isAdmin && (
+  <div role="tablist" aria-label="Settings sections" style={{ display:"inline-flex", gap:4, padding:4, marginBottom:16, border:"1px solid "+T.border, borderRadius:"var(--r-ctl)", background:T.surface }}>
+   {[["general","General"],["layout","Schedule layout"]].map(function(o){ var on = settingsSub === o[0]; return <button key={o[0]} role="tab" aria-selected={on} onClick={function(){ setSettingsSub(o[0]); }} style={{ minHeight:36, padding:"0 14px", border:"none", borderRadius:"var(--r-ctl)", background:on?T.text:"transparent", color:on?T.bg:T.muted, fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"inherit" }}>{o[1]}</button>; })}
+  </div>
+ )}
+ {tab==="settings" && isAdmin && settingsSub==="layout" && (
+  <div style={{ ...CARD, marginBottom:16 }}>
+   <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Schedule layout</div>
+   <div style={{ fontSize:12, color:T.muted, marginTop:2, marginBottom:14 }}>How the Schedule page looks on this device. Your team's phones don't change.</div>
+   <LayoutPicker value={schedLayout} onChange={function(v){ setSchedLayout(v); showT("Schedule layout updated"); }} T={T} />
+  </div>
+ )}
+ {tab==="settings" && settingsSub==="general" && (
   <div style={{ ...CARD, marginBottom:16, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
    <div><div style={{ fontSize:14, fontWeight:700, color:T.text }}>Appearance</div><div style={{ fontSize:12, color:T.muted, marginTop:2 }}>Dark or light. Saved on this device.</div></div>
    <div role="group" aria-label="Theme" style={{ display:"flex", border:"1px solid "+T.border, borderRadius:8, padding:2 }}>
@@ -4061,7 +4115,7 @@ function App() {
    </div>
   </div>
  )}
- {tab==="settings" && (
+ {tab==="settings" && settingsSub==="general" && (
   <div style={{ ...CARD, marginBottom:16, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
    <div><div style={{ fontSize:14, fontWeight:700, color:T.text }}>{tr("Language")}</div><div style={{ fontSize:12, color:T.muted, marginTop:2 }}>{tr("Changes the employee screens on this phone.")}</div></div>
    <div role="group" aria-label="Language" style={{ display:"flex", border:"1px solid "+T.border, borderRadius:8, padding:2 }}>
@@ -4069,8 +4123,8 @@ function App() {
    </div>
   </div>
  )}
- {tab==="settings" && <NotificationSettings user={user} emps={emps} isAdmin={isAdmin} showT={showT} weeks={[0,1].map(function(o){ return { key:isoDate(getWeekStart(o)), label:fmtWeekRange(o) }; })} defaultWeek={weekOff === 1 ? 1 : 0} />}
- {tab==="settings" && (
+ {tab==="settings" && settingsSub==="general" && <NotificationSettings user={user} emps={emps} isAdmin={isAdmin} showT={showT} weeks={[0,1].map(function(o){ return { key:isoDate(getWeekStart(o)), label:fmtWeekRange(o) }; })} defaultWeek={weekOff === 1 ? 1 : 0} />}
+ {tab==="settings" && settingsSub==="general" && (
    <Settings
      user={user}
      isAdmin={isAdmin}
@@ -4092,7 +4146,7 @@ function App() {
    />
  )}
 
- {tab==="settings" && isAdmin && <ActivityLog user={user} />}
+ {tab==="settings" && settingsSub==="general" && isAdmin && <ActivityLog user={user} />}
 
  {/* CHAT */}
  {tab==="chat" && <TeamChat user={user} emps={emps} />}
@@ -4101,7 +4155,7 @@ function App() {
  {tab==="ai" && isAdmin && (
  <div>
  <div style={{ marginBottom:14 }}>
- <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>AI Assistant</h2>
+ <h2 style={{ fontFamily:"var(--font-ui)", fontWeight:700, fontSize:18 }}>AI Assistant</h2>
  <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Scheduling intelligence powered by Claude</p>
  </div>
  <div style={{ display:"grid", gridTemplateColumns:"1fr 220px", gap:14, minHeight:460 }} className="two-col">
@@ -4149,7 +4203,7 @@ function App() {
  if (!isAdmin && !isPublished) return (
    <div>
      <div style={{ marginBottom:14 }}>
-       <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("My Schedule")}</h2>
+       <h2 style={{ fontFamily:"var(--font-ui)", fontWeight:700, fontSize:18 }}>{tr("My Schedule")}</h2>
        <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{weekLabel}</p>
      </div>
      <NotPosted weekLabel={weekLabel} />
@@ -4186,9 +4240,13 @@ function App() {
      <span style={{ fontSize:13, fontWeight:600, color:rc.color }}>{reminderMsg}</span>
    </div>
  )}
- <div style={{ marginBottom:14 }}>
- <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("My Schedule")}</h2>
+ <div className="dk-only" style={{ marginBottom:14 }}>
+ <h2 style={{ fontFamily:"var(--font-ui)", fontWeight:700, fontSize:18 }}>{tr("My Schedule")}</h2>
  <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{me.name} - {me.role}</p>
+ </div>
+ <div className="ph-only" style={{ marginBottom:14, padding:"0 2px" }}>
+ <div style={{ fontFamily:MONO, fontSize:12, letterSpacing:"0.06em", color:T.muted }}>{new Date().toLocaleDateString(getLang()==="es"?"es":"en-US", { weekday:"short", month:"short", day:"numeric" }).toUpperCase()}</div>
+ <h2 style={{ fontFamily:"var(--font-ui)", fontWeight:800, fontSize:30, letterSpacing:"-0.035em", marginTop:2 }}>{tr("Hi")}, {me.name.split(" ")[0]}</h2>
  </div>
  {(function(){
    if (weekOff < 0) return null;
@@ -4217,17 +4275,31 @@ function App() {
    var A = big(next.t.start), B = big(next.t.end);
    var dept = depts.find(function(x){ return x.id === me.dept; });
    return (
-     <section aria-label="Next shift" style={{ background:T.surface, border:"1px solid "+T.border, borderRadius:10, padding:18, marginBottom:14 }}>
+     <section aria-label="Next shift" style={{ background:T.surface, border:"1px solid "+T.border, borderRadius:"var(--r-hero)", padding:18, marginBottom:14 }}>
        <div style={{ display:"flex", justifyContent:"space-between", gap:10, fontFamily:MONO, fontSize:11 }}>
          <span style={{ color:T.muted }}>{live ? tr("ON SHIFT") : tr("NEXT SHIFT")} · {(next.day + " " + getDayDate(next.di, weekOff)).toUpperCase()}</span>
          <span style={{ color:T.accent, whiteSpace:"nowrap" }}>{cd}</span>
        </div>
-       <div style={{ fontFamily:MONO, fontSize:40, fontWeight:500, letterSpacing:"-0.04em", lineHeight:1, marginTop:14, color:T.text, whiteSpace:"nowrap" }}>{A.main}<span style={{ fontSize:18, color:T.faint, letterSpacing:0 }}>{A.ap}</span><span style={{ color:T.faint, padding:"0 6px" }}>–</span>{B.main}<span style={{ fontSize:18, color:T.faint, letterSpacing:0 }}>{B.ap}</span></div>
+       <div className="dk-only" style={{ fontFamily:MONO, fontSize:40, fontWeight:500, letterSpacing:"-0.04em", lineHeight:1, marginTop:14, color:T.text, whiteSpace:"nowrap" }}>{A.main}<span style={{ fontSize:18, color:T.faint, letterSpacing:0 }}>{A.ap}</span><span style={{ color:T.faint, padding:"0 6px" }}>–</span>{B.main}<span style={{ fontSize:18, color:T.faint, letterSpacing:0 }}>{B.ap}</span></div>
+       <div className="ph-flex" style={{ alignItems:"center", gap:16, marginTop:12 }}>
+       {(function(){ var R = 40, C = 2 * Math.PI * R, len = C * (Math.min(24, next.en) - next.s) / 24; return (
+         <svg role="img" aria-label={next.t.label + ", " + A.main + A.ap + " to " + B.main + B.ap} width="104" height="104" viewBox="0 0 104 104" style={{ flex:"0 0 auto" }}>
+           <circle cx="52" cy="52" r={R} fill="none" stroke="var(--border)" strokeWidth="13" />
+           <circle cx="52" cy="52" r={R} fill="none" stroke={c.dot} strokeWidth="13" strokeLinecap="round" strokeDasharray={len.toFixed(1) + " " + C.toFixed(1)} transform={"rotate(" + (next.s * 15 - 90) + " 52 52)"} />
+           <circle cx="52" cy="52" r="5" fill="var(--accent)" />
+           <text x="52" y="8" textAnchor="middle" fontSize="8" fill="var(--faint)" fontFamily="IBM Plex Mono">12A</text>
+           <text x="52" y="102" textAnchor="middle" fontSize="8" fill="var(--faint)" fontFamily="IBM Plex Mono">12P</text>
+         </svg>
+       ); })()}
+       <div style={{ minWidth:0 }}>
+       <div style={{ fontFamily:MONO, fontSize:26, fontWeight:500, letterSpacing:"-0.05em", lineHeight:1, marginTop:0, color:T.text, whiteSpace:"nowrap" }}>{A.main}<span style={{ fontSize:18, color:T.faint, letterSpacing:0 }}>{A.ap}</span><span style={{ color:T.faint, padding:"0 6px" }}>–</span>{B.main}<span style={{ fontSize:18, color:T.faint, letterSpacing:0 }}>{B.ap}</span></div>
+       </div>
+       </div>
        <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:10, fontSize:13, color:T.muted, flexWrap:"wrap" }}><span style={{ width:8, height:8, background:c.dot }} /><span style={{ color:T.text, fontWeight:600 }}>{next.t.label}</span><span>{dept ? "· " + dept.name + " " : ""}· {paidHours(next.en - next.s, isPaidLunch(next.sh, shiftDefs))} hrs paid</span></div>
-       <div aria-hidden="true" style={{ position:"relative", height:6, marginTop:16, background:T.bg, border:"1px solid "+T.border }}>
+       <div className="dk-only" aria-hidden="true" style={{ position:"relative", height:6, marginTop:16, background:T.bg, border:"1px solid "+T.border }}>
          <div style={{ position:"absolute", left:(next.s / 24 * 100) + "%", width:((Math.min(24, next.en) - next.s) / 24 * 100) + "%", top:0, bottom:0, background:c.dot }} />
        </div>
-       <div aria-hidden="true" style={{ display:"flex", justifyContent:"space-between", fontFamily:MONO, fontSize:11, color:T.faint, marginTop:5 }}><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
+       <div className="dk-only" aria-hidden="true" style={{ display:"flex", justifyContent:"space-between", fontFamily:MONO, fontSize:11, color:T.faint, marginTop:5 }}><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
        {mates.length > 0 && (
          <div style={{ display:"flex", alignItems:"center", marginTop:14, paddingTop:12, borderTop:"1px solid "+T.border }}>
            {mates.slice(0,3).map(function(e, k){ return <Avatar key={e.id} emp={e} ring={true} overlap={k > 0} />; })}
@@ -4318,7 +4390,7 @@ function App() {
                   <div style={{ marginBottom:18 }}>
                     <div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>{new Date().toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}).toUpperCase()}</div>
                     <div style={{ fontFamily:MONO, fontSize:56, fontWeight:500, letterSpacing:"-0.06em", lineHeight:1, color:T.text, margin:"10px 0 14px" }}>{(function(){ var n = new Date(); var h = n.getHours(); return (h % 12 || 12) + ":" + String(n.getMinutes()).padStart(2,"0"); })()}<span style={{ fontSize:18, letterSpacing:0, color:T.faint, marginLeft:6 }}>{new Date().getHours() >= 12 ? "PM" : "AM"}</span></div>
-                    <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Who's working today")}</h2>
+                    <h2 style={{ fontFamily:"var(--font-ui)", fontWeight:700, fontSize:18 }}>{tr("Who's working today")}</h2>
                   </div>
                   <NotPosted weekLabel={weekLabel} />
                 </div>
@@ -4328,7 +4400,7 @@ function App() {
                   <div style={{ marginBottom:18 }}>
                     <div style={{ fontFamily:MONO, fontSize:11, color:T.faint }}>{new Date().toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}).toUpperCase()}</div>
                     <div style={{ fontFamily:MONO, fontSize:56, fontWeight:500, letterSpacing:"-0.06em", lineHeight:1, color:T.text, margin:"10px 0 14px" }}>{(function(){ var n = new Date(); var h = n.getHours(); return (h % 12 || 12) + ":" + String(n.getMinutes()).padStart(2,"0"); })()}<span style={{ fontSize:18, letterSpacing:0, color:T.faint, marginLeft:6 }}>{new Date().getHours() >= 12 ? "PM" : "AM"}</span></div>
-                    <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Who's working today")}</h2>
+                    <h2 style={{ fontFamily:"var(--font-ui)", fontWeight:700, fontSize:18 }}>{tr("Who's working today")}</h2>
                     <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{todayDay} — your department{visibleDepts.length>1?" and linked teams":""}</p>
                   </div>
                   {visibleDepts.length===0 && (
@@ -4428,7 +4500,7 @@ function App() {
  {tab==="myrequests" && reqSub==="timeoff" && !isAdmin && (
  <div>
  <div style={{ marginBottom:14 }}>
- <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Time Off")}</h2>
+ <h2 style={{ fontFamily:"var(--font-ui)", fontWeight:700, fontSize:18 }}>{tr("Time Off")}</h2>
  <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{tr("Request vacation, sick days, or personal time")}</p>
  </div>
  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, maxWidth:640 }} className="two-col">
@@ -4466,7 +4538,7 @@ function App() {
  {tab==="myrequests" && reqSub==="swap" && !isAdmin && (
  <div>
  <div style={{ marginBottom:14 }}>
- <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Shift Swap")}</h2>
+ <h2 style={{ fontFamily:"var(--font-ui)", fontWeight:700, fontSize:18 }}>{tr("Shift Swap")}</h2>
  <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{tr("Request a swap with a colleague")}</p>
  </div>
  {!isPublished && <div style={{ marginBottom:16 }}><NotPosted weekLabel={weekLabel} compact /></div>}
@@ -4543,7 +4615,7 @@ function App() {
  {tab==="myrequests" && reqSub==="callin" && !isAdmin && (
  <div style={{ maxWidth:420 }}>
  <div style={{ marginBottom:14 }}>
- <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Call In")}</h2>
+ <h2 style={{ fontFamily:"var(--font-ui)", fontWeight:700, fontSize:18 }}>{tr("Call In")}</h2>
  <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{tr("Notify your manager if you will be absent, late, or leaving early.")}</p>
  </div>
  <div style={CARD}>
@@ -4608,7 +4680,7 @@ function App() {
               return (
                 <div style={{ maxWidth:400 }}>
                   <div style={{ marginBottom:16 }}>
-                    <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>{tr("Clock In / Out")}</h2>
+                    <h2 style={{ fontFamily:"var(--font-ui)", fontWeight:700, fontSize:18 }}>{tr("Clock In / Out")}</h2>
                     <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>{tr("Track your hours for payroll")}</p>
                   </div>
                   <div style={{ ...CARD, textAlign:"center", padding:28, marginBottom:16 }}>
@@ -4773,7 +4845,7 @@ function App() {
                   {/* Header */}
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20, flexWrap:"wrap", gap:12 }}>
                     <div>
-                      <h2 style={{ fontFamily:"'Archivo',system-ui,sans-serif", fontWeight:700, fontSize:18 }}>Time Clock</h2>
+                      <h2 style={{ fontFamily:"var(--font-ui)", fontWeight:700, fontSize:18 }}>Time Clock</h2>
                       <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Live attendance + payroll-ready export</p>
                     </div>
                     <button onClick={exportPaychex} style={{ ...BTN, fontSize:13, display:"flex", alignItems:"center", gap:7, background:"linear-gradient(135deg,#0F766E,#0D9488)" }}>

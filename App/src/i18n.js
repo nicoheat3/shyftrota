@@ -36,6 +36,7 @@ var ES = {
   "Clock In": "Marcar entrada",
   "Team Chat": "Chat del equipo",
   "Settings": "Ajustes",
+  "Hi": "Hola",
   "Schedule": "Horario",
   "Requests": "Solicitudes",
   "Chat": "Chat",
