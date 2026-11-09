@@ -88,12 +88,12 @@ export function layout(title, bodyHtml, appUrl, opts) {
         '<div style="font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-0.02em;color:' + C.text + ';margin:0 0 14px">' + esc(title) + '</div>' +
         bodyHtml +
         '<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:22px"><tr><td style="background:' + C.accent + ';border-radius:4px">' +
-          '<a href="' + esc(base) + '" style="display:inline-block;padding:12px 20px;font-size:14px;font-weight:600;color:#FFFFFF;text-decoration:none">' + esc(opts.cta || "Open ShyftRota") + ' &rarr;</a>' +
+          '<a href="' + esc(opts.ctaHref || base) + '" style="display:inline-block;padding:12px 20px;font-size:14px;font-weight:600;color:#FFFFFF;text-decoration:none">' + esc(opts.cta || "Open ShyftRota") + ' &rarr;</a>' +
         '</td></tr></table>' +
       '</td></tr>' +
       // Footer
       '<tr><td style="padding:16px 2px 0;font-size:12px;line-height:1.6;color:' + C.muted + '">' +
-        'You get these because email notifications are on in ShyftRota. Turn them off any time in Settings &rarr; Email notifications.' +
+        (opts.footer ? esc(opts.footer) : 'You get these because email notifications are on in ShyftRota. Turn them off any time in Settings &rarr; Email notifications.') +
       '</td></tr>' +
     '</table></td></tr></table></body></html>';
 }

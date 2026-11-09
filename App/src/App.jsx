@@ -1016,11 +1016,61 @@ function LogoMark({ size }) {
 }
 
 // ── Welcome / Auth ────────────────────────────────────
-function Welcome({ onLogin, onSignup, accounts, authError }) {
+function NewPassword({ onDone }) {
+ var [pw, setPw] = useState("");
+ var [pw2, setPw2] = useState("");
+ var [show, setShow] = useState(false);
+ var [err, setErr] = useState("");
+ var [busy, setBusy] = useState(false);
+ async function save() {
+  var bad = validatePassword(pw);
+  if (bad) { setErr(bad); return; }
+  if (pw !== pw2) { setErr("The two passwords don't match."); return; }
+  setBusy(true); setErr("");
+  var r = await supabase.auth.updateUser({ password:pw });
+  setBusy(false);
+  if (r.error) { setErr(/same|different/i.test(r.error.message || "") ? "Pick a password you haven't used here before." : "Couldn't save it: " + r.error.message); return; }
+  onDone();
+ }
+ return (
+ <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,var(--xF8F6F3),var(--xEDE8E0))", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"var(--font-ui)", padding:20 }}>
+  <div style={{ ...CARD, padding:28, width:"100%", maxWidth:400 }}>
+   <div style={{ textAlign:"center", marginBottom:22 }}>
+    <div style={{ fontWeight:800, fontSize:22, color:T.text }}>Choose a new password</div>
+    <div style={{ color:T.muted, fontSize:13, marginTop:6, lineHeight:1.5 }}>At least 8 characters, with an uppercase letter, a lowercase letter, a number and a symbol.</div>
+   </div>
+   <form onSubmit={function(e){ e.preventDefault(); save(); }}>
+    <input type="email" name="email" autoComplete="username" style={{ display:"none" }} readOnly value="" />
+    <div style={{ marginBottom:13 }}><label htmlFor="np1" style={LBL}>New password</label><input id="np1" name="new-password" type={show ? "text" : "password"} autoComplete="new-password" autoFocus value={pw} onChange={function(e){ setPw(e.target.value); setErr(""); }} style={INP} /></div>
+    <div style={{ marginBottom:8 }}><label htmlFor="np2" style={LBL}>Type it again</label><input id="np2" name="confirm-password" type={show ? "text" : "password"} autoComplete="new-password" value={pw2} onChange={function(e){ setPw2(e.target.value); setErr(""); }} style={INP} /></div>
+    <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:13, color:T.muted, margin:"6px 0 16px", minHeight:32, cursor:"pointer" }}><input type="checkbox" checked={show} onChange={function(e){ setShow(e.target.checked); }} /> Show passwords</label>
+    {err && <div style={{ background:T.dangerL, border:"1px solid var(--xFCA5A5)", borderRadius:8, padding:"9px 12px", color:"var(--x991B1B)", fontSize:13, marginBottom:13 }}>{err}</div>}
+    <button type="submit" disabled={busy} style={{ ...BTN, width:"100%", padding:"11px", fontSize:14, opacity:busy?0.6:1 }}>{busy ? "Saving..." : "Save and sign in"}</button>
+   </form>
+  </div>
+ </div>
+ );
+}
+
+function Welcome({ onLogin, onSignup, accounts, authError, resetExpired }) {
  var [layoutPick, setLayoutPick] = useState("grid");
  // A personal invite link (app.shyftrota.com/?email=ana@...) opens straight to sign-in with the email filled in.
  var inviteEmail = (function(){ try { var v = new URLSearchParams(window.location.search).get("email"); return v && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v) ? v.trim().toLowerCase() : ""; } catch(e) { return ""; } })();
- var [mode, setMode] = useState(inviteEmail ? "login" : "home");
+ var [mode, setMode] = useState(inviteEmail || resetExpired ? "login" : "home");
+ var [forgotSent, setForgotSent] = useState(false);
+ var [forgotBusy, setForgotBusy] = useState(false);
+ async function doForgot() {
+  var em = email.toLowerCase().trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { setErr("Enter the email you sign in with."); return; }
+  setForgotBusy(true); setErr("");
+  try {
+   var r = await fetch("/api/forgot-password", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ email:em }) });
+   var j = await r.json().catch(function(){ return {}; });
+   if (!r.ok) setErr(j.error || "Couldn't send the email. Try again in a minute.");
+   else setForgotSent(true);
+  } catch(e) { setErr("No connection. Try again when you're back online."); }
+  setForgotBusy(false);
+ }
  var [email, setEmail] = useState(inviteEmail);
  var [pw, setPw] = useState("");
  var [showPw, setShowPw] = useState(false);
@@ -1071,6 +1121,29 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  onSignup({ name:name, email:email, pw:pw, industry:ind, payroll:payrollPick, rooms:roomNum });
  }
 
+ if (mode === "forgot") return (
+ <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,var(--xF8F6F3),var(--xEDE8E0))", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"var(--font-ui)", padding:20 }}>
+ <div style={{ width:"100%", maxWidth:400 }}>
+ <button onClick={function(){ setMode("login"); setErr(""); }} style={{ ...GBTN, marginBottom:20, fontSize:12 }}>&#8592; Back to sign in</button>
+ <div style={{ ...CARD, padding:28 }}>
+  <div style={{ textAlign:"center", marginBottom:22 }}>
+   <div style={{ fontFamily:"var(--font-ui)", fontWeight:800, fontSize:22, color:T.text }}>{forgotSent ? "Check your email" : "Forgot your password?"}</div>
+   <div style={{ color:T.muted, fontSize:13, marginTop:6, lineHeight:1.5 }}>{forgotSent ? "If " + email.trim() + " has a ShyftRota login, a reset link is on its way. It can take a minute, and it sometimes lands in spam." : "Enter the email you sign in with and we'll send you a link to choose a new one."}</div>
+  </div>
+  {!forgotSent && (
+   <form onSubmit={function(e){ e.preventDefault(); doForgot(); }}>
+    <div style={{ marginBottom:16 }}><label htmlFor="forgot-email" style={LBL}>Email</label><input id="forgot-email" name="email" type="email" inputMode="email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoFocus value={email} onChange={function(e){ setEmail(e.target.value); setErr(""); }} placeholder="you@company.com" style={INP} /></div>
+    {err && <div style={{ background:T.dangerL, border:"1px solid var(--xFCA5A5)", borderRadius:8, padding:"9px 12px", color:"var(--x991B1B)", fontSize:13, marginBottom:13 }}>{err}</div>}
+    <button type="submit" disabled={forgotBusy} style={{ ...BTN, width:"100%", padding:"11px", fontSize:14, opacity:forgotBusy?0.6:1 }}>{forgotBusy ? "Sending..." : "Email me a reset link"}</button>
+   </form>
+  )}
+  {forgotSent && <button onClick={function(){ setMode("login"); setForgotSent(false); }} style={{ ...BTN, width:"100%", padding:"11px", fontSize:14 }}>Back to sign in</button>}
+  <div style={{ color:T.faint, fontSize:12, marginTop:14, textAlign:"center", lineHeight:1.5 }}>No email? Your manager can also reset it from Employees.</div>
+ </div>
+ </div>
+ </div>
+ );
+
  if (mode === "login") return (
  <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,var(--xF8F6F3),var(--xEDE8E0))", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"var(--font-ui)", padding:20 }}>
  <div style={{ width:"100%", maxWidth:400 }}>
@@ -1080,6 +1153,7 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  <div style={{ fontFamily:"var(--font-ui)", fontWeight:800, fontSize:22, color:T.text }}>Welcome back</div>
  <div style={{ color:T.muted, fontSize:13, marginTop:4 }}>Sign in to ShyftRota</div>
  </div>
+ {resetExpired && <div style={{ background:"var(--xFEF3C7)", border:"1px solid var(--xFCD34D)", borderRadius:8, padding:"9px 12px", color:"var(--x92400E)", fontSize:13, marginBottom:13 }}>That reset link expired or was already used. Tap Forgot password to get a new one.</div>}
  <form onSubmit={function(e){ e.preventDefault(); doLogin(); }} action="#" method="post" autoComplete="on">
  <div style={{ marginBottom:13 }}><label htmlFor="login-email" style={LBL}>Email</label><input id="login-email" name="email" type="email" inputMode="email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={email} onChange={function(e){setEmail(e.target.value);setErr("");}} placeholder="you@company.com" style={INP} /></div>
  <div style={{ marginBottom:18 }}><label htmlFor="login-pw" style={LBL}>Password</label>
@@ -1094,6 +1168,7 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  {err && <div style={{ background:T.dangerL, border:"1px solid var(--xFCA5A5)", borderRadius:8, padding:"9px 12px", color:"var(--x991B1B)", fontSize:13, marginBottom:13 }}>{err}</div>}
  <button type="submit" disabled={loggingIn} style={{ ...BTN, width:"100%", padding:"11px", fontSize:14, opacity:loggingIn?0.6:1, cursor:loggingIn?"default":"pointer" }}>{loggingIn ? "Signing in..." : "Sign in"}</button>
  </form>
+ <button type="button" onClick={function(){ setMode("forgot"); setErr(""); setForgotSent(false); }} style={{ display:"block", margin:"14px auto 0", minHeight:44, padding:"0 12px", border:"none", background:"transparent", color:T.muted, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit", textDecoration:"underline", textUnderlineOffset:3 }}>Forgot password?</button>
  </div>
  </div>
  </div>
@@ -1197,6 +1272,9 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
 
 
 function App() {
+ // Opened from a "reset your password" email (app.shyftrota.com/?reset=1): ask for a new password before anything else.
+ var [recovery, setRecovery] = useState(function(){ try { return new URLSearchParams(window.location.search).get("reset") === "1"; } catch(e) { return false; } });
+ var [resetExpired, setResetExpired] = useState(false);
  var [moreOpen, setMoreOpen] = useState(false);
  var [accounts, setAccounts] = useState(function(){
    // Logins live in Supabase Auth. This local list is only a leftover index
@@ -1243,11 +1321,14 @@ function App() {
    if (session) { loadProfile(session.user); } else { setAuthLoading(false); }
   });
   var sub = supabase.auth.onAuthStateChange(function(event, session){
+   if (event === "PASSWORD_RECOVERY") setRecovery(true);
    if (session) { loadProfile(session.user); }
    else { setUser(null); setAuthLoading(false); }
   });
   return function(){ sub.data.subscription.unsubscribe(); };
  }, []);
+ // Reset link opened but no session came with it (expired or used): show a note on sign-in, then forget about it.
+ useEffect(function(){ if (recovery && !authLoading && !user) { setResetExpired(true); setRecovery(false); try { window.history.replaceState(null, "", window.location.pathname); } catch(e) {} } }, [recovery, authLoading, user]);
  var [industry, setIndustry] = useState(function(){ return ld("sr_ind", "general"); });
   var [depts,      setDepts]      = useState([]);
   var [deptFilter, setDeptFilter] = useState("all");
@@ -2709,7 +2790,8 @@ function App() {
    Loading…
   </div>
  );
- if (!user) return <Welcome onLogin={handleLogin} onSignup={handleSignup} accounts={accounts} authError={authError} />;
+ if (!user) return <Welcome onLogin={handleLogin} onSignup={handleSignup} accounts={accounts} authError={authError} resetExpired={resetExpired} />;
+ if (recovery) return <NewPassword onDone={function(){ setRecovery(false); try { window.history.replaceState(null, "", window.location.pathname); } catch(e) {} showT("Password updated. You're signed in."); }} />;
 
  // ── UI upgrade helpers ─────────────────────────────────
  var MONO = "'IBM Plex Mono',ui-monospace,monospace";
