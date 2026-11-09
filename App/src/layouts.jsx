@@ -70,7 +70,7 @@ export function AltSchedule(p) {
     var c = p.color(s.sid), open = menu && menu.day === d && menu.eid === s.emp.id;
     return (
       <div style={{ position:"relative" }}>
-        <button onClick={function(){ if (!p.locked) setMenu(open ? null : { day:d, eid:s.emp.id }); }} aria-expanded={open} style={{ width:"100%", display:"flex", alignItems:"center", gap:7, minHeight:compact ? 34 : 40, padding:"0 9px", borderRadius:"var(--r-ctl)", border:"1px solid " + T.border, background:T.bg, color:T.text, cursor:p.locked ? "default" : "pointer", fontFamily:"inherit", textAlign:"left" }}>
+        <button onPointerDown={function(e){ if (p.onDragStart) p.onDragStart(e, { day:d, eid:s.emp.id, shift:s.sid, label:s.emp.name.split(" ")[0] }); }} onClick={function(){ if (!p.locked) setMenu(open ? null : { day:d, eid:s.emp.id }); }} aria-expanded={open} title="Tap to change, drag to move" style={{ opacity:p.cellDrag && p.cellDrag.from.day === d && String(p.cellDrag.from.eid) === String(s.emp.id) ? 0.35 : 1, width:"100%", display:"flex", alignItems:"center", gap:7, minHeight:compact ? 34 : 40, padding:"0 9px", borderRadius:"var(--r-ctl)", border:"1px solid " + T.border, background:T.bg, color:T.text, cursor:p.locked ? "default" : "pointer", fontFamily:"inherit", textAlign:"left" }}>
           <span style={{ width:8, height:8, borderRadius:2, background:c.dot, flexShrink:0 }} />
           <span style={{ fontWeight:700, fontSize:13, flex:1, minWidth:0, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{s.emp.name.split(" ")[0]}</span>
           {!compact && <span className="mono" style={{ fontSize:11, color:T.muted, whiteSpace:"nowrap" }}>{timeLabel(s.t)}</span>}
@@ -121,7 +121,7 @@ export function AltSchedule(p) {
       {p.days.map(function(d, i){
         var list = shiftsOn(d), today = p.todayName === d;
         return (
-          <div key={d} style={{ background:T.surface, border:"1px solid " + (today ? T.text : T.border), borderRadius:"var(--r-card)", padding:12, display:"flex", flexDirection:"column", gap:6, minHeight:220 }}>
+          <div key={d} data-drop-day={d} style={{ background:p.isDropOver && p.isDropOver(d) ? T.raised : T.surface, border:"1px solid " + (p.isDropOver && p.isDropOver(d) ? T.accent : today ? T.text : T.border), borderRadius:"var(--r-card)", padding:12, display:"flex", flexDirection:"column", gap:6, minHeight:220 }}>
             {dayHead(d, i)}
             {list.map(function(s){ return <Chip key={s.emp.id} d={d} s={s} />; })}
             {!list.length && <div style={{ fontSize:12, color:T.faint, padding:"6px 2px" }}>Nobody yet</div>}
@@ -147,7 +147,7 @@ export function AltSchedule(p) {
           ].concat(p.days.map(function(d){
             var on = shiftsOn(d).filter(function(s){ return s.sid === sd.id; });
             return (
-              <div key={sd.id + d} style={{ padding:"8px 6px", borderBottom:"1px solid " + T.border, display:"flex", flexDirection:"column", gap:5, background:p.todayName === d ? T.bg : "transparent" }}>
+              <div key={sd.id + d} data-drop-day={d} data-drop-sid={sd.id} style={{ padding:"8px 6px", borderBottom:"1px solid " + T.border, display:"flex", flexDirection:"column", gap:5, background:p.isDropOver && p.isDropOver(d, null, sd.id) ? T.raised : p.todayName === d ? T.bg : "transparent", outline:p.isDropOver && p.isDropOver(d, null, sd.id) ? "2px solid " + T.accent : "none", outlineOffset:-2 }}>
                 {on.map(function(s){ return <Chip key={s.emp.id} d={d} s={s} compact={true} />; })}
                 <AddControl d={d} sid={sd.id} label={on.length ? "+" : "+ Fill"} urgent={!on.length} />
               </div>
@@ -163,7 +163,7 @@ export function AltSchedule(p) {
       {p.days.map(function(d, i){
         var list = shiftsOn(d);
         return (
-          <section key={d} style={{ background:T.surface, border:"1px solid " + (p.todayName === d ? T.text : T.border), borderRadius:"var(--r-card)", padding:"12px 16px" }}>
+          <section key={d} data-drop-day={d} style={{ background:T.surface, border:"1px solid " + (p.isDropOver && p.isDropOver(d) ? T.accent : p.todayName === d ? T.text : T.border), borderRadius:"var(--r-card)", padding:"12px 16px" }}>
             {dayHead(d, i)}
             {p.shiftDefs.map(function(sd){
               var on = list.filter(function(s){ return s.sid === sd.id; }); if (!on.length) return null;

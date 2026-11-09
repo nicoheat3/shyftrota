@@ -1922,6 +1922,60 @@ function App() {
  showT("Shift removed","info");
  syncScheduleCellDelete(weekOff, day, eid);
  }
+ // ── Drag a shift to another cell ────────────────────
+ // from: { day, eid, shift, label }   to: { day, eid?, sid? }  (eid defaults to the same person; sid changes the shift type)
+ function moveShiftCell(from, to) {
+  if (isPastWeek) { showT("Past schedules are locked and cannot be changed","error"); return; }
+  var tEid = to.eid != null ? to.eid : from.eid, tSid = to.sid || from.shift;
+  if (to.day === from.day && String(tEid) === String(from.eid) && tSid === from.shift) return;
+  if (shiftOverrides[overrideKey(weekOff, from.day, from.eid)] || shiftOverrides[overrideKey(weekOff, to.day, tEid)]) { showT("Shifts with custom times can't be dragged yet. Tap to change them.","error"); return; }
+  var target = weekSched[to.day] && weekSched[to.day][tEid];
+  var sameCell = to.day === from.day && String(tEid) === String(from.eid);
+  setSched(function(p) {
+   var n = {...p}, w = {...(n[weekOff]||{})};
+   w[from.day] = {...(w[from.day]||{})}; w[to.day] = {...(w[to.day]||{})};
+   if (sameCell) { w[to.day][tEid] = tSid; }
+   else { w[to.day][tEid] = tSid; if (target) w[from.day][from.eid] = target; else delete w[from.day][from.eid]; }
+   n[weekOff] = w; return n;
+  });
+  markWeekEdited();
+  syncScheduleCell(weekOff, to.day, tEid, tSid);
+  if (!sameCell) { if (target) syncScheduleCell(weekOff, from.day, from.eid, target); else syncScheduleCellDelete(weekOff, from.day, from.eid); }
+  var who = (emps.find(function(e){ return String(e.id) === String(tEid); }) || {}).name || "";
+  showT(sameCell ? "Changed to " + ((shiftDefs.find(function(s){ return s.id === tSid; }) || {}).label || tSid) : target && !sameCell ? "Swapped" : "Moved to " + who.split(" ")[0] + " · " + to.day);
+ }
+ var [cellDrag, setCellDrag] = useState(null); // { from, x, y, over } once a drag has started
+ var cellDragRef = useRef(null);               // pending/active drag, read by the window listeners
+ function beginCellDrag(e, from) {
+  if (isPastWeek || e.button > 0) return;
+  var touch = e.pointerType === "touch";
+  var st = { from:from, sx:e.clientX, sy:e.clientY, x:e.clientX, y:e.clientY, over:null, started:false, timer:null };
+  cellDragRef.current = st;
+  function dropAt(x, y){ var el = document.elementFromPoint(x, y), t = el && el.closest ? el.closest("[data-drop-day]") : null; if (!t) return null; return { day:t.getAttribute("data-drop-day"), eid:t.getAttribute("data-drop-eid") || null, sid:t.getAttribute("data-drop-sid") || null }; }
+  function start(){ st.started = true; setCellDrag({ from:st.from, x:st.x, y:st.y, over:dropAt(st.x, st.y) }); try { navigator.vibrate && navigator.vibrate(10); } catch(err) {} }
+  if (touch) st.timer = setTimeout(start, 280);
+  function mv(ev){
+   st.x = ev.clientX; st.y = ev.clientY;
+   var far = Math.abs(ev.clientX - st.sx) + Math.abs(ev.clientY - st.sy) > 7;
+   if (!st.started) { if (touch) { if (far) cleanup(); return; } if (!far) return; start(); }
+   setCellDrag({ from:st.from, x:st.x, y:st.y, over:dropAt(st.x, st.y) });
+  }
+  function noScroll(ev){ if (st.started) ev.preventDefault(); }
+  function up(){
+   var started = st.started, over = started ? dropAt(st.x, st.y) : null;
+   cleanup();
+   if (started) {
+    // swallow the click that follows the drop so the shift menu doesn't pop open
+    var eat = function(ce){ ce.stopPropagation(); ce.preventDefault(); window.removeEventListener("click", eat, true); };
+    window.addEventListener("click", eat, true); setTimeout(function(){ window.removeEventListener("click", eat, true); }, 50);
+    if (over) moveShiftCell(st.from, { day:over.day, eid:over.eid ? (isNaN(Number(over.eid)) ? over.eid : Number(over.eid)) : null, sid:over.sid });
+   }
+  }
+  function key(ev){ if (ev.key === "Escape") cleanup(); }
+  function cleanup(){ clearTimeout(st.timer); cellDragRef.current = null; setCellDrag(null); window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", cleanup); window.removeEventListener("touchmove", noScroll); window.removeEventListener("keydown", key); }
+  window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", cleanup); window.addEventListener("touchmove", noScroll, { passive:false }); window.addEventListener("keydown", key);
+ }
+ function isDropOver(day, eid, sid) { var o = cellDrag && cellDrag.over; if (!o || o.day !== day) return false; if (eid != null && o.eid != null && String(o.eid) !== String(eid)) return false; if (sid && o.sid !== sid) return false; if (eid != null && o.eid == null) return false; return true; }
 
  function doRemove(emp) {
  setEmps(function(p){return p.filter(function(e){return e.id!==emp.id;});});
@@ -2854,6 +2908,13 @@ function App() {
  `}</style>
 
  <Toast toast={toast} />
+ {cellDrag && (
+   <div aria-hidden="true" className="mono" style={{ position:"fixed", left:cellDrag.x + 12, top:cellDrag.y - 18, zIndex:400, pointerEvents:"none", display:"inline-flex", alignItems:"center", gap:6, padding:"7px 11px", borderRadius:10, fontSize:12, fontWeight:600, background:T.surface, color:T.text, border:"1px solid "+shiftColor(cellDrag.from.shift).border, boxShadow:"0 18px 36px -12px rgba(0,0,0,.55)", transform:"rotate(-2deg)" }}>
+     <span style={{ width:8, height:8, borderRadius:2, background:shiftColor(cellDrag.from.shift).dot }} />
+     {cellDrag.from.label} · {(shiftDefs.find(function(s){ return s.id === cellDrag.from.shift; }) || {}).label || cellDrag.from.shift}
+     <span style={{ color:T.muted, fontWeight:500 }}>{cellDrag.over ? "→ " + cellDrag.over.day : ""}</span>
+   </div>
+ )}
  <Confirm show={!!confirmRm} title={"Remove "+((confirmRm&&confirmRm.name)||"")} body="This deletes their profile, login, and all assigned shifts." onOk={function(){doRemove(confirmRm);}} onCancel={function(){setConfirmRm(null);}} />
 
  {/* Mobile nav - fixed structure, no height shifts */}
@@ -3242,7 +3303,7 @@ function App() {
      timesFor={shiftTimesFor} color={shiftColor} hrsOf={hrsOf} shortT={shortT}
      todayName={weekOff === 0 ? todayName : null} todayIso={isoDate(new Date())} locked={isPastWeek}
      iso={function(d){ return dayToISODate(weekOff, d); }} dayIso={dayToISODate} dayDate={function(i){ return getDayDate(i, weekOff); }}
-     onPto={onPtoOn} assign={assignShift} remove={removeShift}
+     onPto={onPtoOn} assign={assignShift} remove={removeShift} onDragStart={beginCellDrag} cellDrag={cellDrag} isDropOver={isDropOver}
      sched={Object.assign({}, monthSched, sched)} weekOff={weekOff} weekStartDate={getWeekStart(weekOff)}
      openDay={function(off, d){ setWeekOff(off); setTlDay(d); setSchedView("day"); }} />
  )}
@@ -3320,11 +3381,11 @@ function App() {
  var conflict = shift && (onApprovedPTO || !avail);
  var isOvr = conflict && overruled.indexOf(cKey) >= 0;
  var isSel = selCell && selCell.day===d && selCell.eid===emp.id;
- var cellBg = isSel?"var(--xFDF0ED)":(conflict&&!isOvr)?"var(--xFEF2F2)":(!avail?"var(--xF8FAFC)":"inherit");
+ var cellBg = isDropOver(d, emp.id) ? T.accentL : isSel?"var(--xFDF0ED)":(conflict&&!isOvr)?"var(--xFEF2F2)":(!avail?"var(--xF8FAFC)":"inherit");
  return (
- <td key={d} className={isPastWeek?"":"hv"} data-cell="1" onClick={function(ev){ if (isPastWeek) return; var r = ev.currentTarget.getBoundingClientRect(); setSelCell(isSel?null:{day:d,eid:emp.id,rect:{top:r.top,bottom:r.bottom,left:r.left,width:r.width}}); }} style={{ padding:"6px 4px", textAlign:"center", background:cellBg, position:"relative", transition:"background .1s" }}>
+ <td key={d} className={isPastWeek?"":"hv"} data-cell="1" data-drop-day={d} data-drop-eid={emp.id} onClick={function(ev){ if (isPastWeek) return; var r = ev.currentTarget.getBoundingClientRect(); setSelCell(isSel?null:{day:d,eid:emp.id,rect:{top:r.top,bottom:r.bottom,left:r.left,width:r.width}}); }} style={{ padding:"6px 4px", textAlign:"center", background:cellBg, position:"relative", transition:"background .1s" }}>
  {shift ? (
- <div className="mono" style={{ display:"inline-flex", alignItems:"center", gap:3, padding:"3px 7px", borderRadius:4, fontSize:10, fontWeight:500, background:shiftColor(shift).bg, color:shiftColor(shift).text, border:"1px solid "+shiftColor(shift).border, whiteSpace:"nowrap" }}>
+ <div className="mono" onPointerDown={function(ev){ beginCellDrag(ev, { day:d, eid:emp.id, shift:shift, label:emp.name.split(" ")[0] }); }} title="Drag to move" style={{ cursor:isPastWeek?"default":"grab", opacity:cellDrag && cellDrag.from.day===d && String(cellDrag.from.eid)===String(emp.id) ? 0.35 : 1, display:"inline-flex", alignItems:"center", gap:3, padding:"3px 7px", borderRadius:4, fontSize:10, fontWeight:500, background:shiftColor(shift).bg, color:shiftColor(shift).text, border:"1px solid "+shiftColor(shift).border, whiteSpace:"nowrap" }}>
  <span style={{ width:5, height:5, borderRadius:"50%", background:shiftColor(shift).dot, display:"inline-block", flexShrink:0 }} />
  {(function(){
  var ovKey = overrideKey(weekOff,d,emp.id);
