@@ -60,8 +60,8 @@ export function AltSchedule(p) {
     var ds = p.weekSched[d] || {};
     return p.emps.filter(function(e){ return ds[e.id]; }).map(function(e){
       var sid = ds[e.id], t = p.timesFor(d, e.id, sid), a = p.hrsOf(t.start);
-      return { emp:e, sid:sid, t:t, a:a === null ? 99 : a };
-    }).sort(function(x, y){ return x.a - y.a || x.emp.name.localeCompare(y.emp.name); });
+      return { emp:e, sid:sid, t:t, a:a === null ? 99 : a, o:p.shiftDefs.findIndex(function(sd){ return sd.id === sid; }) };
+    }).sort(function(x, y){ return (x.o < 0 ? 999 : x.o) - (y.o < 0 ? 999 : y.o) || x.a - y.a || x.emp.name.localeCompare(y.emp.name); });
   }
   function freeOn(d) { var ds = p.weekSched[d] || {}, iso = p.iso(d); return p.emps.filter(function(e){ return !ds[e.id] && !p.onPto(e.id, iso); }); }
   function timeLabel(t) { return t.start && t.end ? p.shortT(t.start) + "–" + p.shortT(t.end) : ""; }

@@ -1270,7 +1270,8 @@ function App() {
    });
    supabase.from("shift_defs").select("*").eq("property_id", user.property_id).then(function(res){
     if (res.data) {
-     setShiftDefs(res.data.map(function(r){ return { id:r.id, label:r.label, start:r.start_time, end:r.end_time, color:r.color||"Day 9-5", paidLunch:!!r.paid_lunch }; }));
+     var rows = res.data.slice().sort(function(x, y){ var a1 = x.sort_order == null ? 9999 : x.sort_order, b1 = y.sort_order == null ? 9999 : y.sort_order; return a1 - b1 || String(x.start_time).localeCompare(String(y.start_time)); });
+     setShiftDefs(rows.map(function(r){ return { id:r.id, label:r.label, start:r.start_time, end:r.end_time, color:r.color||"Day 9-5", paidLunch:!!r.paid_lunch }; }));
     } else { console.error("load shift_defs failed:", res.error); }
    });
   }, [user && user.property_id]);
@@ -1294,6 +1295,17 @@ function App() {
  }
  var [overruled, setOverruled] = useState(function(){ return ld("sr_ovr", []); });
  var [shiftDefs, setShiftDefs] = useState([]);
+ var [shiftDrag, setShiftDrag] = useState(null); // { from, over } while a shift type card is being dragged
+ // Save the shift types' order. Everything that lists shift types reads shiftDefs in this order.
+ function moveShiftDef(from, to) {
+  if (from === to || from < 0 || to < 0 || to >= shiftDefs.length) return;
+  var next = shiftDefs.slice(); var moved = next.splice(from, 1)[0]; next.splice(to, 0, moved);
+  setShiftDefs(next);
+  Promise.all(next.map(function(s, i){ return supabase.from("shift_defs").update({ sort_order:i }).eq("id", s.id).eq("property_id", user.property_id); })).then(function(rs){
+   if (rs.some(function(r){ return r.error; })) { console.error("shift order save failed:", rs.map(function(r){ return r.error; })); showT("Order changed here, but saving failed. Run shift-order.sql first.", "error"); }
+   else showT("Shift order saved");
+  });
+ }
  var [weekOff, setWeekOff] = useState(0);
  var [publishMap, setPublishMap] = useState({});   // { "2026-09-14": {publishedAt, editedSince} }
  var [publishBusy, setPublishBusy] = useState(false);
@@ -4018,7 +4030,7 @@ function App() {
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18, flexWrap:"wrap", gap:10 }}>
  <div>
  <h2 style={{ fontFamily:"var(--font-ui)", fontWeight:700, fontSize:18 }}>Shift Types</h2>
- <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Edit existing shifts or add new ones. Save to apply changes to the schedule.</p>
+ <p style={{ color:T.muted, fontSize:12, marginTop:3 }}>Edit existing shifts or add new ones. Drag the &#10303; handle to change the order everywhere shifts are listed.</p>
  </div>
  <button onClick={function(){setAddingShift(true);setNewShift({label:"",start:"09:00",end:"17:00",color:"Day 9-5"});}} style={BTN}>+ Add Shift</button>
  </div>
@@ -4057,7 +4069,7 @@ function App() {
  setShiftDefs(function(p){ return p.concat([{id:id, label:newShift.label.trim(), start:newShift.start, end:newShift.end, color:newShift.color, paidLunch:!!newShift.paidLunch}]); });
  setAddingShift(false);
  showT(newShift.label+" shift added");
- supabase.from("shift_defs").insert({ id:id, property_id:user.property_id, label:newShift.label.trim(), start_time:newShift.start, end_time:newShift.end, color:newShift.color, paid_lunch:!!newShift.paidLunch }).then(function(res){
+ supabase.from("shift_defs").insert({ id:id, property_id:user.property_id, label:newShift.label.trim(), start_time:newShift.start, end_time:newShift.end, color:newShift.color, paid_lunch:!!newShift.paidLunch, sort_order:shiftDefs.length }).then(function(res){
   if (res.error) { console.error("shift_defs insert failed:", res.error); showT("Saved locally, but the server save failed","error"); }
  });
  }} style={BTN}>Save New Shift</button>
@@ -4069,10 +4081,25 @@ function App() {
  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:14, marginBottom:20 }}>
  {shiftDefs.map(function(s, i){
  var c = shiftColor(s.id);
+ var dragging = shiftDrag && shiftDrag.from === i, over = shiftDrag && shiftDrag.over === i && shiftDrag.from !== i;
+ function startDrag(e){
+   e.preventDefault();
+   try { e.currentTarget.setPointerCapture(e.pointerId); } catch(err) {}
+   setShiftDrag({ from:i, over:i });
+ }
+ function moveDrag(e){
+   if (!shiftDrag) return;
+   var el = document.elementFromPoint(e.clientX, e.clientY); var card = el && el.closest ? el.closest("[data-shift-idx]") : null;
+   if (card) { var o = Number(card.getAttribute("data-shift-idx")); if (o !== shiftDrag.over) setShiftDrag({ from:shiftDrag.from, over:o }); }
+ }
+ function endDrag(){ if (shiftDrag) { var f = shiftDrag.from, t = shiftDrag.over; setShiftDrag(null); moveShiftDef(f, t); } }
  return (
- <div key={s.id} style={{ ...CARD, border:"2px solid "+c.border, background:c.bg }}>
+ <div key={s.id} data-shift-idx={i} style={{ ...CARD, border:"2px solid "+(over ? T.text : c.border), background:c.bg, opacity:dragging ? 0.5 : 1, transform:over ? "scale(1.02)" : "none", transition:"transform .12s, border-color .12s" }}>
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+     <button aria-label={"Drag to reorder " + s.label} title="Drag to reorder" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={function(){ setShiftDrag(null); }}
+       onKeyDown={function(e){ if (e.key === "ArrowUp" || e.key === "ArrowLeft") { e.preventDefault(); moveShiftDef(i, i - 1); } if (e.key === "ArrowDown" || e.key === "ArrowRight") { e.preventDefault(); moveShiftDef(i, i + 1); } }}
+       style={{ width:32, height:36, marginLeft:-8, border:"none", background:"transparent", color:c.text, cursor:shiftDrag ? "grabbing" : "grab", touchAction:"none", fontSize:18, lineHeight:1, padding:0, display:"flex", alignItems:"center", justifyContent:"center", opacity:0.7 }}>&#10303;</button>
      <div style={{ width:12, height:12, borderRadius:"50%", background:c.dot }} />
      <span style={{ fontWeight:700, fontSize:15, color:c.text }}>{s.label}</span>
    </div>
