@@ -1295,7 +1295,8 @@ function App() {
  }
  var [overruled, setOverruled] = useState(function(){ return ld("sr_ovr", []); });
  var [shiftDefs, setShiftDefs] = useState([]);
- var [shiftDrag, setShiftDrag] = useState(null); // { from, over } while a shift type card is being dragged
+ var [shiftDrag, setShiftDrag] = useState(null); // { from, over, x, y, ox, oy, w, h } while a shift type card is being dragged
+ var shiftDragRef = useRef(null);
  // Save the shift types' order. Everything that lists shift types reads shiftDefs in this order.
  function moveShiftDef(from, to) {
   if (from === to || from < 0 || to < 0 || to >= shiftDefs.length) return;
@@ -1306,6 +1307,21 @@ function App() {
    else showT("Shift order saved");
   });
  }
+ // Track the drag on the whole window so it keeps working after the grabbed card turns into the drop gap.
+ useEffect(function(){
+  if (!shiftDrag) return;
+  function slotAt(x, y){
+   var els = document.querySelectorAll("[data-shift-slot]");
+   for (var k = 0; k < els.length; k++) { var r = els[k].getBoundingClientRect(); if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return Number(els[k].getAttribute("data-shift-slot")); }
+   return null;
+  }
+  function mv(e){ var k = slotAt(e.clientX, e.clientY); setShiftDrag(function(d){ if (!d) return d; var n = Object.assign({}, d, { x:e.clientX, y:e.clientY, over:k === null ? d.over : k }); shiftDragRef.current = n; return n; }); }
+  function up(){ var d = shiftDragRef.current; shiftDragRef.current = null; setShiftDrag(null); if (d) moveShiftDef(d.from, d.over); }
+  function cancel(){ shiftDragRef.current = null; setShiftDrag(null); }
+  function key(e){ if (e.key === "Escape") cancel(); }
+  window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", cancel); window.addEventListener("keydown", key);
+  return function(){ window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", cancel); window.removeEventListener("keydown", key); };
+ }, [shiftDrag ? 1 : 0]);
  var [weekOff, setWeekOff] = useState(0);
  var [publishMap, setPublishMap] = useState({});   // { "2026-09-14": {publishedAt, editedSince} }
  var [publishBusy, setPublishBusy] = useState(false);
@@ -4079,44 +4095,47 @@ function App() {
  )}
 
  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:14, marginBottom:20 }}>
- {shiftDefs.map(function(s, i){
- var c = shiftColor(s.id);
- var dragging = shiftDrag && shiftDrag.from === i, over = shiftDrag && shiftDrag.over === i && shiftDrag.from !== i;
- function startDrag(e){
-   e.preventDefault();
-   try { e.currentTarget.setPointerCapture(e.pointerId); } catch(err) {}
-   setShiftDrag({ from:i, over:i });
- }
- function moveDrag(e){
-   if (!shiftDrag) return;
-   var el = document.elementFromPoint(e.clientX, e.clientY); var card = el && el.closest ? el.closest("[data-shift-idx]") : null;
-   if (card) { var o = Number(card.getAttribute("data-shift-idx")); if (o !== shiftDrag.over) setShiftDrag({ from:shiftDrag.from, over:o }); }
- }
- function endDrag(){ if (shiftDrag) { var f = shiftDrag.from, t = shiftDrag.over; setShiftDrag(null); moveShiftDef(f, t); } }
- return (
- <div key={s.id} data-shift-idx={i} style={{ ...CARD, border:"2px solid "+(over ? T.text : c.border), background:c.bg, opacity:dragging ? 0.5 : 1, transform:over ? "scale(1.02)" : "none", transition:"transform .12s, border-color .12s" }}>
- <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-   <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-     <button aria-label={"Drag to reorder " + s.label} title="Drag to reorder" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={function(){ setShiftDrag(null); }}
-       onKeyDown={function(e){ if (e.key === "ArrowUp" || e.key === "ArrowLeft") { e.preventDefault(); moveShiftDef(i, i - 1); } if (e.key === "ArrowDown" || e.key === "ArrowRight") { e.preventDefault(); moveShiftDef(i, i + 1); } }}
-       style={{ width:32, height:36, marginLeft:-8, border:"none", background:"transparent", color:c.text, cursor:shiftDrag ? "grabbing" : "grab", touchAction:"none", fontSize:18, lineHeight:1, padding:0, display:"flex", alignItems:"center", justifyContent:"center", opacity:0.7 }}>&#10303;</button>
-     <div style={{ width:12, height:12, borderRadius:"50%", background:c.dot }} />
-     <span style={{ fontWeight:700, fontSize:15, color:c.text }}>{s.label}</span>
-   </div>
-   <button onClick={function(){
-     setEditShift({ idx:i, id:s.id, label:s.label, start:s.start, end:s.end, color:s.color||s.id, paidLunch:!!s.paidLunch });
-   }} style={{ ...GBTN, padding:"4px 12px", fontSize:12 }}>Edit</button>
- </div>
- <div style={{ fontSize:13, color:T.muted, marginBottom:4 }}>{to12(s.start)} &#8594; {to12(s.end)}</div>
- <div style={{ fontSize:11, color:T.faint }}>{(function(){
-   var sp=s.start.split(":"); var ep=s.end.split(":");
-   var h=(parseInt(ep[0])*60+parseInt(ep[1]))-(parseInt(sp[0])*60+parseInt(sp[1]));
-   if(h<=0)h+=1440; var clock=Math.round(h/60*10)/10; var paid=paidHours(h/60, s.paidLunch);
-   return clock+" hours · "+paid+" paid"+(s.paidLunch?" (paid lunch)":"");
- })()}</div>
-</div>
- );
- })}
+ {(function(){
+   // While dragging: the list shows the order you'd get if you let go now, with a
+   // dashed gap where the card will land, and a copy of the card follows your finger.
+   var dr = shiftDrag;
+   var order = shiftDefs.map(function(s, i){ return i; });
+   if (dr) { var mv = order.splice(dr.from, 1)[0]; order.splice(dr.over, 0, mv); }
+   function hours(s){ var sp=s.start.split(":"); var ep=s.end.split(":"); var h=(parseInt(ep[0])*60+parseInt(ep[1]))-(parseInt(sp[0])*60+parseInt(sp[1])); if(h<=0)h+=1440; var clock=Math.round(h/60*10)/10; var paid=paidHours(h/60, s.paidLunch); return clock+" hours · "+paid+" paid"+(s.paidLunch?" (paid lunch)":""); }
+   function body(s, i, handle){
+     var c = shiftColor(s.id);
+     return (
+       <>
+       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+         <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+           {handle}
+           <div style={{ width:12, height:12, borderRadius:"50%", background:c.dot }} />
+           <span style={{ fontWeight:700, fontSize:15, color:c.text }}>{s.label}</span>
+         </div>
+         <button onClick={function(){ setEditShift({ idx:i, id:s.id, label:s.label, start:s.start, end:s.end, color:s.color||s.id, paidLunch:!!s.paidLunch }); }} style={{ ...GBTN, padding:"4px 12px", fontSize:12 }}>Edit</button>
+       </div>
+       <div style={{ fontSize:13, color:T.muted, marginBottom:4 }}>{to12(s.start)} &#8594; {to12(s.end)}</div>
+       <div style={{ fontSize:11, color:T.faint }}>{hours(s)}</div>
+       </>
+     );
+   }
+
+   var cards = order.map(function(i, pos){
+     var s = shiftDefs[i], c = shiftColor(s.id);
+     if (dr && i === dr.from) return <div key={s.id} data-shift-slot={pos} aria-hidden="true" style={{ ...CARD, minHeight:dr.h, border:"2px dashed "+T.muted, background:"transparent" }} />;
+     var handle = (
+       <button aria-label={"Drag to reorder " + s.label} title="Drag to reorder"
+         onPointerDown={function(e){ e.preventDefault(); var card = e.currentTarget.closest("[data-shift-slot]"), r = card.getBoundingClientRect(); var d = { from:i, over:i, x:e.clientX, y:e.clientY, ox:e.clientX - r.left, oy:e.clientY - r.top, w:r.width, h:r.height }; shiftDragRef.current = d; setShiftDrag(d); }}
+         onKeyDown={function(e){ if (e.key === "ArrowUp" || e.key === "ArrowLeft") { e.preventDefault(); moveShiftDef(i, i - 1); } if (e.key === "ArrowDown" || e.key === "ArrowRight") { e.preventDefault(); moveShiftDef(i, i + 1); } }}
+         style={{ width:32, height:36, marginLeft:-8, border:"none", background:"transparent", color:c.text, cursor:dr ? "grabbing" : "grab", touchAction:"none", fontSize:18, lineHeight:1, padding:0, display:"flex", alignItems:"center", justifyContent:"center", opacity:0.7 }}>&#10303;</button>
+     );
+     return <div key={s.id} data-shift-slot={pos} style={{ ...CARD, border:"2px solid "+c.border, background:c.bg, transition:"transform .15s" }}>{body(s, i, handle)}</div>;
+   });
+   var ghost = null;
+   if (dr) { var gs = shiftDefs[dr.from], gc = shiftColor(gs.id);
+     ghost = <div aria-hidden="true" style={{ ...CARD, position:"fixed", zIndex:300, pointerEvents:"none", left:dr.x - dr.ox, top:dr.y - dr.oy, width:dr.w, border:"2px solid "+gc.border, background:T.surface, boxShadow:"0 24px 48px -16px rgba(0,0,0,.55)", transform:"rotate(-1.5deg) scale(1.03)" }}><div style={{ background:gc.bg, margin:-20, padding:20 }}>{body(gs, dr.from, <span style={{ width:32, height:36, marginLeft:-8, display:"flex", alignItems:"center", justifyContent:"center", color:gc.text, fontSize:18 }}>&#10303;</span>)}</div></div>; }
+   return <>{cards}{ghost}</>;
+ })()}
  </div>
 
  <div style={{ background:T.successL, border:"1px solid var(--x6EE7B7)", borderRadius:10, padding:14, fontSize:13, color:"var(--x065F46)" }}>
