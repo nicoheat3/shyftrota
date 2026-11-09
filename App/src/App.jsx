@@ -5,6 +5,7 @@ import { supabase } from "./lib/supabaseClient.js";
 import { VolumePanel, CoverBadge, suggestCover, coverageForDay, shiftBucket, seedThresholds, DEFAULT_THRESHOLDS } from "./volume.jsx";
 import { Settings } from "./settings.jsx";
 import { AltSchedule, LayoutPicker, getLayout, saveLayout, hasLocalLayout } from "./layouts.jsx";
+import { SetupChecklist, BulkAddTeam, setupGet, setupSet } from "./onboarding.jsx";
 import { PublishBar, NotPosted } from "./publish.jsx";
 import { NotificationSettings, sendNotification } from "./notify.jsx";
 import { refreshPush } from "./push.js";
@@ -1944,6 +1945,13 @@ function App() {
   var who = (emps.find(function(e){ return String(e.id) === String(tEid); }) || {}).name || "";
   showT(sameCell ? "Changed to " + ((shiftDefs.find(function(s){ return s.id === tSid; }) || {}).label || tSid) : target && !sameCell ? "Swapped" : "Moved to " + who.split(" ")[0] + " · " + to.day);
  }
+ var [setupTick, setSetupTick] = useState(0); // re-render after a step is ticked on this device
+ var [hasPosted, setHasPosted] = useState(false);
+ useEffect(function(){
+  if (!user || !user.property_id || user.role !== "admin") return;
+  supabase.from("schedule_publish").select("week_start").eq("property_id", user.property_id).limit(1).then(function(res){ if (res.data && res.data.length) setHasPosted(true); });
+ }, [user && user.property_id]);
+ useEffect(function(){ if (user && user.property_id && tab === "settings" && !setupGet(user.property_id, "prefs")) { setupSet(user.property_id, "prefs"); setSetupTick(function(x){ return x + 1; }); } }, [tab, user && user.property_id]);
  var [cellDrag, setCellDrag] = useState(null); // { from, x, y, over } once a drag has started
  var cellDragRef = useRef(null);               // pending/active drag, read by the window listeners
  function beginCellDrag(e, from) {
@@ -3055,6 +3063,21 @@ function App() {
  {/* SCHEDULE */}
  {tab==="schedule" && isAdmin && (
  <div>
+ {weekOff === 0 && !setupGet(user.property_id, "hidden") && (function(){
+   var pid = user.property_id; void setupTick;
+   var posted = hasPosted || Object.keys(publishMap).some(function(k){ return publishMap[k] && publishMap[k].publishedAt; });
+   var steps = [
+     { id:"shifts", done:shiftDefs.length > 0, title:"Add your shift types", sub:"AM, PM, Night Audit… with their times and whether lunch is paid.", action:function(){ goTab("shifts"); }, actionLabel:"Shift types" },
+     { id:"team", done:emps.length >= 2, title:"Add your team", sub:"Paste names and emails below. Everyone gets a login with a temporary password.", action:function(){ goTab("employees"); }, actionLabel:"One at a time",
+       extra:<BulkAddTeam T={T} BTN={BTN} GBTN={GBTN} INP={INP} supabase={supabase} user={user} defaultRole={indRoles[0]} allDays={DAYS.slice()} existingEmails={accounts.map(function(x){ return String(x.email || "").toLowerCase(); })} showT={showT}
+         onAdded={function(list){ setEmps(function(p){ return p.concat(list.map(function(o){ return o.emp; })); }); setAccounts(function(p){ return p.concat(list.filter(function(o){ return o.ok; }).map(function(o){ return { id:"acc"+o.emp.id, name:o.name, email:o.email, role:"employee", eid:o.emp.id }; })); }); if (list.some(function(o){ return o.ok; })) { setupSet(pid, "invite"); setSetupTick(function(x){ return x + 1; }); } }} /> },
+     { id:"prefs", done:setupGet(pid, "prefs"), title:"Choose time clock and layout", sub:"Turn the time clock off if your team clocks in with payroll. Pick how the schedule looks.", action:function(){ setSettingsSub("general"); goTab("settings"); }, actionLabel:"Settings" },
+     { id:"post", done:posted, title:"Build and post your first week", sub:"Tap Auto-Generate, fix anything that looks off, then Post. Your team gets it by email and on their phones.", action:function(){ var el = document.getElementById("build-card"); if (el) el.scrollIntoView({ behavior:"smooth", block:"center" }); }, actionLabel:"Show me" },
+     { id:"invite", done:setupGet(pid, "invite"), title:"Get everyone on their phones", sub:"Send this to the team chat or by text. Adding it to the home screen makes it feel like an app.", action:function(){ try { navigator.clipboard.writeText("Our schedule is on ShyftRota now. Log in at app.shyftrota.com with the email and password I sent you, then tap Share → Add to Home Screen so it's one tap away."); showT("Invite copied. Paste it in your group text."); } catch(e) { showT("Couldn't copy", "error"); } setupSet(pid, "invite"); setSetupTick(function(x){ return x + 1; }); }, actionLabel:"Copy invite" }
+   ];
+   if (steps.every(function(s){ return s.done; })) return null;
+   return <SetupChecklist T={T} CARD={CARD} BTN={BTN} GBTN={GBTN} steps={steps} onHide={function(){ setupSet(pid, "hidden"); setSetupTick(function(x){ return x + 1; }); }} />;
+ })()}
 
  {/* RIGHT NOW */}
  {weekOff === 0 && (function(){
@@ -3115,7 +3138,7 @@ function App() {
  )}
 
  {/* Schedule toolbar */}
- <div style={{ ...CARD, padding:"12px 16px", marginBottom:16, display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12 }}>
+ <div id="build-card" style={{ ...CARD, padding:"12px 16px", marginBottom:16, display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12 }}>
  <div>
  <div style={{ fontWeight:700, fontSize:14, color:T.text }}>
  {isPastWeek ? "Schedule History" : isFutureWeek ? "Plan Ahead" : "Build Your Schedule"}
