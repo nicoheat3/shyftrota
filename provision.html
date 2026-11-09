@@ -94,6 +94,14 @@ button[disabled]{background:#2A2523;color:var(--faint);cursor:not-allowed}
           <select id="weekStart" name="weekStart"><option>Monday</option><option>Sunday</option></select>
         </label>
       </div>
+      <div class="two">
+        <label for="timeClock">Time clock <span class="hint">employees clock in and out in the app</span>
+          <select id="timeClock" name="timeClock"><option value="on">On</option><option value="off">Off (they use their own payroll clock)</option></select>
+        </label>
+        <label for="defaultLayout">Schedule layout <span class="hint">they can change it in Settings</span>
+          <select id="defaultLayout" name="defaultLayout"><option value="grid">Grid</option><option value="cards">Cards</option><option value="slots">Slots</option><option value="timeline">Timeline</option><option value="list">List</option><option value="month">Month</option></select>
+        </label>
+      </div>
     </fieldset>
 
     <fieldset>
@@ -156,6 +164,8 @@ button[disabled]{background:#2A2523;color:var(--faint);cursor:not-allowed}
         propertyName: d.propertyName.trim(),
         roomCount: d.roomCount || null,
         weekStart: d.weekStart,
+        timeClock: d.timeClock !== "off",
+        defaultLayout: d.defaultLayout || "grid",
         adminName: d.adminName.trim(),
         adminEmail: d.adminEmail.trim(),
         password: d.password ? d.password : undefined

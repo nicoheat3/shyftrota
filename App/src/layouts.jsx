@@ -15,6 +15,7 @@ export var LAYOUTS = [
 
 var LKEY = "sr_sched_layout";
 export function getLayout() { try { var v = localStorage.getItem(LKEY); return LAYOUTS.some(function(l){ return l.id === v; }) ? v : "grid"; } catch(e) { return "grid"; } }
+export function hasLocalLayout() { try { return !!localStorage.getItem(LKEY); } catch(e) { return false; } }
 export function saveLayout(v) { try { localStorage.setItem(LKEY, v); } catch(e) {} }
 
 // Small schematic pictures for the picker. Static markup, no user data.

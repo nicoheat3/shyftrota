@@ -29,6 +29,7 @@ var ES = {
   // Navigation
   "My Schedule": "Mi horario",
   "Who's Working": "Quién trabaja",
+  "Who's on": "Quién está",
   "Open Shifts": "Turnos abiertos",
   "Time Off": "Tiempo libre",
   "Shift Swap": "Cambio de turno",

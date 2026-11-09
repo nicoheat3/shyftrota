@@ -91,6 +91,8 @@ export default async function handler(req, res) {
   var adminEmail   = String(body.adminEmail || "").trim().toLowerCase();
   var roomCount    = body.roomCount ? Number(body.roomCount) : null;
   var weekStart    = body.weekStart === "Sunday" ? "Sunday" : "Monday";
+  var timeClock    = body.timeClock !== false;
+  var defaultLayout = ["grid","cards","slots","timeline","list","month"].indexOf(body.defaultLayout) >= 0 ? body.defaultLayout : "grid";
   var password     = body.password ? String(body.password) : strongPassword();
   var generated    = !body.password;
 
@@ -143,6 +145,8 @@ export default async function handler(req, res) {
       week_start: weekStart,
       room_count: roomCount,
       vol_thresholds: seedThresholds(roomCount),
+      time_clock: timeClock,
+      default_layout: defaultLayout,
     };
     var propRes = await admin.from("properties").insert(propertyRow).select("id").single();
     if (propRes.error) {

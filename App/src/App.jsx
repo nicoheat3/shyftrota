@@ -4,7 +4,7 @@ import { flushSync } from "react-dom";
 import { supabase } from "./lib/supabaseClient.js";
 import { VolumePanel, CoverBadge, suggestCover, coverageForDay, shiftBucket, seedThresholds, DEFAULT_THRESHOLDS } from "./volume.jsx";
 import { Settings } from "./settings.jsx";
-import { AltSchedule, LayoutPicker, getLayout, saveLayout } from "./layouts.jsx";
+import { AltSchedule, LayoutPicker, getLayout, saveLayout, hasLocalLayout } from "./layouts.jsx";
 import { PublishBar, NotPosted } from "./publish.jsx";
 import { NotificationSettings, sendNotification } from "./notify.jsx";
 import { refreshPush } from "./push.js";
@@ -1238,14 +1238,17 @@ function App() {
   var [depts,      setDepts]      = useState([]);
   var [deptFilter, setDeptFilter] = useState("all");
   var [payroll,    setPayroll]    = useState(function(){ return ld("sr_payroll", "paychex"); });
+  var [timeClockOn, setTimeClockOn] = useState(true); // per property; off = they clock in with their payroll system
   var [emps, setEmps] = useState([]);
 
   // Pull the real roster, departments, and shift definitions from Supabase
   // as soon as we know which property this user belongs to.
   useEffect(function(){
    if (!user || !user.property_id) return;
-   supabase.from("properties").select("week_start, room_count, vol_thresholds").eq("id", user.property_id).single().then(function(res){
+   supabase.from("properties").select("*").eq("id", user.property_id).single().then(function(res){
     if (res.data) {
+     setTimeClockOn(res.data.time_clock !== false);
+     if (!hasLocalLayout() && res.data.default_layout) { setSchedLayoutS(res.data.default_layout); if (res.data.default_layout === "timeline") setSchedView("day"); }
      var dayNameToDow = {Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6};
      var loadedDow = dayNameToDow[res.data.week_start];
      setWeekStartDow(typeof loadedDow === "number" ? loadedDow : 1);
@@ -1468,7 +1471,7 @@ function App() {
   var [schedView,      setSchedView]      = useState(function(){ try { return (window.innerWidth < 680 || getLayout() === "timeline") ? "day" : "week"; } catch(e) { return "week"; } });
   var [schedLayout,    setSchedLayoutS]   = useState(getLayout());
   var [settingsSub,    setSettingsSub]    = useState("general");
-  function setSchedLayout(v) { saveLayout(v); setSchedLayoutS(v); setSchedView(v === "timeline" ? "day" : "week"); }
+  function setSchedLayout(v) { saveLayout(v); setSchedLayoutS(v); setSchedView(v === "timeline" ? "day" : "week"); if (user && user.property_id) supabase.from("properties").update({ default_layout:v }).eq("id", user.property_id).then(function(res){ if (res.error) console.error("save default layout failed:", res.error); }); }
  // Month layout: read the surrounding weeks too (display only; edits still go through the week in view)
  var [monthSched, setMonthSched] = useState({});
  useEffect(function(){
@@ -1548,6 +1551,7 @@ function App() {
    });
  }, [user && user.property_id, tab==="openShifts"]);
  useEffect(function(){ if (user && !isAdmin && tab === "schedule") setTab("myschedule"); }, [user && user.role, tab]);
+ useEffect(function(){ if (!timeClockOn && (tab === "clockin" || tab === "timeclock")) setTab(isAdmin ? "schedule" : "myschedule"); }, [timeClockOn, tab]);
  var indRoles = (INDUSTRIES[industry] && INDUSTRIES[industry].roles) || INDUSTRIES.general.roles;
 
  // Derived week data - must be before allConflicts
@@ -2558,26 +2562,26 @@ function App() {
     {id:"depts",      label:"Departments"},
     {id:"openShifts", label:"Open Shifts"},
     {id:"requests",   label:"Requests" + (pendingAll ? " ("+pendingAll+")" : "")},
-    {id:"timeclock",  label:"Time Clock"},
+    timeClockOn ? {id:"timeclock",  label:"Time Clock"} : null,
     {id:"shifts",     label:"Shift Types"},
     {id:"chat",       label:"Team Chat"},
     // AI tab hidden until it calls Claude from a server function; from the
     // browser it has no key and every message fails. Code below is kept.
     // {id:"ai",         label:"AI"},
     {id:"settings",   label:"Settings"},
-  ];
+  ].filter(Boolean);
   // Bottom bar shows the first 4; the rest live under More. Time off, swaps
   // and call-ins share one Requests tab (sub-tabs below) so the things people
   // do weekly sit in the bar instead of behind More.
   var EMP_TABS = [
     {id:"myschedule",label:tr("Schedule")},
     {id:"myrequests",label:tr("Requests")},
-    {id:"clockin",   label:tr("Clock In")},
-    {id:"chat",      label:tr("Chat")},
     {id:"today",     label:tr("Who's Working")},
+    {id:"chat",      label:tr("Chat")},
+    timeClockOn ? {id:"clockin", label:tr("Clock In")} : null,
     {id:"openShifts",label:tr("Open Shifts")},
     {id:"settings",  label:tr("Settings")},
-  ];
+  ].filter(Boolean);
  var TABS = isAdmin ? ADMIN_TABS : EMP_TABS;
   // iOS-style tab change: the page slides toward the tab you picked.
   // Falls back to an instant switch where the browser lacks View Transitions
@@ -2884,7 +2888,7 @@ function App() {
     )}
     <div className="mobile-bottom" style={{ position:"fixed", left:12, right:12, bottom:"calc(10px + env(safe-area-inset-bottom))", zIndex:70, background:T.surface, border:"1px solid "+T.border, borderRadius:22, padding:5, gap:4, boxShadow:"0 12px 30px -14px rgba(0,0,0,0.45)" }}>
      {MAIN.map(function(t){
-      return <NavBtn key={t.id} icon={TAB_ICONS[t.id]} label={t.label.replace(/ \(\d+\)/,"").replace("My Schedule","Mine")} active={tab===t.id && !moreOpen} badge={t.id==="requests"?pendingAll:0} onClick={function(){ goTab(t.id, function(){ setMoreOpen(false); }); }} />;
+      return <NavBtn key={t.id} icon={TAB_ICONS[t.id]} label={t.id === "today" ? tr("Who's on") : t.label.replace(/ \(\d+\)/,"").replace("My Schedule","Mine")} active={tab===t.id && !moreOpen} badge={t.id==="requests"?pendingAll:0} onClick={function(){ goTab(t.id, function(){ setMoreOpen(false); }); }} />;
      })}
      <NavBtn icon="menu" label="More" active={restActive || moreOpen} badge={REST.some(function(t){return t.id==="requests";})?pendingAll:0} onClick={function(){ setMoreOpen(!moreOpen); }} />
     </div>
@@ -4123,6 +4127,14 @@ function App() {
    </div>
   </div>
  )}
+ {tab==="settings" && settingsSub==="general" && isAdmin && (
+  <div style={{ ...CARD, marginBottom:16, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
+   <div style={{ flex:"1 1 260px" }}><div style={{ fontSize:14, fontWeight:700, color:T.text }}>Time clock</div><div style={{ fontSize:12, color:T.muted, marginTop:2 }}>{timeClockOn ? "Employees clock in and out in ShyftRota. Turn off if your team clocks in with your payroll system." : "Off. Employees don't see Clock In, and the Time Clock page is hidden."}</div></div>
+   <button role="switch" aria-checked={timeClockOn} aria-label="Time clock" onClick={function(){ var v = !timeClockOn; setTimeClockOn(v); supabase.from("properties").update({ time_clock:v }).eq("id", user.property_id).then(function(res){ if (res.error) { setTimeClockOn(!v); showT("Couldn't save. Run time-clock-and-layout.sql first.", "error"); } else showT(v ? "Time clock on" : "Time clock off"); }); }} style={{ width:52, height:32, borderRadius:999, border:"none", padding:0, position:"relative", cursor:"pointer", background:timeClockOn ? T.success : T.border, flexShrink:0 }}>
+    <span style={{ position:"absolute", top:3, left:timeClockOn ? 23 : 3, width:26, height:26, borderRadius:"50%", background:"#fff", transition:"left .18s" }} />
+   </button>
+  </div>
+ )}
  {tab==="settings" && settingsSub==="general" && <NotificationSettings user={user} emps={emps} isAdmin={isAdmin} showT={showT} weeks={[0,1].map(function(o){ return { key:isoDate(getWeekStart(o)), label:fmtWeekRange(o) }; })} defaultWeek={weekOff === 1 ? 1 : 0} />}
  {tab==="settings" && settingsSub==="general" && (
    <Settings
@@ -4659,7 +4671,7 @@ function App() {
  )}
 
             {/* EMPLOYEE: CLOCK IN */}
-            {tab==="clockin" && !isAdmin && (function(){
+            {tab==="clockin" && !isAdmin && timeClockOn && (function(){
               var myEmp = emps.find(function(e){ return e.id===user.eid; });
               var dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
               var todayDay = dayNames[new Date().getDay()];
@@ -4745,7 +4757,7 @@ function App() {
             })()}
 
             {/* ADMIN: TIME CLOCK */}
-            {tab==="timeclock" && isAdmin && (function(){
+            {tab==="timeclock" && isAdmin && timeClockOn && (function(){
               var clockedInNow = emps.filter(function(e){
                 var last = timeclock.slice().reverse().find(function(p){ return p.eid===e.id; });
                 return last && (last.type==="in" || last.type==="lunch_in" || last.type==="lunch_out");
