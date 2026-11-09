@@ -1018,9 +1018,13 @@ function LogoMark({ size }) {
 // ── Welcome / Auth ────────────────────────────────────
 function Welcome({ onLogin, onSignup, accounts, authError }) {
  var [layoutPick, setLayoutPick] = useState("grid");
- var [mode, setMode] = useState("home");
- var [email, setEmail] = useState("");
+ // A personal invite link (app.shyftrota.com/?email=ana@...) opens straight to sign-in with the email filled in.
+ var inviteEmail = (function(){ try { var v = new URLSearchParams(window.location.search).get("email"); return v && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v) ? v.trim().toLowerCase() : ""; } catch(e) { return ""; } })();
+ var [mode, setMode] = useState(inviteEmail ? "login" : "home");
+ var [email, setEmail] = useState(inviteEmail);
  var [pw, setPw] = useState("");
+ var [showPw, setShowPw] = useState(false);
+ useEffect(function(){ if (inviteEmail) { try { window.history.replaceState(null, "", window.location.pathname); } catch(e) {} } }, []);
  var [name, setName] = useState("");
  var [ind, setInd] = useState("general");
   var [payrollPick, setPayrollPick] = useState("paychex");
@@ -1076,11 +1080,20 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  <div style={{ fontFamily:"var(--font-ui)", fontWeight:800, fontSize:22, color:T.text }}>Welcome back</div>
  <div style={{ color:T.muted, fontSize:13, marginTop:4 }}>Sign in to ShyftRota</div>
  </div>
- <div style={{ marginBottom:13 }}><label style={LBL}>Email</label><input value={email} onChange={function(e){setEmail(e.target.value);setErr("");}} placeholder="you@company.com" style={INP} /></div>
- <div style={{ marginBottom:18 }}><label style={LBL}>Password</label><input type="password" value={pw} onChange={function(e){setPw(e.target.value);setErr("");}} onKeyDown={function(e){if(e.key==="Enter")doLogin();}} placeholder="password" style={INP} /></div>
+ <form onSubmit={function(e){ e.preventDefault(); doLogin(); }} action="#" method="post" autoComplete="on">
+ <div style={{ marginBottom:13 }}><label htmlFor="login-email" style={LBL}>Email</label><input id="login-email" name="email" type="email" inputMode="email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={email} onChange={function(e){setEmail(e.target.value);setErr("");}} placeholder="you@company.com" style={INP} /></div>
+ <div style={{ marginBottom:18 }}><label htmlFor="login-pw" style={LBL}>Password</label>
+  <div style={{ position:"relative" }}>
+   <input id="login-pw" name="password" type={showPw ? "text" : "password"} autoComplete="current-password" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoFocus={!!inviteEmail} value={pw} onChange={function(e){setPw(e.target.value);setErr("");}} placeholder="password" style={{ ...INP, paddingRight:48 }} />
+   <button type="button" onClick={function(){ setShowPw(!showPw); }} aria-label={showPw ? "Hide password" : "Show password"} aria-pressed={showPw} style={{ position:"absolute", right:2, top:"50%", transform:"translateY(-50%)", width:44, height:40, border:"none", background:"transparent", color:T.muted, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>{showPw && <path d="M4 4l16 16"/>}</svg>
+   </button>
+  </div>
+ </div>
  {authError && <div style={{ background:"var(--xFEF3C7)", border:"1px solid var(--xFCD34D)", borderRadius:8, padding:"9px 12px", color:"var(--x92400E)", fontSize:12, marginBottom:13 }}><b>Signed in, but couldn't load your account:</b> {authError}</div>}
  {err && <div style={{ background:T.dangerL, border:"1px solid var(--xFCA5A5)", borderRadius:8, padding:"9px 12px", color:"var(--x991B1B)", fontSize:13, marginBottom:13 }}>{err}</div>}
- <button onClick={doLogin} disabled={loggingIn} style={{ ...BTN, width:"100%", padding:"11px", fontSize:14, opacity:loggingIn?0.6:1, cursor:loggingIn?"default":"pointer" }}>{loggingIn ? "Signing in..." : "Sign in"}</button>
+ <button type="submit" disabled={loggingIn} style={{ ...BTN, width:"100%", padding:"11px", fontSize:14, opacity:loggingIn?0.6:1, cursor:loggingIn?"default":"pointer" }}>{loggingIn ? "Signing in..." : "Sign in"}</button>
+ </form>
  </div>
  </div>
  </div>

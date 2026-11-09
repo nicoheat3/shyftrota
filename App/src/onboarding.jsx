@@ -88,7 +88,7 @@ export function BulkAddTeam({ T, BTN, GBTN, INP, supabase, user, defaultRole, al
     showT(n + " of " + out.length + " added with logins", n === out.length ? "success" : "error");
   }
 
-  function invite(o) { return "Hi " + o.name.split(" ")[0] + ", our schedule is on ShyftRota now. Log in at app.shyftrota.com\nEmail: " + o.email + "\nTemporary password: " + o.pw + "\nAdd it to your home screen so it's one tap away."; }
+  function invite(o) { return "Hi " + o.name.split(" ")[0] + ", our schedule is on ShyftRota now. Tap to sign in: https://app.shyftrota.com/?email=" + encodeURIComponent(o.email) + "\nTemporary password: " + o.pw + "\nTip: add it to your Home Screen first (Share → Add to Home Screen), then sign in from there."; }
   function copy(s) { try { navigator.clipboard.writeText(s); showT("Copied"); } catch(e) { showT("Couldn't copy. Select the text instead.", "error"); } }
 
   if (results) {
