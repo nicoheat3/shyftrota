@@ -1960,7 +1960,7 @@ function App() {
   var st = { from:from, sx:e.clientX, sy:e.clientY, x:e.clientX, y:e.clientY, over:null, started:false, timer:null };
   cellDragRef.current = st;
   function dropAt(x, y){ var el = document.elementFromPoint(x, y), t = el && el.closest ? el.closest("[data-drop-day]") : null; if (!t) return null; return { day:t.getAttribute("data-drop-day"), eid:t.getAttribute("data-drop-eid") || null, sid:t.getAttribute("data-drop-sid") || null }; }
-  function start(){ st.started = true; setCellDrag({ from:st.from, x:st.x, y:st.y, over:dropAt(st.x, st.y) }); try { navigator.vibrate && navigator.vibrate(10); } catch(err) {} }
+  function start(){ st.started = true; document.body.style.userSelect = "none"; try { window.getSelection().removeAllRanges(); } catch(err) {} setCellDrag({ from:st.from, x:st.x, y:st.y, over:dropAt(st.x, st.y) }); try { navigator.vibrate && navigator.vibrate(10); } catch(err) {} }
   if (touch) st.timer = setTimeout(start, 280);
   function mv(ev){
    st.x = ev.clientX; st.y = ev.clientY;
@@ -1980,7 +1980,7 @@ function App() {
    }
   }
   function key(ev){ if (ev.key === "Escape") cleanup(); }
-  function cleanup(){ clearTimeout(st.timer); cellDragRef.current = null; setCellDrag(null); window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", cleanup); window.removeEventListener("touchmove", noScroll); window.removeEventListener("keydown", key); }
+  function cleanup(){ clearTimeout(st.timer); cellDragRef.current = null; setCellDrag(null); document.body.style.userSelect = ""; window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", cleanup); window.removeEventListener("touchmove", noScroll); window.removeEventListener("keydown", key); }
   window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", cleanup); window.addEventListener("touchmove", noScroll, { passive:false }); window.addEventListener("keydown", key);
  }
  function isDropOver(day, eid, sid) { var o = cellDrag && cellDrag.over; if (!o || o.day !== day) return false; if (eid != null && o.eid != null && String(o.eid) !== String(eid)) return false; if (sid && o.sid !== sid) return false; if (eid != null && o.eid == null) return false; return true; }
@@ -3953,7 +3953,7 @@ function App() {
  </div>
  <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"flex-start" }}>
  {c.workDate >= isoDate(new Date()) && <button onClick={function(){ openCoverage(c); }} style={{ ...BTN, fontSize:12, padding:"5px 12px", minHeight:0 }}>{cover && cover.id===c.id ? "Close" : "Find coverage"}</button>}
- <button onClick={function(){ackCallin(c.id);}} style={{ ...GBTN, fontSize:12, padding:"5px 12px", color:c.status==="acknowledged"?T.success:T.muted }}>{c.status==="acknowledged"?"&#10003; Acknowledged":"Acknowledge"}</button>
+ <button onClick={function(){ackCallin(c.id);}} style={{ ...GBTN, fontSize:12, padding:"5px 12px", color:c.status==="acknowledged"?T.success:T.muted }}>{c.status==="acknowledged"?"\u2713 Acknowledged":"Acknowledge"}</button>
  </div>
  </div>
  {cover && cover.id===c.id && (
