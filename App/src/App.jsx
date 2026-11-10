@@ -2969,7 +2969,7 @@ function App() {
    <>
     {moreOpen && (
      <div className="mobile-bottom sr-backdrop" onClick={function(){ setMoreOpen(false); }} style={{ position:"fixed", inset:0, zIndex:60, background:"rgba(26,23,20,0.35)", alignItems:"flex-end" }}>
-      <div className="sr-up" onClick={function(e){ e.stopPropagation(); }} style={{ width:"100%", background:T.surface, borderTop:"1px solid "+T.border, padding:"8px 8px calc(64px + env(safe-area-inset-bottom))" }}>
+      <div className="sr-up" onClick={function(e){ e.stopPropagation(); }} style={{ width:"100%", background:T.surface, borderTop:"1px solid "+T.border, padding:"8px 8px calc(96px + env(safe-area-inset-bottom))" }}>
        {REST.map(function(t){
         var active = tab === t.id;
         return (
