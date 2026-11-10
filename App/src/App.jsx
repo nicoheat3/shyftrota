@@ -832,17 +832,34 @@ function TeamChat({ user, emps }) {
   var [loaded, setLoaded] = useState(false);
   var [loadErr, setLoadErr] = useState("");
   var [input, setInput] = useState("");
-  var [sending, setSending] = useState(false);
   var ref = useRef(null);
+  var loadedRef = useRef(false);   // true once the first load is in; only messages after that animate
+  var animRef = useRef({});        // ids of bubbles that should spring in when they first appear
   var myEid = user.eid != null ? Number(user.eid) : null;
+  function isMine(r) { return myEid != null ? Number(r.sender_eid) === myEid : r.sender_name === user.name; }
+  function pickChannel(ch) { animRef.current = {}; setChannel(ch); }
 
-  function addMessages(rows) {
+  // live = arrived over the realtime channel (those bubbles animate in).
+  // A message I just sent already shows as a pending bubble; when the saved
+  // row comes back (from the insert or from realtime, whichever is first) it
+  // takes that bubble's place instead of adding a second one.
+  function addMessages(rows, live) {
     setMessages(function(prev){
       var seen = {};
       prev.forEach(function(m){ seen[m.id] = true; });
-      var fresh = rows.filter(function(r){ return !seen[r.id]; });
-      if (!fresh.length) return prev;
-      return prev.concat(fresh).sort(function(a,b){ return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0; });
+      var next = null;
+      rows.forEach(function(r){
+        if (seen[r.id]) return;
+        seen[r.id] = true;
+        if (!next) next = prev.slice();
+        var ti = -1;
+        if (isMine(r)) { for (var i = 0; i < next.length; i++) { if (next[i]._tmp && next[i].channel === r.channel && next[i].body === r.body) { ti = i; break; } } }
+        if (ti >= 0) { next[ti] = Object.assign({}, r, { _k: next[ti].id }); return; }
+        if (live && loadedRef.current) animRef.current[r.id] = true;
+        next.push(r);
+      });
+      if (!next) return prev;
+      return next.sort(function(a,b){ return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0; });
     });
   }
 
@@ -857,6 +874,7 @@ function TeamChat({ user, emps }) {
         if (cancelled) return;
         if (res.error) { console.error("load chat failed:", res.error); setLoadErr(res.error.message); }
         else addMessages(res.data || []);
+        loadedRef.current = true;
         setLoaded(true);
       });
     supabase.from("chat_reads").select("*").eq("user_id", user.id).then(function(res){
@@ -867,7 +885,7 @@ function TeamChat({ user, emps }) {
     });
     var sub = supabase.channel("chat-" + user.property_id)
       .on("postgres_changes", { event:"INSERT", schema:"public", table:"chat_messages", filter:"property_id=eq." + user.property_id },
-        function(payload){ if (payload && payload.new) addMessages([payload.new]); })
+        function(payload){ if (payload && payload.new) addMessages([payload.new], true); })
       .subscribe();
     return function(){ cancelled = true; supabase.removeChannel(sub); };
   }, [user.property_id, user.id]);
@@ -894,22 +912,31 @@ function TeamChat({ user, emps }) {
 
   async function send() {
     var text = sanitize(input.trim());
-    if (!text || sending) return;
+    if (!text) return;
     var row = { property_id:user.property_id, channel:channel, sender_eid:myEid, sender_name:user.name, body:text.slice(0, 2000) };
     if (channel !== "general") {
       var parts = channel.split(":");
       row.dm_a = Number(parts[1]); row.dm_b = Number(parts[2]);
     }
-    setSending(true);
+    // Show the bubble straight away (slightly dimmed) so sending feels instant,
+    // then swap in the saved message. If saving fails, take it back out and
+    // put the text back in the box.
+    var nowIso = new Date().toISOString();
+    var lastTs = messages.length ? messages[messages.length-1].created_at : "";
+    var tmpId = "tmp-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
+    var tmp = Object.assign({}, row, { id:tmpId, _tmp:true, created_at: nowIso > lastTs ? nowIso : lastTs });
+    animRef.current[tmpId] = true;
+    setMessages(function(prev){ return prev.concat([tmp]); });
+    setInput("");
     var res = await supabase.from("chat_messages").insert(row).select().single();
-    setSending(false);
     if (res.error || !res.data) {
       console.error("chat send failed:", res.error);
+      setMessages(function(prev){ return prev.filter(function(m){ return m.id !== tmpId; }); });
+      setInput(function(cur){ return cur ? cur : text; });
       showChatErr(res.error ? res.error.message : "Message didn't send");
       return;
     }
     addMessages([res.data]);
-    setInput("");
   }
   var [sendErr, setSendErr] = useState("");
   function showChatErr(msg) { setSendErr(msg); setTimeout(function(){ setSendErr(""); }, 5000); }
@@ -929,30 +956,30 @@ function TeamChat({ user, emps }) {
   }
 
   return (
-    <div style={{ display:"flex", height:"min(560px, calc(100vh - 170px))", minHeight:380, ...CARD, padding:0, overflow:"hidden" }}>
-      {/* Sidebar */}
-      <div style={{ width:170, borderRight:"1px solid "+T.border, display:"flex", flexDirection:"column", background:T.bg, flexShrink:0 }}>
-        <div style={{ padding:"10px 12px", borderBottom:"1px solid "+T.border }}>
+    <div className="chat-wrap" style={{ display:"flex", height:"min(560px, calc(100vh - 170px))", minHeight:380, ...CARD, padding:0, overflow:"hidden" }}>
+      {/* Sidebar (a row of chips on phones) */}
+      <div className="chat-side" style={{ width:170, borderRight:"1px solid "+T.border, display:"flex", flexDirection:"column", background:T.bg, flexShrink:0 }}>
+        <div className="chat-side-h" style={{ padding:"10px 12px", borderBottom:"1px solid "+T.border }}>
           <div style={{ fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.05em" }}>Messages</div>
         </div>
         {(function(){
           var on = channel === "general"; var u = unreadIn("general");
           return (
-            <button onClick={function(){ setChannel("general"); }} style={{ padding:"8px 12px", background:on?T.accentL:"transparent", border:"none", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:7, borderLeft:"2px solid "+(on?T.accent:"transparent"), fontFamily:"inherit" }}>
+            <button className={"chat-ch" + (on ? " on" : "")} onClick={function(){ pickChannel("general"); }} style={{ padding:"8px 12px", background:on?T.accentL:"transparent", border:"none", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:7, borderLeft:"2px solid "+(on?T.accent:"transparent"), fontFamily:"inherit" }}>
               <Icon name="message" size={14} />
               <span style={{ fontSize:12, fontWeight:on||u>0?700:400, color:on?T.accent:T.text, flex:1 }}>team-general</span>
               {u > 0 && <span style={{ background:T.danger, color:"white", borderRadius:20, fontSize:9, fontWeight:700, padding:"1px 5px" }}>{u}</span>}
             </button>
           );
         })()}
-        <div style={{ padding:"10px 12px 4px", fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.05em" }}>Direct</div>
-        <div style={{ flex:1, overflowY:"auto" }}>
-          {myEid == null && <div style={{ padding:"4px 12px", fontSize:11, color:T.faint, lineHeight:1.5 }}>Your login isn't linked to an employee, so direct messages are off.</div>}
+        <div className="chat-side-h" style={{ padding:"10px 12px 4px", fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.05em" }}>Direct</div>
+        <div className="chat-people" style={{ flex:1, overflowY:"auto" }}>
+          {myEid == null && <div className="chat-side-h" style={{ padding:"4px 12px", fontSize:11, color:T.faint, lineHeight:1.5 }}>Your login isn't linked to an employee, so direct messages are off.</div>}
           {myEid != null && people.map(function(e){
             var ch = chatDmKey(myEid, e.id);
             var on = channel === ch; var u = unreadIn(ch);
             return (
-              <button key={e.id} onClick={function(){ setChannel(ch); }} style={{ width:"100%", padding:"7px 12px", background:on?T.accentL:"transparent", border:"none", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:7, borderLeft:"2px solid "+(on?T.accent:"transparent"), fontFamily:"inherit" }}>
+              <button key={e.id} className={"chat-ch" + (on ? " on" : "")} onClick={function(){ pickChannel(ch); }} style={{ width:"100%", padding:"7px 12px", background:on?T.accentL:"transparent", border:"none", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:7, borderLeft:"2px solid "+(on?T.accent:"transparent"), fontFamily:"inherit" }}>
                 <div style={{ width:22, height:22, borderRadius:"50%", background:personColor(e.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700, color:"white", flexShrink:0 }}>{initials(e.name||"?")}</div>
                 <span style={{ fontSize:12, fontWeight:on||u>0?700:400, color:on?T.accent:T.text, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.name}</span>
                 {u > 0 && <span style={{ background:T.danger, color:"white", borderRadius:20, fontSize:9, fontWeight:700, padding:"1px 5px", flexShrink:0 }}>{u}</span>}
@@ -964,11 +991,11 @@ function TeamChat({ user, emps }) {
 
       {/* Conversation */}
       <div style={{ flex:1, display:"flex", flexDirection:"column", minWidth:0 }}>
-        <div style={{ padding:"11px 14px", borderBottom:"1px solid "+T.border, display:"flex", alignItems:"center", gap:8 }}>
-          <div style={{ width:26, height:26, borderRadius:8, background:"linear-gradient(135deg,#10B981,#059669)", display:"flex", alignItems:"center", justifyContent:"center", color:"white" }}><Icon name="message" size={14} /></div>
+        <div className="chat-head" style={{ padding:"11px 14px", borderBottom:"1px solid "+T.border, display:"flex", alignItems:"center", gap:8 }}>
+          <div className="chat-head-ico" style={{ width:26, height:26, borderRadius:8, background:"linear-gradient(135deg,#10B981,#059669)", display:"flex", alignItems:"center", justifyContent:"center", color:"white" }}><Icon name="message" size={14} /></div>
           <div style={{ minWidth:0 }}><div style={{ fontWeight:700, fontSize:13 }}>{chanLabel}</div><div style={{ color:T.faint, fontSize:10 }}>{chanSub}</div></div>
         </div>
-        <div style={{ flex:1, overflowY:"auto", padding:13, display:"flex", flexDirection:"column", gap:2, background:T.bg }}>
+        <div className="chat-list" style={{ flex:1, overflowY:"auto", padding:13, display:"flex", flexDirection:"column", gap:2, background:T.bg }}>
           {!loaded && <div style={{ textAlign:"center", color:T.faint, fontSize:13, marginTop:40 }}>Loading messages…</div>}
           {loaded && loadErr && <div style={{ textAlign:"center", color:T.danger, fontSize:12, marginTop:40, lineHeight:1.6 }}>Couldn't load chat: {loadErr}</div>}
           {loaded && !loadErr && activeMsgs.length === 0 && (
@@ -981,12 +1008,14 @@ function TeamChat({ user, emps }) {
             var isMe = myEid != null ? Number(m.sender_eid) === myEid : m.sender_name === user.name;
             var prev = activeMsgs[i-1];
             var prevSame = prev && prev.sender_eid === m.sender_eid && ts - new Date(prev.created_at).getTime() < 120000;
+            var mk = m._k || m.id;
+            var popIn = !!animRef.current[mk];
             return (
-              <div key={m.id} style={{ display:"flex", gap:8, marginTop:prevSame?2:12, alignItems:"flex-end", flexDirection:isMe?"row-reverse":"row" }}>
+              <div key={mk} className={popIn ? (isMe ? "chat-in-me" : "chat-in-them") : undefined} onAnimationEnd={function(){ delete animRef.current[mk]; }} style={{ display:"flex", gap:8, marginTop:prevSame?2:12, alignItems:"flex-end", flexDirection:isMe?"row-reverse":"row" }}>
                 <div style={{ width:24, height:24, borderRadius:"50%", background:personColor(m.sender_eid), display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700, color:"white", flexShrink:0, visibility:prevSame?"hidden":"visible" }}>{initials(m.sender_name||"?")}</div>
-                <div style={{ display:"flex", flexDirection:"column", alignItems:isMe?"flex-end":"flex-start", maxWidth:"72%" }}>
-                  {!prevSame && <div style={{ fontSize:10, color:T.faint, marginBottom:3 }}>{isMe?"You":m.sender_name} · {fmtAgo(ts)}</div>}
-                  <div style={{ padding:"8px 12px", borderRadius:isMe?"13px 13px 4px 13px":"13px 13px 13px 4px", background:isMe?T.accent:T.surface, color:isMe?"white":T.text, fontSize:13, lineHeight:1.5, border:isMe?"none":"1px solid "+T.border, wordBreak:"break-word", whiteSpace:"pre-wrap" }}>{m.body}</div>
+                <div className="chat-col" style={{ display:"flex", flexDirection:"column", alignItems:isMe?"flex-end":"flex-start", maxWidth:"72%" }}>
+                  {!prevSame && <div className="chat-meta" style={{ fontSize:10, color:T.faint, marginBottom:3 }}>{isMe?"You":m.sender_name} · {fmtAgo(ts)}</div>}
+                  <div className={"chat-bub " + (isMe ? "me" : "them")} style={{ padding:"8px 12px", borderRadius:isMe?"13px 13px 4px 13px":"13px 13px 13px 4px", background:isMe?T.accent:T.surface, color:isMe?"white":T.text, fontSize:13, lineHeight:1.5, border:isMe?"none":"1px solid "+T.border, wordBreak:"break-word", whiteSpace:"pre-wrap", opacity:m._tmp?0.7:1, transition:"opacity .25s ease" }}>{m.body}</div>
                 </div>
               </div>
             );
@@ -994,9 +1023,9 @@ function TeamChat({ user, emps }) {
           <div ref={ref} />
         </div>
         {sendErr && <div style={{ padding:"6px 14px", fontSize:12, color:T.danger, background:T.dangerL }}>Couldn't send: {sendErr}</div>}
-        <div style={{ padding:"10px 14px", borderTop:"1px solid "+T.border, display:"flex", gap:7, background:T.surface }}>
-          <input value={input} maxLength={2000} onChange={function(e){ setInput(e.target.value); }} onKeyDown={function(e){ if (e.key==="Enter") send(); }} placeholder={channel==="general" ? "Message the team..." : "Message "+chanLabel+"..."} style={{ ...INP, fontSize:13 }} />
-          <button onClick={send} disabled={!input.trim() || sending} style={{ ...BTN, background:"#10B981", width:36, height:36, padding:0, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, opacity:input.trim()&&!sending?1:0.5 }}>&#8593;</button>
+        <div className="chat-inrow" style={{ padding:"10px 14px", borderTop:"1px solid "+T.border, display:"flex", gap:7, background:T.surface }}>
+          <input className="chat-input" aria-label="Message" value={input} maxLength={2000} onChange={function(e){ setInput(e.target.value); }} onKeyDown={function(e){ if (e.key==="Enter") send(); }} placeholder={channel==="general" ? "Message the team..." : "Message "+chanLabel+"..."} style={{ ...INP, fontSize:13 }} />
+          <button className="chat-send" aria-label="Send message" onClick={send} disabled={!input.trim()} style={{ ...BTN, background:"#10B981", width:36, height:36, padding:0, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, opacity:input.trim()?1:0.5 }}>&#8593;</button>
         </div>
       </div>
     </div>
@@ -2880,6 +2909,13 @@ function App() {
  .sr-posted-pop { animation:srPosted 600ms cubic-bezier(0.34,1.56,0.64,1); }
  .sr-posted-pop { display:inline-block; }
  @keyframes srPosted { 0%{transform:scale(1)} 40%{transform:scale(1.08)} 100%{transform:scale(1)} }
+ /* Chat: a new bubble springs in from the corner it belongs to */
+ .chat-in-me { animation:srBubIn 480ms cubic-bezier(0.34,1.4,0.64,1) both; transform-origin:100% 100%; }
+ .chat-in-them { animation:srBubIn 480ms cubic-bezier(0.34,1.4,0.64,1) both; transform-origin:0% 100%; }
+ @keyframes srBubIn { from{opacity:0;transform:translateY(22px) scale(0.72)} to{opacity:1;transform:none} }
+ .chat-send { transition:transform 0.3s cubic-bezier(0.34,1.56,0.64,1), opacity 0.2s ease, background 0.2s ease !important; }
+ .chat-send:active { transform:scale(0.88) !important; }
+ @media (prefers-reduced-motion: reduce) { .chat-in-me, .chat-in-them { animation:none !important; } }
  @media (prefers-reduced-motion: reduce) { ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation:none !important; } .main-pad > div > *, .sr-backdrop, .sr-sheet, .sr-up, .sr-check, .sr-check circle, .sr-check path, .sr-posted-pop { animation:none !important; stroke-dashoffset:0 !important; } }
  .hv:hover { background:var(--xF1F5F9) !important; cursor:pointer; }
  .hv2:hover { background:var(--xFDF0ED) !important; cursor:pointer; }
@@ -2912,6 +2948,26 @@ function App() {
  .sr-backdrop { align-items:flex-end !important; padding:0 !important; }
  .sr-sheet { max-width:none !important; width:100% !important; border-radius:16px 16px 0 0 !important; max-height:92vh; overflow-y:auto !important; padding-bottom:calc(24px + env(safe-area-inset-bottom)) !important; animation:srSheetUp 420ms cubic-bezier(0.32,0.72,0,1) both !important; }
  .sr-sheet::before { content:""; display:block; width:36px; height:5px; border-radius:3px; background:rgba(128,128,128,0.35); margin:-8px auto 14px; }
+ /* Chat on phones: full-width conversation, people as a row of chips, bigger bubbles */
+ .chat-wrap { flex-direction:column !important; height:calc(100vh - 150px) !important; height:calc(100dvh - 150px - env(safe-area-inset-bottom)) !important; min-height:320px !important; background:transparent !important; border:none !important; border-radius:0 !important; box-shadow:none !important; }
+ .chat-side { width:100% !important; flex-direction:row !important; align-items:center; gap:6px; overflow-x:auto; background:transparent !important; border-right:none !important; padding:0 0 10px; scrollbar-width:none; }
+ .chat-side::-webkit-scrollbar { display:none; }
+ .chat-side-h { display:none !important; }
+ .chat-people { display:flex !important; flex:none !important; gap:6px; overflow:visible !important; }
+ .chat-ch { width:auto !important; flex-shrink:0; min-height:44px; padding:0 12px !important; border:1px solid var(--border) !important; border-radius:12px !important; background:var(--surface) !important; white-space:nowrap; }
+ .chat-ch span { font-size:13px !important; }
+ .chat-ch.on { border-color:var(--accent) !important; background:var(--accentL) !important; }
+ .chat-head { padding:0 2px 8px !important; border-bottom:none !important; }
+ .chat-head-ico { display:none !important; }
+ .chat-list { background:transparent !important; padding:6px 2px 10px !important; }
+ .chat-col { max-width:80% !important; }
+ .chat-meta { font-size:11px !important; }
+ .chat-bub { font-size:15px !important; line-height:1.4 !important; padding:10px 13px !important; }
+ .chat-bub.me { background:var(--text) !important; color:var(--bg) !important; border-radius:16px 16px 4px 16px !important; }
+ .chat-bub.them { border-radius:16px 16px 16px 4px !important; }
+ .chat-inrow { background:transparent !important; border-top:none !important; padding:8px 0 0 !important; gap:8px !important; }
+ .chat-input { height:48px; border-radius:14px !important; padding:0 14px !important; }
+ .chat-send { width:48px !important; height:48px !important; border-radius:14px !important; background:var(--text) !important; color:var(--bg) !important; font-size:20px !important; }
  }
  `}</style>
 
