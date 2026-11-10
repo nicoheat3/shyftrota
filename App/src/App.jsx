@@ -902,7 +902,20 @@ function TeamChat({ user, emps }) {
       .then(function(res){ if (res.error) console.error("chat read save failed:", res.error); });
   }, [channel, lastActiveTs, loaded]);
 
-  useEffect(function(){ if (ref.current) ref.current.scrollIntoView({ behavior:"smooth" }); }, [channel, activeMsgs.length]);
+  // Keep the newest message in view by scrolling the message list itself.
+  // (scrollIntoView also scrolled the whole page, which pushed the chat up
+  // under the header on phones.) Jump on open or channel change, glide for
+  // a new message.
+  var listRef = useRef(null);
+  var lastChanRef = useRef(null);
+  useEffect(function(){
+    var el = listRef.current;
+    if (!el) return;
+    var glide = lastChanRef.current === channel;
+    lastChanRef.current = channel;
+    if (glide && el.scrollTo) el.scrollTo({ top:el.scrollHeight, behavior:"smooth" });
+    else el.scrollTop = el.scrollHeight;
+  }, [channel, activeMsgs.length]);
 
   function unreadIn(ch) {
     if (ch === channel) return 0;
@@ -995,7 +1008,7 @@ function TeamChat({ user, emps }) {
           <div className="chat-head-ico" style={{ width:26, height:26, borderRadius:8, background:"linear-gradient(135deg,#10B981,#059669)", display:"flex", alignItems:"center", justifyContent:"center", color:"white" }}><Icon name="message" size={14} /></div>
           <div style={{ minWidth:0 }}><div style={{ fontWeight:700, fontSize:13 }}>{chanLabel}</div><div style={{ color:T.faint, fontSize:10 }}>{chanSub}</div></div>
         </div>
-        <div className="chat-list" style={{ flex:1, overflowY:"auto", padding:13, display:"flex", flexDirection:"column", gap:2, background:T.bg }}>
+        <div className="chat-list" ref={listRef} style={{ flex:1, overflowY:"auto", padding:13, display:"flex", flexDirection:"column", gap:2, background:T.bg }}>
           {!loaded && <div style={{ textAlign:"center", color:T.faint, fontSize:13, marginTop:40 }}>Loading messages…</div>}
           {loaded && loadErr && <div style={{ textAlign:"center", color:T.danger, fontSize:12, marginTop:40, lineHeight:1.6 }}>Couldn't load chat: {loadErr}</div>}
           {loaded && !loadErr && activeMsgs.length === 0 && (
