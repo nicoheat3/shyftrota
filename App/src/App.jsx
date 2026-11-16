@@ -1421,6 +1421,34 @@ function App() {
   });
  }, [user && user.property_id, emps.length]);
 
+ // Live schedule: when anyone changes shifts or custom times, or the app comes
+ // back to the foreground, bump liveTick so the week below loads again.
+ // Bursts (bulk auto-generate) collapse into one reload. Supabase can't
+ // filter DELETE events by property, so those trigger a reload unfiltered;
+ // they carry only row ids, and the reload itself is scoped by property + RLS.
+ var [liveTick, setLiveTick] = useState(0);
+ useEffect(function(){
+  if (!user || !user.property_id) return;
+  var timer = null;
+  function bump(){ clearTimeout(timer); timer = setTimeout(function(){ setLiveTick(function(x){ return x + 1; }); }, 400); }
+  var pf = "property_id=eq." + user.property_id;
+  var wasUp = false;
+  var sub = supabase.channel("sched-" + user.property_id)
+   .on("postgres_changes", { event:"INSERT", schema:"public", table:"schedule_entries", filter:pf }, bump)
+   .on("postgres_changes", { event:"UPDATE", schema:"public", table:"schedule_entries", filter:pf }, bump)
+   .on("postgres_changes", { event:"DELETE", schema:"public", table:"schedule_entries" }, bump)
+   .on("postgres_changes", { event:"INSERT", schema:"public", table:"shift_overrides", filter:pf }, bump)
+   .on("postgres_changes", { event:"UPDATE", schema:"public", table:"shift_overrides", filter:pf }, bump)
+   .on("postgres_changes", { event:"DELETE", schema:"public", table:"shift_overrides" }, bump)
+   .subscribe(function(status){
+    // After a dropped connection comes back, reload once to catch anything missed.
+    if (status === "SUBSCRIBED") { if (wasUp) bump(); wasUp = true; }
+   });
+  function onVis(){ if (document.visibilityState === "visible") bump(); }
+  document.addEventListener("visibilitychange", onVis);
+  return function(){ clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); supabase.removeChannel(sub); };
+ }, [user && user.property_id]);
+
  // Load the real schedule for whichever week is currently in view.
  useEffect(function(){
   if (!user || !user.property_id) return;
@@ -1455,6 +1483,8 @@ function App() {
     if (res.data) {
      setShiftOverrides(function(p){
       var n = {...p};
+      // Drop this week's old entries first so a removed custom time disappears on reload.
+      Object.keys(n).forEach(function(k){ var dt = k.split("_")[0]; if (dt >= startStr && dt <= endStr) delete n[k]; });
       res.data.forEach(function(row){
        n[row.work_date+"_"+row.employee_id] = { start: row.start_time, end: row.end_time };
       });
@@ -1504,7 +1534,7 @@ function App() {
      });
     } else { console.error("load daily volume failed:", res.error); }
    });
- }, [user && user.property_id, weekOff, weekStartDow]);
+ }, [user && user.property_id, weekOff, weekStartDow, liveTick]);
  var [tab, setTab] = useState("schedule");
  var [reqSub, setReqSub] = useState("timeoff"); // employee Requests tab: timeoff | swap | callin
  var [lang, setLangState] = useState(getLang()); // "en" | "es" (employee screens; see i18n.js)
