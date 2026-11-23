@@ -73,7 +73,7 @@ function checkNew(pw, pw2) {
 }
 
 // ── Login screen: forgot password ────────────────────
-export function ForgotPassword({ initialEmail, onBack }) {
+export function ForgotPassword({ initialEmail, onBack, expired }) {
   var [email, setEmail] = useState(initialEmail || "");
   var [busy, setBusy] = useState(false);
   var [sent, setSent] = useState(false);
@@ -98,6 +98,7 @@ export function ForgotPassword({ initialEmail, onBack }) {
         <div style={{ fontWeight:800, fontSize:22, color:T.text }}>Reset your password</div>
         <div style={{ color:T.muted, fontSize:13, marginTop:4, lineHeight:1.5 }}>We'll email you a link to pick a new one.</div>
       </div>
+      {expired && !sent && <Msg kind="error">That reset link expired or was already used. Send yourself a new one below.</Msg>}
       {sent ? (
         <Msg kind="ok">If <b>{email.trim()}</b> has a ShyftRota login, a reset link is on its way. It can take a minute. Check spam too. The link works once and expires in an hour.</Msg>
       ) : (
@@ -197,6 +198,57 @@ export function ChangePasswordModal({ email, onClose, onChanged }) {
         <div style={{ display:"flex", gap:8 }}>
           <button onClick={onClose} style={{ ...BTN, background:"transparent", color:T.muted, border:"1px solid "+T.border }}>Cancel</button>
           <button onClick={save} disabled={busy} style={{ ...BTN, opacity:busy?0.6:1 }}>{busy ? "Saving…" : "Save"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Full page: reset from an emailed link (?reset=<token hash>) ──
+// Nothing is spent until Save: then the token is checked and the password set.
+export function ResetFromLink({ tokenHash, onDone, onStartOver }) {
+  var [pw, setPw] = useState("");
+  var [pw2, setPw2] = useState("");
+  var [busy, setBusy] = useState(false);
+  var [err, setErr] = useState("");
+  var [dead, setDead] = useState(false);
+
+  async function save() {
+    var p = checkNew(pw, pw2);
+    if (p) { setErr(p); return; }
+    setBusy(true); setErr("");
+    var v = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: "recovery" });
+    if (v.error) { setBusy(false); setDead(true); return; }
+    var res = await supabase.auth.updateUser({ password: pw, data: { must_change_password: false } });
+    setBusy(false);
+    if (res.error) {
+      var m = res.error.message || "";
+      setErr(/different/i.test(m) ? "Pick a password you haven't used here before." : "Couldn't save: " + m);
+      return;
+    }
+    onDone();
+  }
+
+  return (
+    <div style={PAGE}>
+      <div style={{ width:"100%", maxWidth:400 }}>
+        <div style={CARD}>
+          <div style={{ textAlign:"center", marginBottom:20 }}>
+            <div style={{ fontWeight:800, fontSize:22, color:T.text }}>{dead ? "This link has expired" : "Pick a new password"}</div>
+            <div style={{ color:T.muted, fontSize:13, marginTop:6, lineHeight:1.5 }}>
+              {dead ? "Reset links work once and last an hour. Request a fresh one and use the newest email." : "Choose a new password for your ShyftRota login."}
+            </div>
+          </div>
+          {dead ? (
+            <button onClick={onStartOver} style={BTN}>Send a new link</button>
+          ) : (
+            <div>
+              <NewPasswordFields pw={pw} setPw={function(v){ setPw(v); setErr(""); }} pw2={pw2} setPw2={function(v){ setPw2(v); setErr(""); }} onEnter={save} />
+              <Msg kind="error">{err}</Msg>
+              <button onClick={save} disabled={busy} style={{ ...BTN, opacity:busy?0.6:1 }}>{busy ? "Saving…" : "Save password"}</button>
+              <div style={{ textAlign:"center", marginTop:16 }}><button onClick={onStartOver} style={LINK}>Back to sign in</button></div>
+            </div>
+          )}
         </div>
       </div>
     </div>

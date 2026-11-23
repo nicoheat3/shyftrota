@@ -1,8 +1,8 @@
 import { t as tr, getLang, setLang } from "./i18n.js";
 import { useState, useEffect, useRef } from "react";
 import { flushSync } from "react-dom";
-import { supabase, openedFromRecoveryLink } from "./lib/supabaseClient.js";
-import { ForgotPassword, SetPasswordScreen, ChangePasswordModal } from "./password.jsx";
+import { supabase, openedFromRecoveryLink, resetTokenHash, recoveryLinkError } from "./lib/supabaseClient.js";
+import { ForgotPassword, SetPasswordScreen, ChangePasswordModal, ResetFromLink } from "./password.jsx";
 import { VolumePanel, CoverBadge, suggestCover, coverageForDay, shiftBucket, seedThresholds, DEFAULT_THRESHOLDS } from "./volume.jsx";
 import { Settings } from "./settings.jsx";
 import { AltSchedule, LayoutPicker, getLayout, saveLayout, hasLocalLayout } from "./layouts.jsx";
@@ -1079,7 +1079,7 @@ function BetaBanner({ name }) {
 // ── Welcome / Auth ────────────────────────────────────
 function Welcome({ onLogin, onSignup, accounts, authError }) {
  var [layoutPick, setLayoutPick] = useState("grid");
- var [mode, setMode] = useState("home");
+ var [mode, setMode] = useState(recoveryLinkError ? "login" : "home");
  var [email, setEmail] = useState("");
  var [pw, setPw] = useState("");
  var [name, setName] = useState("");
@@ -1089,7 +1089,7 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  var [err, setErr] = useState("");
 
  var [loggingIn, setLoggingIn] = useState(false);
- var [forgot, setForgot] = useState(false);
+ var [forgot, setForgot] = useState(!!recoveryLinkError);
 
  async function doLogin() {
   var emailClean = email.toLowerCase().trim();
@@ -1134,7 +1134,7 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  <div style={{ width:"100%", maxWidth:400 }}>
  <button onClick={function(){setMode("home");setErr("");}} style={{ ...GBTN, marginBottom:20, fontSize:12 }}>&#8592; Back</button>
  <div style={{ ...CARD, padding:28 }}>
- {forgot ? <ForgotPassword initialEmail={email} onBack={function(){ setForgot(false); }} /> : (<>
+ {forgot ? <ForgotPassword initialEmail={email} expired={!!recoveryLinkError} onBack={function(){ setForgot(false); }} /> : (<>
  <div style={{ textAlign:"center", marginBottom:22 }}>
  <div style={{ fontFamily:"var(--font-ui)", fontWeight:800, fontSize:22, color:T.text }}>Welcome back</div>
  <div style={{ color:T.muted, fontSize:13, marginTop:4 }}>Sign in to ShyftRota</div>
@@ -1269,6 +1269,7 @@ function App() {
  // the temporary password a manager set. Either way they pick a new one first.
  var [pwGate, setPwGate] = useState(openedFromRecoveryLink ? "recovery" : null);
  var [changePwOpen, setChangePwOpen] = useState(false);
+ var [resetHash, setResetHash] = useState(resetTokenHash);
 
  // Load the profile row (name/role/employee link) that matches a Supabase Auth session.
  function loadProfile(authUser) {
@@ -2835,6 +2836,11 @@ function App() {
   }
   var TAB_ICONS = {myrequests:"clipboard",schedule:"calendar",employees:"users",depts:"building",openShifts:"plusSquare",requests:"clipboard",timeclock:"clock",shifts:"list",chat:"message",ai:"terminal",myschedule:"calendarCheck",today:"eye",timeoff:"sun",swap:"swap",callin:"phone",clockin:"login",settings:"sliders"};
 
+ if (resetHash) return (
+  <ResetFromLink tokenHash={resetHash}
+   onDone={function(){ try { window.history.replaceState(null, "", window.location.pathname); } catch(e) {} setResetHash(null); setPwGate(null); showT("Password saved — you're signed in"); }}
+   onStartOver={function(){ try { window.history.replaceState(null, "", window.location.pathname); } catch(e) {} setResetHash(null); setPwGate(null); supabase.auth.signOut(); }} />
+ );
  if (authLoading) return (
   <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--xF8F6F3)", color:"var(--x8A8478)", fontFamily:"var(--font-ui)", fontSize:14 }}>
    Loading…

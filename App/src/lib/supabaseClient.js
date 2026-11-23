@@ -16,4 +16,19 @@ export const openedFromRecoveryLink =
   typeof window !== "undefined" &&
   /(^|[#&?])type=recovery(&|$)/.test(window.location.hash + "&" + window.location.search.replace(/^\?/, ""));
 
+// New-style reset link: https://app.shyftrota.com/?reset=<token hash>
+// The token is only spent when the person presses Save, so email security
+// scanners that "pre-click" links can't use it up first.
+export const resetTokenHash = (function () {
+  if (typeof window === "undefined") return null;
+  var v = new URLSearchParams(window.location.search).get("reset");
+  return v && /^[A-Za-z0-9_-]{10,200}$/.test(v) ? v : null;
+})();
+
+// An old-style link that was already used or expired comes back with an
+// error in the address bar instead of a session.
+export const recoveryLinkError =
+  typeof window !== "undefined" &&
+  /error_code=(otp_expired|access_denied)|error=access_denied/.test(window.location.hash + window.location.search);
+
 export const supabase = createClient(supabaseUrl, supabaseKey);
