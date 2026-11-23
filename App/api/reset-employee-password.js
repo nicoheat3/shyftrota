@@ -87,6 +87,8 @@ export default async function handler(req, res) {
 
   var updateResult = await supabaseAdmin.auth.admin.updateUserById(targetUser.id, {
     password: newPassword,
+    // The manager now knows this password, so make them replace it on next sign-in
+    user_metadata: { must_change_password: true },
   });
 
   if (updateResult.error) {

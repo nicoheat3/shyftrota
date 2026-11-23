@@ -10,4 +10,10 @@ if (!supabaseUrl || !supabaseKey) {
   );
 }
 
+// Read this BEFORE creating the client: the client signs the person in from a
+// password-reset link and then wipes the link details from the address bar.
+export const openedFromRecoveryLink =
+  typeof window !== "undefined" &&
+  /(^|[#&?])type=recovery(&|$)/.test(window.location.hash + "&" + window.location.search.replace(/^\?/, ""));
+
 export const supabase = createClient(supabaseUrl, supabaseKey);

@@ -1,7 +1,8 @@
 import { t as tr, getLang, setLang } from "./i18n.js";
 import { useState, useEffect, useRef } from "react";
 import { flushSync } from "react-dom";
-import { supabase } from "./lib/supabaseClient.js";
+import { supabase, openedFromRecoveryLink } from "./lib/supabaseClient.js";
+import { ForgotPassword, SetPasswordScreen, ChangePasswordModal } from "./password.jsx";
 import { VolumePanel, CoverBadge, suggestCover, coverageForDay, shiftBucket, seedThresholds, DEFAULT_THRESHOLDS } from "./volume.jsx";
 import { Settings } from "./settings.jsx";
 import { AltSchedule, LayoutPicker, getLayout, saveLayout, hasLocalLayout } from "./layouts.jsx";
@@ -1088,6 +1089,7 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  var [err, setErr] = useState("");
 
  var [loggingIn, setLoggingIn] = useState(false);
+ var [forgot, setForgot] = useState(false);
 
  async function doLogin() {
   var emailClean = email.toLowerCase().trim();
@@ -1132,6 +1134,7 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  <div style={{ width:"100%", maxWidth:400 }}>
  <button onClick={function(){setMode("home");setErr("");}} style={{ ...GBTN, marginBottom:20, fontSize:12 }}>&#8592; Back</button>
  <div style={{ ...CARD, padding:28 }}>
+ {forgot ? <ForgotPassword initialEmail={email} onBack={function(){ setForgot(false); }} /> : (<>
  <div style={{ textAlign:"center", marginBottom:22 }}>
  <div style={{ fontFamily:"var(--font-ui)", fontWeight:800, fontSize:22, color:T.text }}>Welcome back</div>
  <div style={{ color:T.muted, fontSize:13, marginTop:4 }}>Sign in to ShyftRota</div>
@@ -1141,6 +1144,10 @@ function Welcome({ onLogin, onSignup, accounts, authError }) {
  {authError && <div style={{ background:"var(--xFEF3C7)", border:"1px solid var(--xFCD34D)", borderRadius:8, padding:"9px 12px", color:"var(--x92400E)", fontSize:12, marginBottom:13 }}><b>Signed in, but couldn't load your account:</b> {authError}</div>}
  {err && <div style={{ background:T.dangerL, border:"1px solid var(--xFCA5A5)", borderRadius:8, padding:"9px 12px", color:"var(--x991B1B)", fontSize:13, marginBottom:13 }}>{err}</div>}
  <button onClick={doLogin} disabled={loggingIn} style={{ ...BTN, width:"100%", padding:"11px", fontSize:14, opacity:loggingIn?0.6:1, cursor:loggingIn?"default":"pointer" }}>{loggingIn ? "Signing in..." : "Sign in"}</button>
+ <div style={{ textAlign:"center", marginTop:16 }}>
+  <button onClick={function(){ setForgot(true); setErr(""); }} style={{ background:"none", border:"none", padding:0, color:T.muted, fontSize:13, cursor:"pointer", fontFamily:"inherit", textDecoration:"underline", textUnderlineOffset:3 }}>Forgot password?</button>
+ </div>
+ </>)}
  </div>
  </div>
  </div>
@@ -1258,9 +1265,14 @@ function App() {
  var [user, setUser] = useState(null);
  var [authLoading, setAuthLoading] = useState(true);
  var [authError, setAuthError] = useState(null);
+ // "recovery" = arrived from a reset-password email; "temporary" = must replace
+ // the temporary password a manager set. Either way they pick a new one first.
+ var [pwGate, setPwGate] = useState(openedFromRecoveryLink ? "recovery" : null);
+ var [changePwOpen, setChangePwOpen] = useState(false);
 
  // Load the profile row (name/role/employee link) that matches a Supabase Auth session.
  function loadProfile(authUser) {
+  if (authUser.user_metadata && authUser.user_metadata.must_change_password) setPwGate(function(g){ return g || "temporary"; });
   supabase.from("profiles").select("*").eq("id", authUser.id).single().then(function(res){
    if (res.data) {
     setAuthError(null);
@@ -1290,6 +1302,10 @@ function App() {
    if (session) { loadProfile(session.user); } else { setAuthLoading(false); }
   });
   var sub = supabase.auth.onAuthStateChange(function(event, session){
+   if (event === "PASSWORD_RECOVERY") setPwGate("recovery");
+   if (event === "SIGNED_OUT") setPwGate(null);
+   // A password/metadata change re-fires as USER_UPDATED; no need to reload everything
+   if (event === "USER_UPDATED" || event === "TOKEN_REFRESHED") return;
    if (session) { loadProfile(session.user); }
    else { setUser(null); setAuthLoading(false); }
   });
@@ -1889,15 +1905,7 @@ function App() {
    else showT("Week now starts on "+name+"day");
   });
  }
- async function changeOwnPassword() {
-  var pw = window.prompt("New password (min 8 characters, with an uppercase letter, a number and a symbol):");
-  if (!pw) return;
-  var pwErr = validatePassword(pw);
-  if (pwErr) { showT(pwErr, "error"); return; }
-  var res = await supabase.auth.updateUser({ password: pw });
-  if (res.error) { console.error("password change failed:", res.error); showT("Couldn't change password: "+res.error.message, "error"); }
-  else { showT("Password updated"); writeAudit("PASSWORD_CHANGED", "self", user.id); }
- }
+ function changeOwnPassword() { setChangePwOpen(true); }
  async function deleteOwnAccount(done) {
   var sessionRes = await supabase.auth.getSession();
   var accessToken = sessionRes.data.session ? sessionRes.data.session.access_token : null;
@@ -2833,6 +2841,11 @@ function App() {
   </div>
  );
  if (!user) return <Welcome onLogin={handleLogin} onSignup={handleSignup} accounts={accounts} authError={authError} />;
+ if (pwGate) return (
+  <SetPasswordScreen reason={pwGate} name={user.name}
+   onDone={function(){ writeAudit("PASSWORD_CHANGED", pwGate === "recovery" ? "reset link" : "replaced temporary", user.id); setPwGate(null); showT("Password saved"); }}
+   onSignOut={function(){ supabase.auth.signOut(); }} />
+ );
 
  // ── UI upgrade helpers ─────────────────────────────────
  var MONO = "'IBM Plex Mono',ui-monospace,monospace";
@@ -3079,6 +3092,8 @@ function App() {
  `}</style>
 
  <Toast toast={toast} />
+ {changePwOpen && <ChangePasswordModal email={user.email} onClose={function(){ setChangePwOpen(false); }}
+   onChanged={function(){ setChangePwOpen(false); showT("Password updated"); writeAudit("PASSWORD_CHANGED", "self", user.id); }} />}
  {cellDrag && (
    <div aria-hidden="true" className="mono" style={{ position:"fixed", left:cellDrag.x + 12, top:cellDrag.y - 18, zIndex:400, pointerEvents:"none", display:"inline-flex", alignItems:"center", gap:6, padding:"7px 11px", borderRadius:10, fontSize:12, fontWeight:600, background:T.surface, color:T.text, border:"1px solid "+shiftColor(cellDrag.from.shift).border, boxShadow:"0 18px 36px -12px rgba(0,0,0,.55)", transform:"rotate(-2deg)" }}>
      <span style={{ width:8, height:8, borderRadius:2, background:shiftColor(cellDrag.from.shift).dot }} />

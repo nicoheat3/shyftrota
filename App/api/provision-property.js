@@ -126,6 +126,8 @@ export default async function handler(req, res) {
       email: adminEmail,
       password: password,
       email_confirm: true,
+      // They must pick their own password the first time they sign in
+      user_metadata: { must_change_password: true },
     });
     if (userRes.error) {
       var m = userRes.error.message || "";
