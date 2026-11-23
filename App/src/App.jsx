@@ -1914,6 +1914,26 @@ function App() {
   supabase.from("schedule_entries").delete()
    .eq("property_id", user.property_id).eq("work_date", dateStr).eq("employee_id", eid)
    .then(function(res){ if (res.error) console.error("schedule delete sync failed:", res.error); });
+  // A custom time belongs to the shift. When the shift goes, so does its custom time,
+  // or it comes back on whatever shift lands in that cell later.
+  clearOverrideByDate(dateStr, eid);
+ }
+ function clearOverrideByDate(dateStr, eid) {
+  var k = dateStr + "_" + eid;
+  setShiftOverrides(function(p){ if (!p[k]) return p; var n = {...p}; delete n[k]; return n; });
+  supabase.from("shift_overrides").delete()
+   .eq("property_id", user.property_id).eq("work_date", dateStr).eq("employee_id", eid)
+   .then(function(res){ if (res.error) console.error("override delete failed:", res.error); });
+ }
+ // When a shift changes hands (swap, call-in cover), its custom time goes with it.
+ // Call this before the old person's shift is deleted.
+ function moveOverrideByDate(dateStr, fromEid, toEid) {
+  var ov = shiftOverrides[dateStr + "_" + fromEid];
+  if (!ov) return;
+  setShiftOverrides(function(p){ var n = {...p}; n[dateStr + "_" + toEid] = { start: ov.start, end: ov.end }; return n; });
+  supabase.from("shift_overrides").upsert({
+   property_id: user.property_id, work_date: dateStr, employee_id: toEid, start_time: ov.start, end_time: ov.end,
+  }, { onConflict: "property_id,work_date,employee_id" }).then(function(res){ if (res.error) console.error("override move failed:", res.error); });
  }
  function syncScheduleCell(weekOffArg, day, eid, shiftId) {
   syncScheduleCellByDate(dayToISODate(weekOffArg, day), eid, shiftId);
@@ -1970,6 +1990,9 @@ function App() {
 
  function assignShift(day, eid, shift) {
  if (isPastWeek) { showT("Past schedules are locked and cannot be changed","error"); return; }
+ // A custom time was set for the old shift type. Don't carry it onto a different one.
+ var prevShift = weekSched[day] && weekSched[day][eid];
+ if (prevShift && prevShift !== shift && shiftOverrides[overrideKey(weekOff, day, eid)]) clearOverrideByDate(dayToISODate(weekOff, day), eid);
  setSched(function(p) {
  var n = {...p};
  var w = {...(n[weekOff]||{})};
@@ -2225,6 +2248,7 @@ function App() {
  saveReqStatus("swap_requests", req.id, "approved").then(function(ok){
   if (!ok) { delete approvingSwaps[req.id]; return; }
   applyLocalScheduleChange(dateStr, from.id, to.id, req.shift);
+  moveOverrideByDate(dateStr, from.id, to.id);
   setSwaps(function(p){return p.map(function(r){return r.id===req.id?{...r,status:"approved"}:r;});});
   showT("Swap approved"); writeAudit("SWAP_APPROVED", from.name+" \u2192 "+to.name+" · "+auditDay(dateStr), user.id);
   syncScheduleCellDeleteByDate(dateStr, from.id);
@@ -2288,7 +2312,7 @@ function App() {
    .then(function(res){
     if (res.error) { console.error("clear shifts for time off failed:", res.error); showT("Time off saved, but their shifts on those days weren't removed","error"); return 0; }
     var dates = (res.data||[]).map(function(x){ return x.work_date; });
-    dates.forEach(function(d){ applyLocalScheduleChange(d, eid, null, null); markWeekEdited(d); });
+    dates.forEach(function(d){ applyLocalScheduleChange(d, eid, null, null); clearOverrideByDate(d, eid); markWeekEdited(d); });
     return dates.length;
    });
  }
@@ -2424,6 +2448,7 @@ function App() {
  function assignCoverage(c, e) {
   var cv = cover; if (!cv || cv.state!=="ready") return;
   applyLocalScheduleChange(cv.date, c.eid, e.id, cv.shift);
+  moveOverrideByDate(cv.date, c.eid, e.id);
   syncScheduleCellDeleteByDate(cv.date, c.eid);
   syncScheduleCellByDate(cv.date, e.id, cv.shift);
   markWeekEdited(cv.date);
@@ -2706,6 +2731,8 @@ function App() {
   });
 
   DAYS.forEach(function(d) {
+   var prev = weekSched[d] && weekSched[d][emp.id];
+   if (picks[d] && prev && prev !== picks[d] && shiftOverrides[overrideKey(weekOff, d, emp.id)]) clearOverrideByDate(dayToISODate(weekOff, d), emp.id);
    if (picks[d]) syncScheduleCell(weekOff, d, emp.id, picks[d]);
    else syncScheduleCellDelete(weekOff, d, emp.id);
   });
