@@ -83,12 +83,13 @@ export function ForgotPassword({ initialEmail, onBack, expired }) {
     var e = email.trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { setErr("Enter the email you sign in with."); return; }
     setBusy(true); setErr("");
-    var res = await supabase.auth.resetPasswordForEmail(e, { redirectTo: window.location.origin + "/" });
+    // The server sends the link to the login email AND the personal email
+    // saved in Settings, and answers the same whether or not the email exists.
+    try {
+      var r = await fetch("/api/request-password-reset", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ email: e }) });
+      if (r.status === 400) { setBusy(false); setErr("Enter a valid email."); return; }
+    } catch (x) { setBusy(false); setErr("Couldn't reach ShyftRota. Check your connection."); return; }
     setBusy(false);
-    // Same message whether or not the email has an account, so nobody can use
-    // this form to find out who works where. Only rate limits are shown.
-    if (res.error && /rate|limit|seconds/i.test(res.error.message || "")) { setErr("Too many tries. Wait a minute and try again."); return; }
-    if (res.error) console.error("reset email failed:", res.error);
     setSent(true);
   }
 
@@ -96,11 +97,11 @@ export function ForgotPassword({ initialEmail, onBack, expired }) {
     <div>
       <div style={{ textAlign:"center", marginBottom:20 }}>
         <div style={{ fontWeight:800, fontSize:22, color:T.text }}>Reset your password</div>
-        <div style={{ color:T.muted, fontSize:13, marginTop:4, lineHeight:1.5 }}>We'll email you a link to pick a new one.</div>
+        <div style={{ color:T.muted, fontSize:13, marginTop:4, lineHeight:1.5 }}>Use your login email or the personal email saved in your Settings. We'll send a link to both.</div>
       </div>
       {expired && !sent && <Msg kind="error">That reset link expired or was already used. Send yourself a new one below.</Msg>}
       {sent ? (
-        <Msg kind="ok">If <b>{email.trim()}</b> has a ShyftRota login, a reset link is on its way. It can take a minute. Check spam too. The link works once and expires in an hour.</Msg>
+        <Msg kind="ok">If <b>{email.trim()}</b> belongs to a ShyftRota login, a reset link is on its way to that login's email and to any personal email saved in its Settings. It can take a minute. Check spam too. The link works once and expires in an hour.</Msg>
       ) : (
         <div>
           <div style={{ marginBottom:14 }}>

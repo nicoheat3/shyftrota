@@ -215,7 +215,7 @@ export function NotificationSettings({ user, emps, isAdmin, showT, weeks, defaul
       {myEid != null && (
         <div style={CARD}>
           <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Email notifications</div>
-          <div style={{ fontSize:12, color:T.muted, marginTop:3, marginBottom:14, lineHeight:1.6 }}>Where should ShyftRota email you? Leave it blank and you won't get any emails.</div>
+          <div style={{ fontSize:12, color:T.muted, marginTop:3, marginBottom:14, lineHeight:1.6 }}>Where should ShyftRota email you? Use one you can check from home: password reset links go here too. Leave it blank and you won't get any emails.</div>
           <label style={LBL}>Your email</label>
           <input type="email" value={mine.email} placeholder="you@example.com" onChange={function(e){ setMine({ ...mine, email:e.target.value }); }} style={{ ...INP, marginBottom:16 }} />
           <div style={{ fontSize:12, color:T.muted, marginBottom:4 }}><b style={{ color:T.text }}>Notify me about</b> · applies to email and phone</div>
