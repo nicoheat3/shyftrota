@@ -83,7 +83,7 @@ export function ForgotPassword({ initialEmail, onBack }) {
     var e = email.trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { setErr("Enter the email you sign in with."); return; }
     setBusy(true); setErr("");
-    var res = await supabase.auth.resetPasswordForEmail(e, { redirectTo: window.location.origin });
+    var res = await supabase.auth.resetPasswordForEmail(e, { redirectTo: window.location.origin + "/" });
     setBusy(false);
     // Same message whether or not the email has an account, so nobody can use
     // this form to find out who works where. Only rate limits are shown.
