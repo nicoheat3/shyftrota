@@ -144,6 +144,14 @@ const INDUSTRIES = {
  hospitality: { label:"Hospitality", roles:["Host/Hostess","Server","Bartender","Busser","Manager","Supervisor"], icon:"🏨" }, restaurant: { label:"Restaurant", roles:["Server","Cook","Dishwasher","Host","Bartender","Shift Lead","Manager"], icon:"🍽️" }, healthcare: { label:"Healthcare", roles:["Nurse","CNA","Receptionist","Caregiver","Doctor","Admin","Supervisor"], icon:"🏥" }, retail: { label:"Retail", roles:["Sales Associate","Cashier","Stock Clerk","Supervisor","Manager","Keyholder"], icon:"🛍️" }, general: { label:"General", roles:["Employee","Team Lead","Supervisor","Manager","Admin"], icon:"🏢" },
 };
 
+// Features still in beta. Properties in the beta program (properties.beta_program,
+// set by ShyftRota only) can switch these on in Settings. To add one: put it here,
+// then show its tab or button only when isBetaOn("<id>"). Remove it from this list
+// once it's ready for everyone.
+const BETA_FEATURES = [
+  // { id:"supplies", label:"Supplies", desc:"Staff request what's running low, you approve the next order." },
+];
+
 const PAYROLL_PROVIDERS = [
   { id:"paychex",   label:"Paychex",       color:"#E85D04" },
   { id:"adp",       label:"ADP",           color:"#D00000" },
@@ -1057,6 +1065,16 @@ function LogoMark({ size }) {
   );
 }
 
+// Sits at the top of a beta feature's page so people know it's new.
+function BetaBanner({ name }) {
+  return (
+    <div role="note" style={{ display:"flex", gap:10, alignItems:"flex-start", padding:"12px 14px", marginBottom:16, border:"1px solid "+T.warning, background:T.warningL, borderRadius:8 }}>
+      <span className="mono" style={{ fontSize:10, fontWeight:600, color:T.warning, border:"1px solid "+T.warning, borderRadius:4, padding:"1px 5px", flexShrink:0, marginTop:1 }}>BETA</span>
+      <div style={{ flex:1, fontSize:13, lineHeight:1.5, color:T.text }}>{name} is new. If something looks wrong or you have an idea, <a href={"mailto:hello@shyftrota.com?subject=" + encodeURIComponent(name + " beta feedback")} style={{ color:T.accent, fontWeight:600 }}>tell us</a>.</div>
+    </div>
+  );
+}
+
 // ── Welcome / Auth ────────────────────────────────────
 function Welcome({ onLogin, onSignup, accounts, authError }) {
  var [layoutPick, setLayoutPick] = useState("grid");
@@ -1282,6 +1300,9 @@ function App() {
   var [deptFilter, setDeptFilter] = useState("all");
   var [payroll,    setPayroll]    = useState(function(){ return ld("sr_payroll", "paychex"); });
   var [timeClockOn, setTimeClockOn] = useState(true); // per property; off = they clock in with their payroll system
+  var [betaProgram, setBetaProgram] = useState(false);   // per property; only ShyftRota turns it on
+  var [betaFeatures, setBetaFeatures] = useState({});    // { featureId: true } switched on by a manager
+  var [betaAudience, setBetaAudience] = useState("managers"); // "managers" or "everyone"
   var [emps, setEmps] = useState([]);
 
   // Pull the real roster, departments, and shift definitions from Supabase
@@ -1291,6 +1312,9 @@ function App() {
    supabase.from("properties").select("*").eq("id", user.property_id).single().then(function(res){
     if (res.data) {
      setTimeClockOn(res.data.time_clock !== false);
+     setBetaProgram(res.data.beta_program === true);
+     setBetaFeatures(res.data.beta_features || {});
+     setBetaAudience(res.data.beta_audience === "everyone" ? "everyone" : "managers");
      if (!hasLocalLayout() && res.data.default_layout) { setSchedLayoutS(res.data.default_layout); if (res.data.default_layout === "timeline") setSchedView("day"); }
      var dayNameToDow = {Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6};
      var loadedDow = dayNameToDow[res.data.week_start];
@@ -1640,6 +1664,18 @@ function App() {
  function showT(msg, type) { setToast({msg:msg,type:type||"success"}); setTimeout(function(){setToast(null);},2800); }
 
  var isAdmin = user && user.role === "admin";
+ // A beta feature shows only at properties in the beta program, once a manager
+ // switches it on, and to staff too only when the audience is "everyone".
+ function isBetaOn(id) { return betaProgram && !!betaFeatures[id] && (betaAudience === "everyone" || !!isAdmin); }
+ function saveBeta(patch, okMsg) {
+  var prev = { features: betaFeatures, audience: betaAudience };
+  if (patch.beta_features) setBetaFeatures(patch.beta_features);
+  if (patch.beta_audience) setBetaAudience(patch.beta_audience);
+  supabase.from("properties").update(patch).eq("id", user.property_id).then(function(res){
+   if (res.error) { setBetaFeatures(prev.features); setBetaAudience(prev.audience); console.error("save beta settings failed:", res.error); showT("Couldn't save. Run beta-features.sql first.", "error"); }
+   else showT(okMsg);
+  });
+ }
  // Open shifts: today and later. Refreshed whenever the Open Shifts tab opens,
  // so claims from other phones show up without a full reload.
  useEffect(function(){
@@ -2771,7 +2807,8 @@ function App() {
     {id:"openShifts",label:tr("Open Shifts")},
     {id:"settings",  label:tr("Settings")},
   ].filter(Boolean);
- var TABS = isAdmin ? ADMIN_TABS : EMP_TABS;
+ // A tab marked { beta:"<feature id>" } shows only while that beta feature is on.
+ var TABS = (isAdmin ? ADMIN_TABS : EMP_TABS).filter(function(t){ return !t.beta || isBetaOn(t.beta); });
   // iOS-style tab change: the page slides toward the tab you picked.
   // Falls back to an instant switch where the browser lacks View Transitions
   // or the person has Reduce Motion turned on.
@@ -3142,6 +3179,7 @@ function App() {
  <Icon name={TAB_ICONS[t.id]} size={15} />
  <span style={{ flex:1 }}>{t.label.replace(/ \(\d+\)/,"")}</span>
  {t.id==="requests" && pendingAll > 0 && <span style={{ background:T.accent, color:"white", fontSize:10, fontWeight:700, borderRadius:20, padding:"1px 6px" }}>{pendingAll}</span>}
+ {t.beta && <span className="mono" style={{ fontSize:9, fontWeight:600, letterSpacing:"0.06em", color:T.warning, border:"1px solid "+T.warning, borderRadius:4, padding:"1px 5px" }}>BETA</span>}
  </button>
  );
  })}
@@ -4389,6 +4427,37 @@ function App() {
    <button role="switch" aria-checked={timeClockOn} aria-label="Time clock" onClick={function(){ var v = !timeClockOn; setTimeClockOn(v); supabase.from("properties").update({ time_clock:v }).eq("id", user.property_id).then(function(res){ if (res.error) { setTimeClockOn(!v); showT("Couldn't save. Run time-clock-and-layout.sql first.", "error"); } else showT(v ? "Time clock on" : "Time clock off"); }); }} style={{ width:52, height:32, borderRadius:999, border:"none", padding:0, position:"relative", cursor:"pointer", background:timeClockOn ? T.success : T.border, flexShrink:0 }}>
     <span style={{ position:"absolute", top:3, left:timeClockOn ? 23 : 3, width:26, height:26, borderRadius:"50%", background:"#fff", transition:"left .18s" }} />
    </button>
+  </div>
+ )}
+ {tab==="settings" && settingsSub==="general" && isAdmin && betaProgram && (
+  <div style={{ ...CARD, marginBottom:16 }}>
+   <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+    <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Beta features</div>
+    <span className="mono" style={{ fontSize:10, fontWeight:600, color:T.warning, border:"1px solid "+T.warning, borderRadius:4, padding:"1px 6px" }}>EARLY ACCESS</span>
+   </div>
+   <div style={{ fontSize:12, color:T.muted, marginTop:3, lineHeight:1.6 }}>Try new features before everyone else. They work, but may change or have rough edges. Turning one off hides it again and keeps your data.</div>
+   {BETA_FEATURES.length === 0 && (
+    <div style={{ fontSize:13, color:T.faint, padding:"14px 0 2px" }}>No beta features right now. New ones show up here first.</div>
+   )}
+   {BETA_FEATURES.map(function(f){
+    var on = !!betaFeatures[f.id];
+    return (
+     <div key={f.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, padding:"12px 0", borderBottom:"1px solid "+T.border, flexWrap:"wrap" }}>
+      <div style={{ flex:"1 1 220px", minWidth:0 }}><div style={{ fontSize:13, fontWeight:600, color:T.text }}>{f.label}</div><div style={{ fontSize:11, color:T.faint, marginTop:2 }}>{f.desc}</div></div>
+      <button role="switch" aria-checked={on} aria-label={f.label + " beta"} onClick={function(){ var next = { ...betaFeatures }; if (on) delete next[f.id]; else next[f.id] = true; saveBeta({ beta_features:next }, f.label + (on ? " off" : " on")); }} style={{ width:52, height:32, borderRadius:999, border:"none", padding:0, position:"relative", cursor:"pointer", background:on ? T.success : T.border, flexShrink:0 }}>
+       <span style={{ position:"absolute", top:3, left:on ? 23 : 3, width:26, height:26, borderRadius:"50%", background:"#fff", transition:"left .18s" }} />
+      </button>
+     </div>
+    );
+   })}
+   {BETA_FEATURES.length > 0 && (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, padding:"12px 0 0", flexWrap:"wrap" }}>
+     <div style={{ flex:"1 1 220px", minWidth:0 }}><div style={{ fontSize:13, fontWeight:600, color:T.text }}>Who sees beta features</div><div style={{ fontSize:11, color:T.faint, marginTop:2 }}>Start with managers, then open it to the whole team.</div></div>
+     <div role="group" aria-label="Who sees beta features" style={{ display:"flex", border:"1px solid "+T.border, borderRadius:8, padding:2 }}>
+      {[["managers","Managers"],["everyone","Everyone"]].map(function(o){ var on = betaAudience === o[0]; return <button key={o[0]} aria-pressed={on} onClick={function(){ if (!on) saveBeta({ beta_audience:o[0] }, o[0] === "everyone" ? "Beta features open to everyone" : "Beta features for managers only"); }} style={{ minHeight:36, padding:"0 14px", border:"none", borderRadius:6, background:on?T.text:"transparent", color:on?T.bg:T.muted, fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"inherit" }}>{o[1]}</button>; })}
+     </div>
+    </div>
+   )}
   </div>
  )}
  {tab==="settings" && settingsSub==="general" && <NotificationSettings user={user} emps={emps} isAdmin={isAdmin} showT={showT} weeks={[0,1].map(function(o){ return { key:isoDate(getWeekStart(o)), label:fmtWeekRange(o) }; })} defaultWeek={weekOff === 1 ? 1 : 0} />}
